@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Digital Twin for Plant Phenotyping</title>
+  <meta name="description" content="A 3D reconstruction pipeline for creating digital plant representations for phenotyping and digital twin research." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav container">
+      <a class="brand" href="#home">Digital Twin</a>
+      <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+      <div class="nav-links">
+        <a href="#demo">Demo</a>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#outputs">Outputs</a>
+        <a href="#why">Why It Matters</a>
+        <a href="#code-docs">Code & Docs</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="home">
+    <section class="hero section">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Public project showcase</p>
+          <h1>Digital Twin for Plant Phenotyping</h1>
+          <p class="subtitle">A 3D reconstruction pipeline for creating digital plant representations for phenotyping and digital twin research.</p>
+          <p class="hero-text">
+            This project explores how image-based 3D reconstruction can support the development of plant digital twins. Starting from raw images, the pipeline uses masking, structure-from-motion, and 3D Gaussian Splatting to generate interactive 3D models that preserve plant form in a way that is useful for visualization, interpretation, and future quantitative analysis.
+          </p>
+          <div class="button-row">
+            <a class="button primary" href="#demo">View Demo</a>
+            <a class="button secondary" href="https://github.com/your-username/your-repo" target="_blank" rel="noreferrer">Code Repository</a>
+            <a class="button secondary" href="#code-docs">Documentation</a>
+          </div>
+        </div>
+        <div class="hero-panel">
+          <div class="panel-card panel-card--centered">
+            <p class="panel-label">Featured preview</p>
+            <p class="panel-title">Complete Scene Reconstruction</p>
+            <p class="panel-text">Replace this card with a preview image, short looping clip, or a jump link into the embedded viewer below.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container narrow">
+        <h2>What this project is</h2>
+        <p>
+          Plants are complex three-dimensional organisms, but much of plant measurement still depends on simplified 2D observations or partial structural descriptions. This project investigates how image-based reconstruction methods can generate richer digital representations of plant form and serve as a foundation for future digital twin systems.
+        </p>
+        <p>
+          The long-term concept is the plant digital twin: a digital representation that does more than simply display appearance, but captures structure in a way that can support exploration, interpretation, and eventually quantitative phenotyping and modeling. In this context, 3D reconstruction is not the final goal by itself. It is a key step toward creating usable digital plant representations.
+        </p>
+      </div>
+    </section>
+
+    <section id="demo" class="section">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Interactive 3D Demo</h2>
+          <p>Explore two sample outputs from the pipeline directly in the browser.</p>
+        </div>
+
+        <div class="viewer-block">
+          <div class="viewer-copy">
+            <h3>Complete Scene Reconstruction</h3>
+            <p>
+              This viewer shows the full reconstructed scene generated from the input image set. It demonstrates how the pipeline preserves overall spatial context, including the plant and surrounding scene elements, in an interactive 3D representation.
+            </p>
+          </div>
+          <iframe
+            class="viewer-frame"
+            src="viewers/complete-scene.html"
+            title="Complete Scene Viewer"
+            loading="lazy"
+            allowfullscreen
+          ></iframe>
+        </div>
+
+        <div class="viewer-block">
+          <div class="viewer-copy">
+            <h3>Plant-Only Reconstruction</h3>
+            <p>
+              This viewer focuses on the isolated plant model. It highlights the plant itself more clearly and provides a more direct view of the reconstructed biological structure.
+            </p>
+          </div>
+          <iframe
+            class="viewer-frame"
+            src="viewers/plant-only.html"
+            title="Plant-Only Viewer"
+            loading="lazy"
+            allowfullscreen
+          ></iframe>
+        </div>
+
+        <p class="section-note">
+          These examples are intended as public-facing demonstrations of the current reconstruction workflow and the types of digital outputs it can produce.
+        </p>
+      </div>
+    </section>
+
+    <section id="pipeline" class="section alt">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Pipeline Overview</h2>
+          <p>The current pipeline follows a sequence of image-based reconstruction steps designed to move from raw visual data toward an interactive 3D representation of plant structure.</p>
+        </div>
+        <div class="steps-grid">
+          <article class="step-card">
+            <span class="step-number">1</span>
+            <h3>Image Acquisition</h3>
+            <p>A set of source images is collected to capture the plant and scene from multiple viewpoints.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">2</span>
+            <h3>Masking</h3>
+            <p>Plant regions are separated from the background to improve focus on the biological subject and support cleaner downstream processing.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">3</span>
+            <h3>Structure from Motion (SfM)</h3>
+            <p>Camera poses and scene geometry are estimated from the image set, providing the spatial foundation for reconstruction.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">4</span>
+            <h3>3D Gaussian Splatting (3DGS)</h3>
+            <p>The scene is reconstructed as an interactive 3D representation that can be rendered and explored in the browser.</p>
+          </article>
+        </div>
+        <p class="section-note">Together, these steps form a practical reconstruction workflow that contributes toward richer digital representations of plant structure.</p>
+      </div>
+    </section>
+
+    <section id="outputs" class="section">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Selected Outputs</h2>
+          <p>These examples are intended to show both the visual quality of the current outputs and the workflow that leads to them.</p>
+        </div>
+        <div class="outputs-grid">
+          <article class="output-card">
+            <div class="output-placeholder">Replace with screenshot or GIF</div>
+            <h3>Interactive 3DGS scene model</h3>
+            <p>A full-scene reconstruction showing the spatial result of the pipeline.</p>
+          </article>
+          <article class="output-card">
+            <div class="output-placeholder">Replace with screenshot or GIF</div>
+            <h3>Interactive plant-only model</h3>
+            <p>A focused reconstruction centered on the plant itself.</p>
+          </article>
+          <article class="output-card">
+            <div class="output-placeholder">Optional: raw image vs masked image</div>
+            <h3>Raw images and masked images</h3>
+            <p>Example comparisons showing how source imagery is transformed into masked inputs prior to reconstruction.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="why" class="section alt">
+      <div class="container narrow">
+        <h2>Why it matters</h2>
+        <p>
+          Plant phenotyping depends on meaningful ways of capturing plant structure, but many existing approaches still compress that structure into simplified measurements or partial observations. A 3D reconstruction pipeline offers a way to preserve more of the geometry and organization of the plant in digital form.
+        </p>
+        <p>
+          This matters because a useful digital twin requires more than a visually appealing model. It requires a digital representation that can support understanding, inspection, and eventually analysis. In that sense, plant phenotyping is both the motivation and the testing ground: it provides a concrete reason to build better digital representations, and a scientific context in which their usefulness can be evaluated.
+        </p>
+        <p>
+          The broader goal of this work is to move toward digital plant representations that are not only viewable, but meaningfully structured and informative.
+        </p>
+      </div>
+    </section>
+
+    <section id="code-docs" class="section">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Code and Documentation</h2>
+          <p>The reconstruction pipeline is being organized for public release in a GitHub-based format. Public code, documentation, and related project materials will be linked here as they become ready.</p>
+        </div>
+        <div class="links-grid">
+          <a class="link-card" href="https://github.com/your-username/your-repo" target="_blank" rel="noreferrer">
+            <h3>Repository</h3>
+            <p>Public code for the reconstruction pipeline.</p>
+          </a>
+          <div class="link-card muted">
+            <h3>Documentation</h3>
+            <p>Pipeline documentation and usage notes coming soon.</p>
+          </div>
+          <div class="link-card muted">
+            <h3>Related materials</h3>
+            <p>Posters, papers, or additional public outputs can be linked here later.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        <strong>Digital Twin for Plant Phenotyping</strong>
+        <p>Public project showcase</p>
+      </div>
+      <div>
+        <p>Alex Feldman | [Affiliation placeholder]</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
