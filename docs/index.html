@@ -67,25 +67,9 @@
 
         <div class="viewer-block">
           <div class="viewer-copy">
-            <h3>Complete Scene Reconstruction</h3>
-            <p>
-              This viewer shows the full reconstructed scene generated from the input image set. It demonstrates how the pipeline preserves overall spatial context, including the plant and surrounding scene elements, in an interactive 3D representation.
-            </p>
-          </div>
-          <iframe
-            class="viewer-frame"
-            src="viewers/complete-scene.html"
-            title="Complete Scene Viewer"
-            loading="lazy"
-            allowfullscreen
-          ></iframe>
-        </div>
-
-        <div class="viewer-block">
-          <div class="viewer-copy">
             <h3>Plant-Only Reconstruction</h3>
             <p>
-              This viewer focuses on the isolated plant model. It highlights the plant itself more clearly and provides a more direct view of the reconstructed biological structure.
+              This viewer focuses on the isolated plant model. The plant can be automatically extracted from the scene, no manual cropping necessary.
             </p>
           </div>
           <iframe
@@ -97,8 +81,24 @@
           ></iframe>
         </div>
 
+        <div class="viewer-block">
+          <div class="viewer-copy">
+            <h3>Complete Scene Reconstruction</h3>
+            <p>
+              This viewer shows the full reconstructed scene generated from the input image set. The reconstruction preserves overall spatial context, including the plant and surrounding scene elements.
+            </p>
+          </div>
+          <iframe
+            class="viewer-frame"
+            src="viewers/complete-scene.html"
+            title="Complete Scene Viewer"
+            loading="lazy"
+            allowfullscreen
+          ></iframe>
+        </div>
+        
         <p class="section-note">
-          These examples are intended as public-facing demonstrations of the current reconstruction workflow and the types of digital outputs it can produce.
+          These are demonstrations of the current reconstruction workflow and the types of digital outputs it can produce.
         </p>
       </div>
     </section>
