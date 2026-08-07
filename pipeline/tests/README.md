@@ -1,6 +1,7 @@
 # pipeline tests
 
-Tests for the pipeline's configuration layer (`pipeline/dt4ag_config.py`).
+Tests for the pipeline's configuration layer (`pipeline/dt4ag_config.py`) and
+for the command-line runner (`pipeline/run_pipeline.py`).
 
 ## Running them
 
@@ -28,6 +29,14 @@ run-id derivation and auto-increment, COLMAP version detection, `data_type =
 auto` inference, `find_config` precedence, the CSV run log, and the committed
 `configs/example.ini`.
 
+`test_run_pipeline.py` covers the runner's own logic: argument parsing, stage
+selection (`--stage`, `--from-stage`, ordering, duplicates, bad names, the
+mutually exclusive pair), the checkpoint-discovery rule, the exact command line
+built for each of the four stages, recursive image counting, and export
+verification including a PLY that exists at a plausible size but declares zero
+vertices. It runs no subprocess at all; the stages themselves can only be proven
+by a real run.
+
 Every test is hermetic. Each one builds its own data tree in a
 `tempfile.TemporaryDirectory` and throws it away afterwards.
 
@@ -50,4 +59,5 @@ Every test is hermetic. Each one builds its own data tree in a
   discovery and empty-directory guard live in the notebook, not in
   `dt4ag_config.py`; the loader does no image counting at all.
 - **No nerfstudio.** `ns-process-data`, `ns-train` and `ns-export` are outside
-  the scope of this suite.
+  the scope of this suite. `test_run_pipeline.py` asserts on the argument
+  vectors the runner would execute, and executes none of them.

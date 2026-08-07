@@ -14,6 +14,8 @@ lockfile. A public release needs the work listed under "Known gaps" below.
 | Path | What it is |
 |---|---|
 | `notebooks/nerfstudio-pipeline-06.ipynb` | The pipeline: COLMAP reconstruction, `ns-process-data`, `ns-train splatfacto`, `ns-export gaussian-splat`. Kernel `ns-l-oci`. |
+| `run_pipeline.py` | The same pipeline as a command-line runner, no Jupyter. See "Running it from the command line" below. |
+| `dt4ag_config.py` | The INI config loader both of the above read, so they cannot drift. |
 | `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel, producing the masked images the notebook consumes. **Has a known defect, see that directory's README.** |
 | `scripts/sam/` | SAM helper scripts used while producing masks. |
 | `scripts/mask-analysis/` | The UT-vs-KU mask agreement study: per-image IoU comparison and CSV analysis. |
@@ -62,6 +64,59 @@ Two environment traps, both of which produce confusing failures:
   A full rebuild is 26 objects. The result is cached under
   `~/.cache/torch_extensions/`, so this is a one-off per environment, but the
   variables must be present on any run that might trigger a rebuild.
+
+## Running it from the command line
+
+`run_pipeline.py` runs the same five stages as the notebook, reading the same
+INI file through the same loader, with no Jupyter and no kernel involved:
+
+```bash
+conda activate ns-l-oci
+python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
+```
+
+| Option | What it does |
+|---|---|
+| `--config PATH` | The config to use. Without it: `$DT4AG_CONFIG`, then `configs/example.ini` found by walking up from the working directory. |
+| `--stage NAME` | Run only these stages, from `colmap`, `process`, `train`, `export`. Repeatable and comma-separated (`--stage train,export`). They always execute in pipeline order whatever order you name them in. |
+| `--from-stage NAME` | Resume: this stage and everything after it. Mutually exclusive with `--stage`. |
+| `--run-id ID` | Address an existing run instead of deriving a new id. |
+| `--dry-run` | Print the exact commands and paths, execute nothing. |
+| `--allow-viewer-hang` | Permit `[train] quit_on_train_completion = false`. |
+
+Start with `--dry-run`. It resolves the config, derives the run id, counts the
+input images and prints every command verbatim, in about a second.
+
+The runner exits non-zero on the first failure and never continues past one:
+`2` for a configuration error, `1` for a stage failure, `130` on Ctrl-C. It
+checks every subprocess return code, and then checks the artefact each stage
+claims to have produced: a sparse model after COLMAP, `transforms.json` after
+`ns-process-data`, and after export a `.ply` that exists, is bigger than a bare
+header, and declares a non-zero vertex count in that header. A success message
+from a tool is not accepted as evidence.
+
+Three things worth knowing before a long run:
+
+- **Prerequisites are checked first**, and only the ones the selected stages
+  need. A missing `colmap`, a COLMAP that cannot load `libcudart.so.12`, a
+  missing `ns-*` command or a torch that reports no CUDA device all fail
+  immediately with a message naming the fix, rather than forty minutes in.
+- **Set `[train] quit_on_train_completion = true` for command-line runs.**
+  Otherwise `ns-train` keeps its viewer alive after training finishes and never
+  exits, which deadlocks a non-interactive run. The runner refuses to start the
+  train stage otherwise; `--allow-viewer-hang` overrides that.
+- **Resuming needs the run id.** With `[run] date` and `run_count` left blank,
+  the id auto-increments, so a second invocation derives a *new* id rather than
+  the one you meant. Either resume within one invocation (`--from-stage`), or
+  pass `--run-id`, or pin the values in the config. A stage that needs a COLMAP
+  workspace which does not exist says exactly this instead of failing obscurely.
+
+Checkpoint discovery before export requires **both** a `config.yml` and a real
+checkpoint file: a crashed `ns-train` leaves a run directory holding `config.yml`
+and no weights, and `ns-export` against it dies deep inside the checkpoint
+loader. Run directories predating the training this invocation performed are
+also refused, so a failed training run cannot be papered over by exporting an
+earlier one.
 
 **Commit the notebook with its cell outputs cleared.** Executed cells store
 real dataset paths inside the `.ipynb`; `tests/test_dt4ag_config.py` fails the
