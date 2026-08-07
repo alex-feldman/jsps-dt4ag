@@ -33,19 +33,44 @@ lockfile. A public release needs the work listed under "Known gaps" below.
   is a duplicate of the copy in that repository; which one is canonical is
   not yet decided.
 
+## Running it
+
+Everything the notebook used to have typed into cells now comes from an INI
+file; see `configs/README.md`. Point `DT4AG_CONFIG` at your own copy of
+`configs/example.ini` and run the notebook on the `ns-l-oci` kernel. Real run
+configs are gitignored because they carry real dataset names and paths.
+
+Two environment traps, both of which produce confusing failures:
+
+- **COLMAP was built into the conda environment prefix** and links its CUDA
+  libraries from there, so activating the environment on `PATH` alone is not
+  enough. Without `LD_LIBRARY_PATH` it dies with
+  `libcudart.so.12: cannot open shared object file`:
+
+      export PATH=<conda-prefix>/bin:$PATH
+      export LD_LIBRARY_PATH=<conda-prefix>/lib:$LD_LIBRARY_PATH
+
+- **gsplat JIT-compiles its CUDA extension on first import.** CUDA 12.1's
+  `nvcc` refuses any host compiler newer than GCC 12, so on a distribution
+  shipping GCC 13 the first `ns-train splatfacto` fails with
+  `unsupported GNU version! gcc versions later than 12 are not supported!`.
+  Point the build at an older compiler that is already installed; nothing in
+  the conda environment needs to change:
+
+      export CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 CUDAHOSTCXX=/usr/bin/g++-10
+
+  A full rebuild is 26 objects. The result is cached under
+  `~/.cache/torch_extensions/`, so this is a one-off per environment, but the
+  variables must be present on any run that might trigger a rebuild.
+
+**Commit the notebook with its cell outputs cleared.** Executed cells store
+real dataset paths inside the `.ipynb`; `tests/test_dt4ag_config.py` fails the
+build if subject-specific terms reach the committed copy.
+
 ## Known gaps
 
-- **Paths are hardcoded** to an absolute mount point on a removable drive
-  (`/media/alex/T5Red/DT-data/`). Dataset selection walks a four-level hierarchy
-  by substring matching, sets a loop variable without breaking, and so silently
-  takes the last match when two siblings match. One cell requires the reader to
-  uncomment a line for a three-level hierarchy. Nothing here runs unmodified on
-  another machine.
 - **The notebook carries scratch cells** (repeated `!ls` variations) and an
   empty `TODO` cell in the middle of the pipeline.
-- **Run identity is manual.** The run date, run count and COLMAP version are
-  typed by hand each run and concatenated into a project id. There is no run log
-  and no auto-incrementing run id.
 - **The masking script fails silently.** See `scripts/rgb-mask/README.md`.
 - **No environment lockfile, LICENSE, or citation file yet**, and no evaluation
   step: the pipeline ends at export.

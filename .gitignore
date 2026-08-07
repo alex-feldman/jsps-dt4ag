@@ -24,3 +24,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# --- Personal run configs ---
+# configs/example.ini is committed as the neutral template. Real run configs
+# carry real dataset names and machine-specific paths, so they stay local.
+pipeline/configs/*.ini
+!pipeline/configs/example.ini
