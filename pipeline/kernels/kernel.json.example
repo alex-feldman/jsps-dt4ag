@@ -1,0 +1,22 @@
+{
+ "argv": [
+  "/CONDA/ENV/PREFIX/bin/python",
+  "-m",
+  "ipykernel_launcher",
+  "-f",
+  "{connection_file}"
+ ],
+ "display_name": "Python (pipeline env)",
+ "language": "python",
+ "metadata": {
+  "debugger": true
+ },
+ "env": {
+  "PATH": "/CONDA/ENV/PREFIX/bin:/usr/local/bin:/usr/bin:/bin",
+  "LD_LIBRARY_PATH": "/CONDA/ENV/PREFIX/lib",
+  "CC": "/usr/bin/gcc-10",
+  "CXX": "/usr/bin/g++-10",
+  "CUDAHOSTCXX": "/usr/bin/g++-10",
+  "TCNN_CUDA_ARCHITECTURES": "75;86"
+ }
+}
