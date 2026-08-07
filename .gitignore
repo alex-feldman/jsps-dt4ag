@@ -1,0 +1,26 @@
+# --- Data. Never commit. ---
+# The pipeline's working data lives outside this repo (see pipeline/README.md).
+# On the machine it was developed on that is /media/alex/T5Red/DT-data/, roughly
+# 99 GB of datasets, COLMAP workspaces and nerfstudio outputs, plus ~38 GB of
+# archived runs. These patterns exist so a stray copy inside the repo cannot be
+# staged by accident.
+datasets/
+colmap/
+outputs/
+archive-*/
+supersplat/
+masked-images/
+experiments/*/data/
+weights/
+*.ply
+*.splat
+*.ckpt
+
+# --- IDE and Python cruft ---
+.idea/
+.vscode/
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
