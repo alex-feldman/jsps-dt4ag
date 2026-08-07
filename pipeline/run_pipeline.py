@@ -632,7 +632,13 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 log(f"config.yml        : {config_yml}")
                 log(f"checkpoint        : {checkpoint.name} "
                     f"({checkpoint.stat().st_size} bytes)")
-            export_dir = run_dir / "exports"
+            # Exports go to the configured [paths] exports_dirname, NOT into the
+            # training run directory. Until 2026-08-07 this was hardcoded to
+            # run_dir / "exports", which made the config key decorative: it was
+            # documented, settable, and did nothing. The export filename already
+            # carries the run id, so a single flat directory cannot collide and
+            # gives one place to find every export.
+            export_dir = cfg.exports_dir
             filename = export_filename(cfg, run_id)
             ply = export_dir / filename
             run_command(
