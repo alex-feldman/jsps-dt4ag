@@ -268,7 +268,18 @@ class Dt4agConfig:
         return "video" if "frames" in name else "individual"
 
     def resolve_colmap_version(self) -> str:
-        """Installed COLMAP version, falling back to ``[run] colmap_version``."""
+        """``[run] colmap_version`` when set, else the installed COLMAP version.
+
+        Config wins on purpose. This value goes into the run id, and the whole
+        point of pinning a run id is to address a workspace produced by an
+        earlier run, possibly by an earlier COLMAP. Detecting first would
+        silently rewrite the pinned id on a machine that has since upgraded
+        COLMAP, and the pipeline would build a new workspace next to the one
+        the operator meant to reuse. Leave the key blank for the normal case of
+        recording whatever COLMAP is actually installed.
+        """
+        if self.colmap_version:
+            return self.colmap_version
         detected = detect_colmap_version()
         if detected:
             return detected

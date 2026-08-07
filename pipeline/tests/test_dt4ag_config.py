@@ -428,8 +428,22 @@ class TestRunIdentity(TempDirTestCase):
         (parent / "run_260807-09-312.txt").write_text("a file, not a run", encoding="utf-8")
         self.assertEqual(cfg.next_run_count("260807"), "01")
 
-    def test_resolve_colmap_version_prefers_the_detected_version(self):
+    def test_resolve_colmap_version_prefers_the_configured_version(self):
+        """A pinned version must beat the installed one.
+
+        This assertion used to run the other way, which made the pinning
+        advertised by [run] colmap_version a no-op and made the five
+        pinned-run-id tests below pass only on a machine with no COLMAP on
+        PATH. The run id addresses a workspace directory, so an operator
+        pinning an old id to reuse an old workspace must get that id back
+        even after COLMAP has been upgraded underneath them.
+        """
         cfg = self._cfg(date="260807", run_count="01", colmap_version="999")
+        self.patch_module("detect_colmap_version", lambda: "312")
+        self.assertEqual(cfg.resolve_colmap_version(), "999")
+
+    def test_resolve_colmap_version_detects_when_config_is_blank(self):
+        cfg = self._cfg(date="260807", run_count="01")
         self.patch_module("detect_colmap_version", lambda: "312")
         self.assertEqual(cfg.resolve_colmap_version(), "312")
 
