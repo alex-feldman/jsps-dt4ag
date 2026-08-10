@@ -6,8 +6,12 @@ sat unversioned on a removable drive.
 
 **Treat this as an alpha snapshot, not a release.** It is committed so the code
 is under version control and reviewable, not because it is ready to be run by
-someone else. It has known defects, hardcoded paths, and no environment
-lockfile. A public release needs the work listed under "Known gaps" below.
+someone else. It has known defects and hardcoded paths. A public release needs the work
+listed under "Known gaps" below.
+
+The Python environment **is** now reproducible: `pyproject.toml` and `uv.lock`
+at the repository root, installed with `uv sync --frozen`. See
+`QUICKSTART.md` section 0a.
 
 ## What is here
 
@@ -127,5 +131,7 @@ build if subject-specific terms reach the committed copy.
 - **The notebook carries scratch cells** (repeated `!ls` variations) and an
   empty `TODO` cell in the middle of the pipeline.
 - **The masking script fails silently.** See `scripts/rgb-mask/README.md`.
-- **No environment lockfile, LICENSE, or citation file yet**, and no evaluation
-  step: the pipeline ends at export.
+- **No LICENSE or citation file yet**, and no evaluation step: the pipeline ends
+  at export. (`ns-eval` has to be run by hand.)
+- **COLMAP and ffmpeg are still outside the lockfile.** They are binaries and
+  cannot come from uv. See `scripts/uv-env/README.md`.

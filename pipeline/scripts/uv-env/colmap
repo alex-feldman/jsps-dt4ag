@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# COLMAP wrapper for the uv environment.
+#
+# WHY THIS EXISTS
+#
+# COLMAP is a C++ binary and cannot come from uv. On the development machine it
+# was built into a conda prefix, and it links seven of its shared libraries from
+# that prefix's lib/ rather than from the system loader path:
+#
+#   libcudart.so.12  libGLEW.so.2.3  libboost_program_options.so.1.84.0
+#   libceres.so.4    libglog.so.2    libmetis.so    libfreeimage.so.3
+#
+# The obvious fix, `export LD_LIBRARY_PATH=<prefix>/lib`, is WRONG under uv. The
+# uv environment's torch ships its own nvidia-cuda-runtime-cu12, and the conda
+# prefix has a different libcudart.so.12. A global LD_LIBRARY_PATH lets torch's
+# loader pick up the conda copy instead of its own.
+#
+# So the variable is scoped to this one exec and never leaks into the Python
+# process. Put this directory FIRST on PATH and run_pipeline.py finds `colmap`
+# with no change to the runner.
+#
+# USAGE
+#   export DT4AG_COLMAP_PREFIX=/home/alex/miniconda3/envs/ns-l-oci
+#   export PATH="<repo>/pipeline/scripts/uv-env:$PATH"
+#
+# If COLMAP is installed system-wide with all its libraries resolvable, you do
+# not need this wrapper at all: drop it from PATH and use the real binary.
+
+set -euo pipefail
+
+if [[ -z "${DT4AG_COLMAP_PREFIX:-}" ]]; then
+    echo "colmap wrapper: DT4AG_COLMAP_PREFIX is not set." >&2
+    echo "  Set it to a prefix containing bin/colmap and lib/, for example the" >&2
+    echo "  conda environment COLMAP 3.12.0 was built into." >&2
+    exit 2
+fi
+
+if [[ ! -x "$DT4AG_COLMAP_PREFIX/bin/colmap" ]]; then
+    echo "colmap wrapper: no executable at $DT4AG_COLMAP_PREFIX/bin/colmap" >&2
+    exit 2
+fi
+
+exec env LD_LIBRARY_PATH="$DT4AG_COLMAP_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$DT4AG_COLMAP_PREFIX/bin/colmap" "$@"
