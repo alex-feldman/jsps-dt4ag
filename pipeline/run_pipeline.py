@@ -304,13 +304,27 @@ def read_ply_vertex_count(path: Path) -> Optional[int]:
 # prerequisites
 # --------------------------------------------------------------------------
 
+# Note the uv case comes FIRST and is spelled out. Running the venv's
+# interpreter directly (.venv/bin/python run_pipeline.py) puts the right Python
+# on the path but NOT the venv's bin/, so none of the ns-* commands resolve and
+# this hint fires. That happened on 2026-08-11 and the old text, which only
+# mentioned conda, sent the reader to the fallback environment instead of to
+# `uv run`. Keep both paths, uv first, since uv is the default.
 _HINT = (
-    "Activate the reconstruction environment first, for example\n"
+    "Activate an environment that has the pipeline installed.\n"
+    "  With uv (the default), run through uv so the venv's bin/ is on PATH:\n"
+    "    uv run python pipeline/run_pipeline.py --config <your.ini>\n"
+    "  Running .venv/bin/python directly is NOT enough: it gives you the right\n"
+    "  interpreter but leaves ns-train, ns-process-data and ns-export off PATH.\n"
+    "  COLMAP is separate under uv and needs its prefix:\n"
+    "    export DT4AG_COLMAP_PREFIX=<prefix containing bin/colmap>\n"
+    "    export PATH=<repo>/pipeline/scripts/uv-env:$PATH\n"
+    "  With conda (the fallback):\n"
     "    conda activate ns-l-oci\n"
-    "  and note that PATH alone is not enough: COLMAP was built into the "
+    "  and note that PATH alone is not enough there: COLMAP was built into the "
     "environment prefix and links its CUDA runtime from there, so\n"
     "    export LD_LIBRARY_PATH=<conda-prefix>/lib:$LD_LIBRARY_PATH\n"
-    "  must also be in effect."
+    "  must also be in effect. See pipeline/QUICKSTART.md section 0a."
 )
 
 
