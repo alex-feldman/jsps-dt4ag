@@ -42,3 +42,22 @@ nothing compiles any more:
 | `CUDAHOSTCXX=g++-10` | No. |
 | `TCNN_CUDA_ARCHITECTURES="75;86"` | No. tinycudann is not a nerfstudio dependency and splatfacto does not use it. |
 | `LD_LIBRARY_PATH=$CONDA_PREFIX/lib` | Only for COLMAP, and only scoped, which is what the `colmap` wrapper does. |
+
+## ffmpeg
+
+`ns-process-data` shells out to ffmpeg even for an image dataset. ffmpeg is a
+system binary and cannot come from uv.
+
+**The preferred fix is `sudo apt install ffmpeg`**, which is what
+`QUICKSTART.md` tells a new user to do. The `ffmpeg` wrapper here is a fallback
+for a machine where ffmpeg happens to exist only inside a conda prefix, as it did
+on the development machine: a uv run died four seconds into stage 2 with
+`Could not find ffmpeg`, because conda's bin is not on PATH under uv.
+
+Resolution order: a real ffmpeg elsewhere on PATH (the wrapper steps aside and
+strips its own directory so it cannot recurse), then `$DT4AG_FFMPEG`, then
+`$DT4AG_COLMAP_PREFIX/bin/ffmpeg`.
+
+Unlike the colmap wrapper it does **not** set `LD_LIBRARY_PATH`: a conda ffmpeg
+resolves its libraries through its own RPATH, and exporting that prefix globally
+is exactly what makes torch load the wrong `libcudart`.
