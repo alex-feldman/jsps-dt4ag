@@ -66,8 +66,13 @@ minutes.
 Note this is a limitation of the *prebuilt wheel*, not of the pipeline or of
 gsplat itself, and no configuration setting can work around it. Supporting
 newer hardware means finding or building a gsplat wheel that includes those
-architectures, which reintroduces a compiler. That is tracked and deliberately
-out of scope for the current release.
+architectures, which reintroduces a compiler.
+
+**This is a known gap with a committed fix, not an accepted permanent limit.**
+Blackwell support is targeted for the beta and is a hard gate on the 1.0
+release: 1.0 will not be cut while current-generation consumer GPUs cannot run
+the pipeline. It is out of scope only for this alpha, whose purpose is to prove
+the install works at all on one platform.
 
 ## 0a. The environment
 
