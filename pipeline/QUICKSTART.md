@@ -12,13 +12,104 @@ objects and contains no subject-specific logic.
 |---|---|
 | Linux x86-64 | Developed on Ubuntu 24.04, driver 580.173.02 |
 | An NVIDIA GPU, Volta through Hopper | **RTX 50 series does NOT work.** See "Which GPUs work" below before anything else |
-| **COLMAP**, CUDA-enabled | **Not installable by pip or uv.** See "COLMAP" below |
-| **ffmpeg** | Not installable by uv. `sudo apt install ffmpeg` |
-| Python environment | `uv sync --frozen` from the committed lockfile. See section 0a |
+| **A host C/C++ compiler** | `sudo apt install build-essential`. Needed at install time AND at training time. See "You do need a host compiler" below |
+| **X11 and OpenGL runtime libraries** | `sudo apt install libx11-6 libgl1 libgomp1`. `open3d` will not import without them. See "System libraries" below |
+| **`uv`** | `curl -LsSf https://astral.sh/uv/install.sh \| sh`. See "Installing uv" below |
+| **COLMAP 3.12.0**, CUDA-enabled | **Not installable by pip or uv.** Copy-paste recipe under "COLMAP" below |
+| **ffmpeg** | Not installable by uv. Comes with the COLMAP recipe below, or `sudo apt install ffmpeg` |
+| Python | **Nothing to install.** uv downloads its own CPython 3.10; the system Python, if any, is not used |
 | Your images | Any number, in one directory. Sub-directories are supported and are treated as one camera each |
 
-No system CUDA toolkit is needed, and **no C or C++ compiler is needed**: torch
-ships its own CUDA 12.1 runtime and gsplat comes as a prebuilt wheel.
+**No system CUDA toolkit is needed, and no CUDA compiler (`nvcc`) is ever
+needed**, at install time or at run time: torch ships its own CUDA 12.1 runtime
+and gsplat comes as a prebuilt wheel. Verified on a bare `ubuntu:24.04`
+container: the full 30,000-iteration run completes with no `nvcc` anywhere on
+`PATH` and with `TORCH_EXTENSIONS_DIR` still empty afterwards, which is the
+proof that gsplat did not build itself.
+
+**A host C/C++ compiler is a different question, and the answer is yes.** See
+the next section. Getting rid of `nvcc` and the ten-minute gsplat JIT is what
+the torch 2.4 migration bought; it did not remove `cc`.
+
+### You do need a host compiler
+
+```bash
+sudo apt install build-essential
+```
+
+**Install this before `uv sync --frozen`, not after.** It is needed at two
+separate moments, and the second one is easy to miss because it only bites on a
+machine that has never run the pipeline before.
+
+**At install time**, two of nerfstudio's transitive dependencies ship no Linux
+wheel and are compiled from their sdist. Without a toolchain the sync dies
+partway through, after the several-minute download, and you have to run the
+whole thing again:
+
+| Package | Pulled in by | Needs | Failure without it |
+|---|---|---|---|
+| `pyliblzfse 0.4.1` | `nerfstudio` -> `viser` | a C compiler | `error: [Errno 2] No such file or directory: 'cc'` |
+| `fpsample 1.0.2` | `nerfstudio` | a C++ compiler | `CMake Error: ... Could not find the compiler specified in the environment variable CXX: c++.` |
+
+`pyliblzfse 0.4.1` publishes wheels for macOS and Windows only; `fpsample 1.0.2`
+publishes no wheel for any platform, only an sdist. Neither is going to change,
+so this is a permanent property of the lockfile, not a transient. CMake arrives
+as a build-time wheel and does not need installing.
+
+**At training time**, `splatfacto` compiles a small C file too.
+`nerfstudio/models/splatfacto.py` decorates `get_viewmat` with
+`@torch_compile()`, so the first training step runs `torch.compile`, which goes
+through inductor to triton, and triton builds its `cuda_utils` driver module
+with the host compiler. Thirty-one seconds into stage 3, on a machine with no
+`cc`:
+
+```text
+File ".../triton/runtime/build.py", line 32, in _build
+RuntimeError: Failed to find C compiler. Please specify via CC environment variable.
+torch._dynamo.exc.BackendCompilerFailed: backend='inductor' raised: ...
+```
+
+The result is cached in `~/.triton/cache/`, so it happens once per machine and
+never again, which is exactly why it was invisible on the development machine.
+This is **not** gsplat compiling: gsplat stays prebuilt and
+`TORCH_EXTENSIONS_DIR` stays empty. Do not go looking for a gsplat problem when
+you see this.
+
+### System libraries
+
+```bash
+sudo apt install libx11-6 libgl1 libgomp1
+```
+
+`open3d` is a nerfstudio dependency and
+`nerfstudio/process_data/metashape_utils.py` imports it unconditionally, so
+**stage 2 cannot start** without these. A desktop Ubuntu already has them; a
+minimal server image or a container does not, and the failure is a bare
+`OSError` several minutes into the run:
+
+```text
+File ".../open3d/__init__.py", line 38, in <module>
+OSError: libX11.so.6: cannot open shared object file: No such file or directory
+```
+
+The three above are the complete set for `open3d 0.19.0`, confirmed with `ldd`.
+Separately, `pymeshlab` prints `Cannot load library ... libio_x3d.so:
+(libOpenGL.so.0: ...)` during export. That one is **harmless**: the export
+completes and the `.ply` is correct. Install `libopengl0` if you want it quiet.
+
+### Installing uv
+
+`uv` is a single static binary and needs no Python:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"      # or: source $HOME/.local/bin/env
+uv --version
+```
+
+Verified with uv 0.12.3. uv also supplies the interpreter: `uv sync --frozen`
+downloads CPython 3.10 itself, so a base system with **no** `python3` at all is
+fine.
 
 **`uv sync --frozen` is not the whole install, and cannot be.** Two native
 binaries must be on `PATH` before stage 2 will start: `colmap` and `ffmpeg`.
@@ -30,10 +121,12 @@ binary is required even for a run that never asks COLMAP to do anything.
 
 ## 0b. Which GPUs work
 
-The pipeline compiles nothing, which is what makes it install quickly and
-without a toolchain. The cost of that is a **closed** list of supported GPUs:
-the CUDA code is whatever the prebuilt gsplat wheel already contains, and it
-cannot be extended at install time.
+The pipeline compiles no **CUDA** code, which is what makes it install in
+minutes rather than needing a CUDA toolkit. The cost of that is a **closed**
+list of supported GPUs: the device code is whatever the prebuilt gsplat wheel
+already contains, and it cannot be extended at install time. (It does compile a
+little host C, see "You do need a host compiler"; that is unrelated to which
+GPUs work.)
 
 The installed wheel, `gsplat 1.4.0+pt24cu121`, embeds compiled code for
 `sm_70`, `sm_75`, `sm_80`, `sm_86` and `sm_90`, **and no PTX**. PTX is the
@@ -125,7 +218,47 @@ fallback rather than the default.
 ### COLMAP
 
 COLMAP is a C++ binary. It has to be installed separately, whatever you use for
-Python packages. Two important notes:
+Python packages.
+
+**Use the conda-forge CUDA build, fetched with `micromamba` into a standalone
+prefix.** Do not use `apt install colmap` (Ubuntu 24.04 ships 3.9.1, too old)
+and do not build from source (hours, and it needs a full CUDA toolkit). This is
+the supported route for the alpha:
+
+```bash
+# 1. micromamba: one static binary. Not a conda distribution: no base
+#    environment, no activate.d, nothing on your PATH afterwards.
+mkdir -p ~/opt/bin
+curl -Ls https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-linux-64 \
+     -o ~/opt/bin/micromamba
+chmod +x ~/opt/bin/micromamba
+
+# 2. COLMAP 3.12.0 CUDA build, plus ffmpeg, into one standalone prefix.
+#    ~4 GB on disk, ~2 GB to download, a few minutes.
+export MAMBA_ROOT_PREFIX=~/opt/mamba-root
+~/opt/bin/micromamba create -y -p ~/opt/colmap-prefix -c conda-forge \
+    colmap=3.12.0=cuda_126h825ca31_0 ffmpeg
+
+# 3. That prefix is what DT4AG_COLMAP_PREFIX points at.
+export DT4AG_COLMAP_PREFIX=~/opt/colmap-prefix
+```
+
+Do **not** fetch micromamba from `micro.mamba.pm`: that endpoint serves a
+`.tar.bz2`, and a minimal Ubuntu image has no `bzip2`, so `tar` fails. The
+GitHub URL above is the bare binary.
+
+Confirm it is the CUDA build. Run bare `colmap` and read line 2:
+
+```bash
+$DT4AG_COLMAP_PREFIX/bin/colmap 2>&1 | head -2
+# COLMAP 3.12.0 -- Structure-from-Motion and Multi-View Stereo
+# (Commit Unknown on Unknown with CUDA)
+```
+
+`with CUDA` is the part that matters. A `without CUDA` build will run and will
+be uselessly slow.
+
+Two further notes:
 
 - `colmap --version` **does not work** in 3.12. Run bare `colmap` and read line 2,
   which also tells you whether it was built `with CUDA`. You need the CUDA build.
@@ -136,10 +269,45 @@ Python packages. Two important notes:
   `pipeline/scripts/uv-env/` instead, which scopes the variable to the COLMAP
   call.
 
-Exactly seven of COLMAP 3.12.0's 76 shared libraries do not resolve against the
+On the **development machine's** COLMAP, which was built into a conda
+environment, exactly seven of its 76 shared libraries do not resolve against the
 system loader path and must come from its prefix: `libcudart.so.12`,
 `libGLEW.so.2.3`, `libboost_program_options.so.1.84.0`, `libceres.so.4`,
 `libglog.so.2`, `libmetis.so`, `libfreeimage.so.3`.
+
+**The conda-forge build above does not have that problem.** Its binary carries
+an `$ORIGIN`-relative RPATH, so `ldd` reports zero unresolved libraries with no
+`LD_LIBRARY_PATH` at all. The `colmap` wrapper is still the right thing to put on
+`PATH` (it is what makes `DT4AG_COLMAP_PREFIX` work as a pointer, and it keeps
+the variable scoped), it simply has less to do.
+
+### Why the prefix must not go on LD_LIBRARY_PATH
+
+The conda-forge `cuda_126` build carries **CUDA 12.9.79**'s `libcudart.so.12` in
+its `lib/`, while torch bundles its own CUDA 12.1 runtime. Export the prefix's
+`lib/` globally and torch's loader picks up the COLMAP copy. Use the wrapper in
+`pipeline/scripts/uv-env/`, which scopes the variable to the COLMAP exec, and
+verify with:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+# 2.4.1+cu121 12.1 True
+```
+
+### ffmpeg
+
+`ns-process-data` shells out to ffmpeg even for an image dataset, and it also
+refuses to start without it (see the check described in section 0). Either
+route works:
+
+- `sudo apt install ffmpeg`, if you have root and want it system-wide, or
+- let the COLMAP recipe above install it into `$DT4AG_COLMAP_PREFIX/bin/ffmpeg`.
+
+For the second route the repo already ships an `ffmpeg` wrapper in
+`pipeline/scripts/uv-env/`, on `PATH` alongside the `colmap` wrapper. It prefers
+a real system ffmpeg, then `$DT4AG_FFMPEG`, then
+`$DT4AG_COLMAP_PREFIX/bin/ffmpeg`, so no extra configuration is needed. Verified
+on the clean machine with conda-forge ffmpeg 9.0 and no system ffmpeg at all.
 
 ## 1. Make a config
 
@@ -250,7 +418,14 @@ Rough timings on an RTX 2060 with 120 images at 5184x3456:
 | COLMAP | ~6 min |
 | `ns-process-data` | ~3 min |
 | `ns-train` @ 500 | ~25 s (plumbing test only) |
-| `ns-train` @ 30,000 | tens of minutes |
+| `ns-train` @ 30,000 | ~10 min |
+| `ns-export` | ~10 s |
+
+Measured stage by stage on a clean `ubuntu:24.04` container, 2026-08-11, same
+120-image dataset: COLMAP 5m49s, `ns-process-data` 2m55s, `ns-train` @ 30,000
+10m21s, `ns-export` 10s. Budget separately for `uv sync --frozen` the first
+time: 249 packages and 7.4 GB, which took nearly four hours on a link where
+`files.pythonhosted.org` was throttling to about 180 KB/s per connection.
 
 ## 4. Where this pipeline starts, and what it does NOT do
 
@@ -301,6 +476,27 @@ above. The pipeline stops before doing any work, which is deliberate.
 **`libcudart.so.12: cannot open shared object file`**
 COLMAP cannot find its CUDA libraries. Activate the conda environment, or set
 `LD_LIBRARY_PATH` to its `lib` directory.
+
+**`error: [Errno 2] No such file or directory: 'cc'` during `uv sync`**
+**or `CMake Error: ... Could not find the compiler ... CXX: c++`**
+No compiler. `sudo apt install build-essential` and run `uv sync --frozen`
+again. `pyliblzfse` and `fpsample` have no Linux wheels and are always built
+from source. See "You do need a host compiler" in section 0.
+
+**`RuntimeError: Failed to find C compiler` about half a minute into `ns-train`**
+Same cause, different moment. `splatfacto` runs `torch.compile` on
+`get_viewmat`, and triton needs the host compiler to build its driver module.
+`sudo apt install build-essential`. It is built once and cached in
+`~/.triton/cache/`. This is not gsplat: check `TORCH_EXTENSIONS_DIR`, it will be
+empty.
+
+**`OSError: libX11.so.6: cannot open shared object file` at the start of stage 2**
+`open3d` needs X11 and OpenGL runtime libraries that a minimal Linux image does
+not ship. `sudo apt install libx11-6 libgl1 libgomp1`. See "System libraries".
+
+**`Cannot load library .../libio_x3d.so: (libOpenGL.so.0: ...)` during export**
+Harmless. It is a `pymeshlab` plugin the export does not use. The `.ply` is
+still written and still correct. `sudo apt install libopengl0` silences it.
 
 **`unsupported GNU version! gcc versions later than 12 are not supported!`**
 This means gsplat is trying to compile itself, which should never happen in the
