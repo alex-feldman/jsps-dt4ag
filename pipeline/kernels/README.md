@@ -9,10 +9,13 @@ A conda kernelspec normally invokes the environment's Python **directly**. It do
 not activate the environment, so `etc/conda/activate.d/` hooks never run and the
 kernel inherits whatever environment launched Jupyter.
 
-That silently breaks two things:
+That silently breaks two things, both specific to the conda fallback:
 
-- **COLMAP** cannot load `libcudart.so.12`, because it was built into the conda
-  prefix and links its CUDA libraries from there. Needs `LD_LIBRARY_PATH`.
+- **COLMAP** cannot load `libcudart.so.12`. This applies to the development
+  machine's hand-built COLMAP, which was built into the conda prefix, carries no
+  RPATH, and links its CUDA libraries from there. Needs `LD_LIBRARY_PATH`. The
+  conda-forge build that `pipeline/QUICKSTART.md` installs does not have this
+  problem and needs only `PATH`.
 - **gsplat** fails to JIT-compile, because CUDA 12.1's `nvcc` refuses a host
   compiler newer than GCC 12. Needs `CC`/`CXX`/`CUDAHOSTCXX`.
 
@@ -54,8 +57,8 @@ extension, which is normally once per environment. They are harmless otherwise,
 and cheaper to carry than to debug when a rebuild is triggered unexpectedly.
 
 If the environment ever moves to a prebuilt gsplat wheel, JIT compilation goes
-away and these three become unnecessary. `LD_LIBRARY_PATH` is still required for
-COLMAP either way.
+away and these three become unnecessary. `LD_LIBRARY_PATH` is still required by
+the hand-built COLMAP this conda kernel points at, and only by it.
 
 ## Two kernels, and which one to use
 
@@ -71,8 +74,13 @@ paths silently ran different torch versions.
 
 ### Installing the uv kernel
 
-Replace `/REPO` with the repository root and `/PREFIX/CONTAINING/bin/colmap`
-with the prefix holding COLMAP and ffmpeg, then:
+**Unverified.** The command line has been run end to end on a clean machine; the
+notebook has not, so treat the steps below as untested and prefer
+`run_pipeline.py`. Retiring the notebook is the intended direction.
+
+Replace `/REPO` with the repository root and `/COLMAP/PREFIX` with the prefix
+holding COLMAP and ffmpeg (`~/opt/colmap-prefix` if you followed
+`pipeline/QUICKSTART.md`), then:
 
 ```bash
 mkdir -p ~/.local/share/jupyter/kernels/dt4ag-uv

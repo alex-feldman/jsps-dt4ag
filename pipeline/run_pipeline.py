@@ -316,15 +316,12 @@ _HINT = (
     "    uv run python pipeline/run_pipeline.py --config <your.ini>\n"
     "  Running .venv/bin/python directly is NOT enough: it gives you the right\n"
     "  interpreter but leaves ns-train, ns-process-data and ns-export off PATH.\n"
-    "  COLMAP is separate under uv and needs its prefix:\n"
-    "    export DT4AG_COLMAP_PREFIX=<prefix containing bin/colmap>\n"
-    "    export PATH=<repo>/pipeline/scripts/uv-env:$PATH\n"
+    "  COLMAP and ffmpeg are separate binaries that uv does not install. Put\n"
+    "  the prefix holding them on PATH:\n"
+    "    export PATH=$HOME/opt/colmap-prefix/bin:$PATH\n"
     "  With conda (the fallback):\n"
     "    conda activate ns-l-oci\n"
-    "  and note that PATH alone is not enough there: COLMAP was built into the "
-    "environment prefix and links its CUDA runtime from there, so\n"
-    "    export LD_LIBRARY_PATH=<conda-prefix>/lib:$LD_LIBRARY_PATH\n"
-    "  must also be in effect. See pipeline/QUICKSTART.md section 0a."
+    "  See pipeline/QUICKSTART.md section 0a."
 )
 
 
@@ -342,12 +339,17 @@ def _check_colmap(problems: List[str]) -> None:
         problems.append(f"'colmap' could not be executed: {exc}\n  {_HINT}")
         return
     output = (proc.stdout or "") + (proc.stderr or "")
-    if "libcudart" in output or "error while loading shared libraries" in output:
+    # Kept generic on purpose. The conda-forge build the QUICKSTART recipe
+    # installs carries an $ORIGIN-relative RPATH and resolves every library from
+    # its own prefix, so this cannot fire for the supported route. A COLMAP the
+    # user built or installed some other way still can, and the loader error is
+    # otherwise easy to mistake for a missing binary.
+    if "error while loading shared libraries" in output:
         problems.append(
             "'colmap' is on PATH but cannot load its shared libraries:\n"
             f"    {output.strip().splitlines()[0] if output.strip() else '(no output)'}\n"
-            "  This is the LD_LIBRARY_PATH trap: COLMAP links its CUDA runtime "
-            "from the conda environment prefix.\n"
+            "  This COLMAP was not installed by the recipe in "
+            "pipeline/QUICKSTART.md, which resolves its own libraries.\n"
             f"  {_HINT}"
         )
         return
@@ -498,8 +500,9 @@ def _check_cuda(problems: List[str]) -> None:
         problems.append(
             "torch is installed but reports no CUDA device. Training and export "
             "both need a GPU.\n"
-            "  Check 'nvidia-smi', and that this shell has the environment's "
-            "libraries on LD_LIBRARY_PATH."
+            "  Check 'nvidia-smi' reports a driver and a device. torch ships "
+            "its own CUDA runtime, so no\n"
+            "  system CUDA toolkit is involved."
         )
         return
     capability = torch.cuda.get_device_capability(0)

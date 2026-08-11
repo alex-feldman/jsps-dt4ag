@@ -12,7 +12,6 @@
   "debugger": true
  },
  "env": {
-  "PATH": "/REPO/pipeline/scripts/uv-env:/REPO/.venv/bin:/usr/local/bin:/usr/bin:/bin",
-  "DT4AG_COLMAP_PREFIX": "/PREFIX/CONTAINING/bin/colmap"
+  "PATH": "/COLMAP/PREFIX/bin:/REPO/.venv/bin:/usr/local/bin:/usr/bin:/bin"
  }
 }

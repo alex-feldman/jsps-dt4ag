@@ -181,16 +181,15 @@ compiled), nerfstudio 1.1.5, numpy 1.26.4.
 cd <repo root>
 uv sync --frozen              # ~250 packages, 7.4 GB venv, a few minutes
 
-export DT4AG_COLMAP_PREFIX=/path/to/prefix/containing/bin/colmap
-export PATH="$PWD/pipeline/scripts/uv-env:$PATH"
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 
 uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
 ```
 
-`pipeline/scripts/uv-env/` holds a `colmap` wrapper that scopes
-`LD_LIBRARY_PATH` to the COLMAP call. Read that directory's README before
-setting `LD_LIBRARY_PATH` yourself: exporting it globally under uv makes torch
-load the wrong `libcudart.so.12`.
+That one `PATH` line is the whole COLMAP and ffmpeg setup; see "COLMAP" below
+for how the prefix is built. Do **not** also put the prefix's `lib/` on
+`LD_LIBRARY_PATH`: nothing needs it, and "Why the prefix must not go on
+LD_LIBRARY_PATH" below explains what it breaks.
 
 Why torch 2.4 and not 2.5: 2.4 is the newest torch that gsplat publishes a
 prebuilt sm_75 wheel for. On torch 2.5 gsplat compiles itself from source on
@@ -239,8 +238,9 @@ export MAMBA_ROOT_PREFIX=~/opt/mamba-root
 ~/opt/bin/micromamba create -y -p ~/opt/colmap-prefix -c conda-forge \
     colmap=3.12.0=cuda_126h825ca31_0 ffmpeg
 
-# 3. That prefix is what DT4AG_COLMAP_PREFIX points at.
-export DT4AG_COLMAP_PREFIX=~/opt/colmap-prefix
+# 3. Put that prefix's bin/ on PATH. This is the only configuration step,
+#    and it covers ffmpeg as well as colmap.
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 ```
 
 Do **not** fetch micromamba from `micro.mamba.pm`: that endpoint serves a
@@ -250,7 +250,7 @@ GitHub URL above is the bare binary.
 Confirm it is the CUDA build. Run bare `colmap` and read line 2:
 
 ```bash
-$DT4AG_COLMAP_PREFIX/bin/colmap 2>&1 | head -2
+colmap 2>&1 | head -2
 # COLMAP 3.12.0 -- Structure-from-Motion and Multi-View Stereo
 # (Commit Unknown on Unknown with CUDA)
 ```
@@ -258,36 +258,25 @@ $DT4AG_COLMAP_PREFIX/bin/colmap 2>&1 | head -2
 `with CUDA` is the part that matters. A `without CUDA` build will run and will
 be uselessly slow.
 
-Two further notes:
+The bare invocation is not an oversight: `colmap --version` **does not work** in
+3.12.
 
-- `colmap --version` **does not work** in 3.12. Run bare `colmap` and read line 2,
-  which also tells you whether it was built `with CUDA`. You need the CUDA build.
-- If COLMAP was installed *into* a conda environment prefix (as it was on the
-  development machine), it links its CUDA libraries from there and needs
-  `LD_LIBRARY_PATH` set to that environment's `lib`. Activating the environment
-  normally does this for you. Under uv, use the wrapper in
-  `pipeline/scripts/uv-env/` instead, which scopes the variable to the COLMAP
-  call.
-
-On the **development machine's** COLMAP, which was built into a conda
-environment, exactly seven of its 76 shared libraries do not resolve against the
-system loader path and must come from its prefix: `libcudart.so.12`,
-`libGLEW.so.2.3`, `libboost_program_options.so.1.84.0`, `libceres.so.4`,
-`libglog.so.2`, `libmetis.so`, `libfreeimage.so.3`.
-
-**The conda-forge build above does not have that problem.** Its binary carries
-an `$ORIGIN`-relative RPATH, so `ldd` reports zero unresolved libraries with no
-`LD_LIBRARY_PATH` at all. The `colmap` wrapper is still the right thing to put on
-`PATH` (it is what makes `DT4AG_COLMAP_PREFIX` work as a pointer, and it keeps
-the variable scoped), it simply has less to do.
+**`PATH` is all this build needs.** Its binary carries an `$ORIGIN`-relative
+RPATH (`readelf -d` shows `RPATH [$ORIGIN/../lib]`), so it resolves every one of
+its libraries from its own `lib/`. Verified 2026-08-11 on a clean container with
+`LD_LIBRARY_PATH` explicitly unset: zero unresolved libraries, and a bare
+`colmap` prints the `with CUDA` banner. A COLMAP built by hand into a conda
+environment, as the development machine's was, has no RPATH and does need
+`LD_LIBRARY_PATH`; that is the only reason the older instructions asked for it.
 
 ### Why the prefix must not go on LD_LIBRARY_PATH
 
-The conda-forge `cuda_126` build carries **CUDA 12.9.79**'s `libcudart.so.12` in
-its `lib/`, while torch bundles its own CUDA 12.1 runtime. Export the prefix's
-`lib/` globally and torch's loader picks up the COLMAP copy. Use the wrapper in
-`pipeline/scripts/uv-env/`, which scopes the variable to the COLMAP exec, and
-verify with:
+Nothing in this quickstart tells you to, and this is why. The conda-forge
+`cuda_126` build carries **CUDA 12.9.79**'s `libcudart.so.12` in its `lib/`
+(`cuda_126` is the build target, not the shipped runtime version), while torch
+bundles its own CUDA 12.1 runtime. Export the prefix's `lib/` globally and
+torch's loader picks up the COLMAP copy. `PATH` alone cannot do that, which is
+what makes the single `PATH` export safe. Verify with:
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
@@ -301,13 +290,12 @@ refuses to start without it (see the check described in section 0). Either
 route works:
 
 - `sudo apt install ffmpeg`, if you have root and want it system-wide, or
-- let the COLMAP recipe above install it into `$DT4AG_COLMAP_PREFIX/bin/ffmpeg`.
+- let the COLMAP recipe above install it into the same prefix, which it does by
+  default.
 
-For the second route the repo already ships an `ffmpeg` wrapper in
-`pipeline/scripts/uv-env/`, on `PATH` alongside the `colmap` wrapper. It prefers
-a real system ffmpeg, then `$DT4AG_FFMPEG`, then
-`$DT4AG_COLMAP_PREFIX/bin/ffmpeg`, so no extra configuration is needed. Verified
-on the clean machine with conda-forge ffmpeg 9.0 and no system ffmpeg at all.
+For the second route the `PATH` export from the recipe already resolves it: no
+extra configuration. Verified on the clean machine with conda-forge ffmpeg 9.0
+and no system ffmpeg at all.
 
 ## 1. Make a config
 
@@ -350,8 +338,7 @@ python pipeline/dt4ag_config.py pipeline/configs/my-run.ini
 
 ```bash
 # uv (default)
-export DT4AG_COLMAP_PREFIX=/path/to/colmap/prefix
-export PATH="$PWD/pipeline/scripts/uv-env:$PATH"
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
 
 # conda (fallback)
@@ -473,9 +460,12 @@ Not a configuration problem and not fixable by one. The prebuilt gsplat wheel
 contains no code for your GPU and no PTX to JIT from. See "Which GPUs work"
 above. The pipeline stops before doing any work, which is deliberate.
 
-**`libcudart.so.12: cannot open shared object file`**
-COLMAP cannot find its CUDA libraries. Activate the conda environment, or set
-`LD_LIBRARY_PATH` to its `lib` directory.
+**`colmap: error while loading shared libraries: ...`**
+This COLMAP does not resolve its own libraries, so it was not installed by the
+recipe in section 0a. The conda-forge build there carries an `$ORIGIN`-relative
+RPATH and needs nothing but `PATH`. Install it that way rather than reaching for
+`LD_LIBRARY_PATH`, which breaks torch (see "Why the prefix must not go on
+LD_LIBRARY_PATH").
 
 **`error: [Errno 2] No such file or directory: 'cc'` during `uv sync`**
 **or `CMake Error: ... Could not find the compiler ... CXX: c++`**
@@ -533,9 +523,10 @@ built a venv by hand rather than with `uv sync --frozen`.
 runner refuses to start in that state; set it to `true` for unattended runs.
 
 **Running the notebook and COLMAP is not found, but it works in your shell**
-The Jupyter kernel does not activate the conda environment, so it inherits
-neither `PATH` nor `LD_LIBRARY_PATH` from it. Launch Jupyter from an activated
-shell, or use `run_pipeline.py` instead.
+A Jupyter kernelspec activates nothing and inherits only the environment it is
+given, so the COLMAP prefix has to be written into the kernelspec's own `PATH`.
+See `pipeline/kernels/README.md`. Or use `run_pipeline.py` instead, which is the
+supported path.
 
 **No images found, but the directory clearly has images**
 Images may be nested one directory per camera. The check is recursive; if this
@@ -550,9 +541,10 @@ via the `dt4ag-uv` kernel, so there is one dependency set and no torch-version
 split between the two paths.
 
 Install the kernel from `pipeline/kernels/kernel-uv.json.example`; see that
-directory's README. The kernel carries the `uv-env` wrappers on `PATH` and sets
-`DT4AG_COLMAP_PREFIX`, because a Jupyter kernelspec does not activate anything
-and inherits only what it is given.
+directory's README. The kernel carries the COLMAP prefix's `bin/` on its own
+`PATH`, because a Jupyter kernelspec does not activate anything and inherits
+only what it is given. **The notebook path has not been run on a clean machine**,
+unlike the command line, so treat the kernelspec as unverified.
 
 **For anything repeatable, prefer `run_pipeline.py`.** It is diffable, testable,
 runs headless, exits non-zero on failure, and verifies its own output. The

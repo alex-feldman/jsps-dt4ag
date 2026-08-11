@@ -48,13 +48,18 @@ configs are gitignored because they carry real dataset names and paths.
 
 Two environment traps, both of which produce confusing failures:
 
-- **COLMAP was built into the conda environment prefix** and links its CUDA
-  libraries from there, so activating the environment on `PATH` alone is not
-  enough. Without `LD_LIBRARY_PATH` it dies with
-  `libcudart.so.12: cannot open shared object file`:
+- **The development machine's COLMAP was built into the conda environment
+  prefix** and links its CUDA libraries from there, so activating the
+  environment on `PATH` alone is not enough. Without `LD_LIBRARY_PATH` it dies
+  with `libcudart.so.12: cannot open shared object file`:
 
       export PATH=<conda-prefix>/bin:$PATH
       export LD_LIBRARY_PATH=<conda-prefix>/lib:$LD_LIBRARY_PATH
+
+  This applies to the conda fallback only. The supported route installs the
+  conda-forge COLMAP build, which resolves its own libraries via an
+  `$ORIGIN`-relative RPATH and needs nothing but `PATH`. See
+  `pipeline/QUICKSTART.md`.
 
 - **gsplat JIT-compiles its CUDA extension on first import.** CUDA 12.1's
   `nvcc` refuses any host compiler newer than GCC 12, so on a distribution
@@ -134,4 +139,4 @@ build if subject-specific terms reach the committed copy.
 - **No LICENSE or citation file yet**, and no evaluation step: the pipeline ends
   at export. (`ns-eval` has to be run by hand.)
 - **COLMAP and ffmpeg are still outside the lockfile.** They are binaries and
-  cannot come from uv. See `scripts/uv-env/README.md`.
+  cannot come from uv. See the COLMAP recipe in `QUICKSTART.md`.
