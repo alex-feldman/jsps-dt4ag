@@ -197,18 +197,44 @@ Rough timings on an RTX 2060 with 120 images at 5184x3456:
 | `ns-train` @ 500 | ~25 s (plumbing test only) |
 | `ns-train` @ 30,000 | tens of minutes |
 
-## 4. Masks (optional)
+## 4. Where this pipeline starts, and what it does NOT do
 
-If you want to reconstruct a subject without its background, mask the images
-first and point `images_subpath` at the masked set.
+**The pipeline begins at MASKED images. It does not create masks.**
 
-- `pipeline/scripts/rgb-mask/` applies existing masks to RGB images as an alpha
-  channel. **Read its README before using it: it has a known defect** where the
-  documented directory layout silently produces nothing.
-- Mask generation itself is a separate repository.
-- COLMAP ignores the alpha channel, so it still seeds points across the
-  background. Training removes them, so this costs efficiency rather than
-  quality.
+Its four stages are `colmap`, `process`, `train`, `export`. There is no masking
+stage, and neither the runner nor the notebook invokes any masking script. If you
+point it at raw photos it will happily reconstruct them, background and all.
+
+The full capture-to-splat workflow is six steps. This repository automates the
+last four:
+
+```
+  1. capture photos                         you
+  2. generate masks (SAM3)                  samask, a SEPARATE repository
+  3. apply masks as an alpha channel        pipeline/scripts/rgb-mask/   MANUAL
+  ----------------------------------------- the pipeline starts here ---
+  4. COLMAP structure-from-motion           run_pipeline.py
+  5. ns-process-data                        run_pipeline.py
+  6. ns-train splatfacto + ns-export        run_pipeline.py
+```
+
+Steps 2 and 3 are run by hand. `pipeline/scripts/rgb-mask/rgb-mask-batch.py`
+applies existing masks; read its README first. Mask *generation* needs the
+`samask` repository, which at the time of writing is **not self-contained**: a
+fresh clone cannot run it.
+
+If you already have masked images, point `[dataset] images_subpath` at them and
+ignore all of the above.
+
+Closing this gap so the pipeline covers photos to splat is tracked, and it is
+blocked on samask becoming installable.
+
+### A note on background removal
+
+You do not need to remove the background by hand after export. When the input is
+masked, training drives the background gaussians to zero opacity and the export
+drops them. Expect a small gaussian count on a small subject: about 1,300 on the
+development dataset. **More gaussians means worse, not better**, see section 3.
 
 ## Troubleshooting
 
@@ -262,10 +288,19 @@ in step 1.
 
 ## The notebook
 
-`notebooks/nerfstudio-pipeline-06.ipynb` runs the same pipeline interactively and
-reads the same config file. It is kept for exploration. **For anything
-repeatable, use `run_pipeline.py`**: it is diffable, testable, runnable headless,
-and does not depend on how Jupyter was launched.
+`notebooks/nerfstudio-pipeline-06.ipynb` runs the same stages interactively and
+reads the same config file. **It now runs on the SAME uv environment as the CLI**,
+via the `dt4ag-uv` kernel, so there is one dependency set and no torch-version
+split between the two paths.
+
+Install the kernel from `pipeline/kernels/kernel-uv.json.example`; see that
+directory's README. The kernel carries the `uv-env` wrappers on `PATH` and sets
+`DT4AG_COLMAP_PREFIX`, because a Jupyter kernelspec does not activate anything
+and inherits only what it is given.
+
+**For anything repeatable, prefer `run_pipeline.py`.** It is diffable, testable,
+runs headless, exits non-zero on failure, and verifies its own output. The
+notebook is kept for exploration, and retiring it is the intended direction.
 
 ## Tests
 

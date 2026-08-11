@@ -17,10 +17,10 @@ at the repository root, installed with `uv sync --frozen`. See
 
 | Path | What it is |
 |---|---|
-| `notebooks/nerfstudio-pipeline-06.ipynb` | The pipeline: COLMAP reconstruction, `ns-process-data`, `ns-train splatfacto`, `ns-export gaussian-splat`. Kernel `ns-l-oci`. |
+| `notebooks/nerfstudio-pipeline-06.ipynb` | The same four stages, interactively. Kernel `dt4ag-uv`, the SAME uv environment the CLI uses. Kept for exploration; `run_pipeline.py` is the supported path. |
 | `run_pipeline.py` | The same pipeline as a command-line runner, no Jupyter. See "Running it from the command line" below. |
 | `dt4ag_config.py` | The INI config loader both of the above read, so they cannot drift. |
-| `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel, producing the masked images the notebook consumes. **Has a known defect, see that directory's README.** |
+| `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel. **Run by hand: the pipeline does NOT call it.** The pipeline starts at masked images; see QUICKSTART section 4. |
 | `scripts/sam/` | SAM helper scripts used while producing masks. |
 | `scripts/mask-analysis/` | The UT-vs-KU mask agreement study: per-image IoU comparison and CSV analysis. |
 
