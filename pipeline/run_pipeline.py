@@ -367,6 +367,125 @@ def _check_nerfstudio(problems: List[str], commands: Iterable[str]) -> None:
             log(f"{name:<18}: {found}")
 
 
+#: Compute capability -> the GPU family a user would recognise. Only used to
+#: make the unsupported-GPU message readable; the check itself is numeric.
+_CUDA_SERIES = {
+    50: "Maxwell", 52: "Maxwell", 53: "Maxwell",
+    60: "Pascal (GTX 10 series)", 61: "Pascal (GTX 10 series)", 62: "Pascal",
+    70: "Volta (V100)", 72: "Xavier", 75: "Turing (RTX 20 / GTX 16 series, T4)",
+    80: "Ampere (A100)", 86: "Ampere (RTX 30 series, A10/A40)", 87: "Orin",
+    89: "Ada Lovelace (RTX 40 series, L4/L40)",
+    90: "Hopper (H100/H200)",
+    100: "Blackwell datacenter (B200)", 120: "Blackwell (RTX 50 series)",
+}
+
+
+def _describe_capability(cap: int) -> str:
+    series = _CUDA_SERIES.get(cap)
+    return f"sm_{cap} ({series})" if series else f"sm_{cap}"
+
+
+def _gsplat_binary_archs() -> Tuple[Optional[set], bool]:
+    """Read the CUDA architectures actually baked into the installed gsplat.
+
+    Deliberately MEASURED, not hardcoded. The set of GPUs this pipeline can run
+    on is a property of whichever prebuilt gsplat wheel happens to be installed,
+    not of this repository, and it changes the moment that wheel changes. A
+    hardcoded list would silently rot into a lie.
+
+    Reads the CUDA cubins embedded in gsplat's compiled extension. Each one is
+    an ELF with EI_OSABI 0x33 (ELFOSABI_CUDA) whose low e_flags byte is the
+    compute capability it was compiled for.
+
+    Returns (architectures, has_ptx). `architectures` is None when the binary
+    could not be located or parsed, in which case the caller MUST NOT block the
+    run: an unreadable binary is not evidence of an unsupported GPU. `has_ptx`
+    reports whether the fatbin also carries PTX, which the driver can JIT for
+    newer architectures; without it the supported set is closed.
+    """
+    try:
+        import gsplat  # noqa: PLC0415
+    except Exception:
+        return None, False
+    root = Path(gsplat.__file__).resolve().parent
+    candidates = sorted(root.glob("csrc*.so")) + sorted(root.glob("*.so"))
+    if not candidates:
+        return None, False
+    try:
+        blob = candidates[0].read_bytes()
+    except OSError:
+        return None, False
+
+    import struct  # noqa: PLC0415
+
+    archs = set()
+    for match in re.finditer(b"\x7fELF", blob):
+        off = match.start()
+        if off + 0x34 > len(blob):
+            continue
+        # EI_CLASS == 2 (64-bit) and EI_OSABI == 0x33 (CUDA)
+        if blob[off + 4] != 2 or blob[off + 7] != 0x33:
+            continue
+        archs.add(struct.unpack_from("<I", blob, off + 0x30)[0] & 0xFF)
+    # Fatbin entry kinds: 1 == PTX, 2 == cubin. PTX means forward compatibility.
+    has_ptx = False
+    for match in re.finditer(b"\x50\xed\x55\xba", blob):
+        off = match.start()
+        hdr = struct.unpack_from("<H", blob, off + 6)[0] if off + 8 <= len(blob) else 0
+        if hdr not in (0x08, 0x10) or off + hdr + 2 > len(blob):
+            continue
+        if struct.unpack_from("<H", blob, off + hdr)[0] == 1:
+            has_ptx = True
+            break
+    return (archs or None), has_ptx
+
+
+def _check_gpu_arch(problems: List[str], capability: Tuple[int, int]) -> None:
+    """Refuse an unsupported GPU now, rather than cryptically during training.
+
+    Without this the failure lands inside gsplat after COLMAP and
+    ns-process-data have already run, which on the development dataset is about
+    ten minutes of wasted work and an error that does not name the cause.
+    """
+    archs, has_ptx = _gsplat_binary_archs()
+    if archs is None:
+        log("gpu support       : not determined (gsplat binary unreadable), continuing")
+        return
+    major, minor = capability
+    device_cap = major * 10 + minor
+    # CUDA binary compatibility: a cubin built for sm_X.y runs on any device
+    # sm_X.z where z >= y. It never crosses a major version.
+    supported = any(a // 10 == major and a % 10 <= minor for a in archs)
+    listed = ", ".join(f"sm_{a}" for a in sorted(archs))
+    if supported or has_ptx:
+        note = " (+PTX, so newer GPUs can JIT)" if has_ptx else ""
+        log(f"gpu support       : {_describe_capability(device_cap)} supported by gsplat [{listed}]{note}")
+        return
+    # Every capability the embedded cubins actually cover, in hardware order,
+    # so the message names the GPUs a reader recognises rather than sm numbers.
+    covered = sorted(
+        cap
+        for cap in _CUDA_SERIES
+        if any(a // 10 == cap // 10 and a % 10 <= cap % 10 for a in archs)
+    )
+    families: List[str] = []
+    for cap in covered:
+        name = _CUDA_SERIES[cap]
+        if name not in families:
+            families.append(name)
+    problems.append(
+        f"this GPU is {_describe_capability(device_cap)}, which the installed "
+        f"gsplat cannot run.\n"
+        f"  The gsplat wheel embeds code for [{listed}] and carries no PTX, so "
+        f"there is no just-in-time fallback\n"
+        f"  and the supported set is closed. Supported GPU families:\n"
+        f"    {'; '.join(families)}\n"
+        f"  This is a property of the prebuilt wheel, not of this repository, "
+        f"so it cannot be fixed by configuration.\n"
+        f"  See pipeline/QUICKSTART.md, 'Which GPUs work'."
+    )
+
+
 def _check_cuda(problems: List[str]) -> None:
     try:
         import torch  # noqa: PLC0415
@@ -383,10 +502,12 @@ def _check_cuda(problems: List[str]) -> None:
             "libraries on LD_LIBRARY_PATH."
         )
         return
+    capability = torch.cuda.get_device_capability(0)
     log(
         f"cuda              : {torch.cuda.get_device_name(0)}, "
-        f"torch {torch.__version__}"
+        f"compute {capability[0]}.{capability[1]}, torch {torch.__version__}"
     )
+    _check_gpu_arch(problems, capability)
 
 
 def check_prerequisites(stages: Sequence[str]) -> None:

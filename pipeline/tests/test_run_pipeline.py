@@ -439,5 +439,133 @@ class TestObjectAgnostic(unittest.TestCase):
                 )
 
 
+class GpuArchCheckTests(unittest.TestCase):
+    """The startup guard that refuses an unsupported GPU.
+
+    These tests stub the measured architecture set rather than reading the real
+    gsplat binary, so they stay hermetic and keep passing on a machine with a
+    different wheel installed. The set used here, {70, 75, 80, 86, 90} with no
+    PTX, is what gsplat 1.4.0+pt24cu121 actually contains, measured from its
+    fatbin on 2026-08-11.
+    """
+
+    SHIPPED = {70, 75, 80, 86, 90}
+    _DEFAULT = object()   # so a test can pass archs=None to mean "unreadable"
+
+    def _check(self, capability, archs=_DEFAULT, has_ptx=False):
+        archs = self.SHIPPED if archs is self._DEFAULT else archs
+        original = run_pipeline._gsplat_binary_archs
+        run_pipeline._gsplat_binary_archs = lambda: (archs, has_ptx)
+        try:
+            problems = []
+            run_pipeline._check_gpu_arch(problems, capability)
+            return problems
+        finally:
+            run_pipeline._gsplat_binary_archs = original
+
+    def test_exact_match_is_accepted(self):
+        self.assertEqual(self._check((7, 5)), [])
+
+    def test_higher_minor_within_major_is_accepted(self):
+        # Ada is 8.9 and there is no sm_89 cubin, but sm_86 is binary
+        # compatible with it. Rejecting Ada would exclude the RTX 40 series.
+        self.assertEqual(self._check((8, 9)), [])
+
+    def test_lower_minor_within_major_is_rejected(self):
+        # Compatibility runs upward only: an sm_80 cubin does not run on 8.0's
+        # predecessors, and there is no such thing here, but the rule must not
+        # be implemented as "same major is fine".
+        self.assertNotEqual(self._check((9, 0), archs={95}), [])
+
+    def test_newer_major_is_rejected(self):
+        problems = self._check((12, 0))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("sm_120", problems[0])
+        self.assertIn("Blackwell", problems[0])
+
+    def test_older_major_is_rejected(self):
+        self.assertNotEqual(self._check((6, 1)), [])
+
+    def test_ptx_permits_an_otherwise_unsupported_gpu(self):
+        # PTX is the driver's JIT path, so its presence reopens the closed set.
+        self.assertEqual(self._check((12, 0), has_ptx=True), [])
+
+    def test_unreadable_binary_does_not_block_the_run(self):
+        # A binary we cannot parse is not evidence of an unsupported GPU, and
+        # failing closed here would break every machine the parser cannot read.
+        self.assertEqual(self._check((12, 0), archs=None), [])
+
+    def test_message_names_the_supported_families_in_hardware_order(self):
+        message = self._check((12, 0))[0]
+        for family in ("Volta", "Turing", "Ampere", "Ada Lovelace", "Hopper"):
+            self.assertIn(family, message)
+        self.assertLess(message.index("Volta"), message.index("Hopper"))
+
+    def test_message_explains_that_configuration_cannot_fix_it(self):
+        message = self._check((12, 0))[0]
+        self.assertIn("no PTX", message)
+        self.assertIn("not of this repository", message)
+
+
+class GsplatBinaryScanTests(unittest.TestCase):
+    """The fatbin reader itself, against a synthetic binary.
+
+    Building a fake ELF is cheaper and more honest than asserting against
+    whatever wheel happens to be installed: it proves the parser reads the
+    fields it claims to read.
+    """
+
+    def _cuda_elf(self, sm):
+        import struct
+
+        blob = bytearray(b"\x00" * 0x40)
+        blob[0:4] = b"\x7fELF"
+        blob[4] = 2       # EI_CLASS, 64-bit
+        blob[7] = 0x33    # EI_OSABI, ELFOSABI_CUDA
+        struct.pack_into("<I", blob, 0x30, sm)   # e_flags, low byte is the arch
+        return bytes(blob)
+
+    def _scan(self, blob):
+        import tempfile as _tf
+
+        with _tf.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "csrc.so"
+            target.write_bytes(blob)
+
+            class FakeGsplat:
+                __file__ = str(Path(tmp) / "__init__.py")
+
+            real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __import__
+
+            def fake_import(name, *args, **kwargs):
+                if name == "gsplat":
+                    return FakeGsplat
+                return real_import(name, *args, **kwargs)
+
+            import builtins
+
+            builtins.__import__ = fake_import
+            try:
+                return run_pipeline._gsplat_binary_archs()
+            finally:
+                builtins.__import__ = real_import
+
+    def test_reads_architectures_from_cuda_elf_headers(self):
+        blob = b"pad" + self._cuda_elf(75) + b"pad" + self._cuda_elf(86)
+        archs, has_ptx = self._scan(blob)
+        self.assertEqual(archs, {75, 86})
+        self.assertFalse(has_ptx)
+
+    def test_ignores_non_cuda_elfs(self):
+        host = bytearray(self._cuda_elf(99))
+        host[7] = 0x00          # a plain System V ELF, not a cubin
+        archs, _ = self._scan(bytes(host) + self._cuda_elf(80))
+        self.assertEqual(archs, {80})
+
+    def test_returns_none_when_nothing_parses(self):
+        archs, _ = self._scan(b"not an elf at all")
+        self.assertIsNone(archs)
+
+
 if __name__ == "__main__":
     unittest.main()

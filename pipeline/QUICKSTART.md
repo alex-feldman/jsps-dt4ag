@@ -10,7 +10,8 @@ objects and contains no subject-specific logic.
 
 | Requirement | Notes |
 |---|---|
-| Linux x86-64 with an NVIDIA GPU | Developed on Ubuntu 24.04, RTX 2060 (6 GB), driver 580.173.02 |
+| Linux x86-64 | Developed on Ubuntu 24.04, driver 580.173.02 |
+| An NVIDIA GPU, Volta through Hopper | **RTX 50 series does NOT work.** See "Which GPUs work" below before anything else |
 | **COLMAP**, CUDA-enabled | **Not installable by pip or uv.** See "COLMAP" below |
 | **ffmpeg** | Not installable by uv. `sudo apt install ffmpeg` |
 | Python environment | `uv sync --frozen` from the committed lockfile. See section 0a |
@@ -18,6 +19,55 @@ objects and contains no subject-specific logic.
 
 No system CUDA toolkit is needed, and **no C or C++ compiler is needed**: torch
 ships its own CUDA 12.1 runtime and gsplat comes as a prebuilt wheel.
+
+**`uv sync --frozen` is not the whole install, and cannot be.** Two native
+binaries must be on `PATH` before stage 2 will start: `colmap` and `ffmpeg`.
+`ns-process-data` checks for **both** unconditionally, in
+`ColmapConverterToNerfstudioDataset.__post_init__`, at argument-parse time. That
+check runs **even when the pipeline passes `--skip-colmap`**, which it always
+does, and it calls `sys.exit(1)` if `colmap -h` returns nonzero. So a COLMAP
+binary is required even for a run that never asks COLMAP to do anything.
+
+## 0b. Which GPUs work
+
+The pipeline compiles nothing, which is what makes it install quickly and
+without a toolchain. The cost of that is a **closed** list of supported GPUs:
+the CUDA code is whatever the prebuilt gsplat wheel already contains, and it
+cannot be extended at install time.
+
+The installed wheel, `gsplat 1.4.0+pt24cu121`, embeds compiled code for
+`sm_70`, `sm_75`, `sm_80`, `sm_86` and `sm_90`, **and no PTX**. PTX is the
+intermediate form a driver can just-in-time compile for a GPU it was not built
+for; without it there is no forward compatibility whatsoever.
+
+Applying CUDA's binary-compatibility rule (code built for `sm_X.y` runs on any
+device `sm_X.z` where `z >= y`, and never across a major version):
+
+| GPU family | Compute | Works |
+|---|---|---|
+| Maxwell (GTX 900 series) | 5.x | **No** |
+| Pascal (GTX 10 series, P100) | 6.x | **No** |
+| Volta (V100, Titan V) | 7.0 | Yes |
+| Turing (RTX 20 series, GTX 16 series, T4) | 7.5 | Yes, this is the development GPU |
+| Ampere (A100) | 8.0 | Yes |
+| Ampere (RTX 30 series, A10, A40) | 8.6 | Yes |
+| Ada Lovelace (RTX 40 series, L4, L40) | 8.9 | Yes, via the `sm_86` code |
+| Hopper (H100, H200) | 9.0 | Yes |
+| Blackwell datacenter (B200) | 10.0 | **No** |
+| Blackwell (RTX 50 series) | 12.0 | **No** |
+
+`run_pipeline.py` checks this at startup and refuses to begin on an unsupported
+GPU, naming the reason. It reads the architecture list out of the installed
+gsplat binary rather than from a hardcoded table, so the check stays honest if
+the wheel is ever changed. Without that check the failure surfaces deep inside
+training, after COLMAP and `ns-process-data` have already spent about ten
+minutes.
+
+Note this is a limitation of the *prebuilt wheel*, not of the pipeline or of
+gsplat itself, and no configuration setting can work around it. Supporting
+newer hardware means finding or building a gsplat wheel that includes those
+architectures, which reintroduces a compiler. That is tracked and deliberately
+out of scope for the current release.
 
 ## 0a. The environment
 
@@ -237,6 +287,11 @@ drops them. Expect a small gaussian count on a small subject: about 1,300 on the
 development dataset. **More gaussians means worse, not better**, see section 3.
 
 ## Troubleshooting
+
+**`this GPU is sm_120 (Blackwell (RTX 50 series)), which the installed gsplat cannot run`**
+Not a configuration problem and not fixable by one. The prebuilt gsplat wheel
+contains no code for your GPU and no PTX to JIT from. See "Which GPUs work"
+above. The pipeline stops before doing any work, which is deliberate.
 
 **`libcudart.so.12: cannot open shared object file`**
 COLMAP cannot find its CUDA libraries. Activate the conda environment, or set
