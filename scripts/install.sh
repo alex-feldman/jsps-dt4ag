@@ -51,7 +51,7 @@ MAMBA_BIN="$HOME/opt/bin/micromamba"
 MAMBA_BIN_DOC='$HOME/opt/bin/micromamba'
 UV_BIN_DIR="$HOME/.local/bin"
 
-APT_PACKAGES="build-essential libx11-6 libgl1 libgomp1 curl ca-certificates git"
+APT_PACKAGES="build-essential libx11-6 libgl1 libgomp1 curl ca-certificates git unzip"
 
 # Pinned. The build string is the CUDA build; the default conda-forge colmap is
 # not CUDA-enabled and is uselessly slow.
@@ -277,6 +277,10 @@ note "curl and ca-certificates are needed by steps 2 and 3 to fetch uv and"
 note "micromamba over HTTPS, and a bare ubuntu:24.04 has neither. git is listed"
 note "for completeness: you needed it to clone this repository, so it is already"
 note "present, but the generated procedure is then complete for a bare machine."
+note ""
+note "unzip is here because the published sample dataset ships as a .zip and a"
+note "bare ubuntu:24.04 cannot open it. Without this the step immediately after"
+note "a successful install is impossible."
 
 if $DRY_RUN; then
     run "sudo apt-get update"

@@ -8,18 +8,18 @@ objects and contains no subject-specific logic.
 
 ## Install it with the script
 
-> **NEW AND NOT YET VALIDATED END TO END (2026-08-12).** `scripts/install.sh`
-> exists and each part of it has been checked, but it has **never completed a
-> full install on a clean machine**. Until it has, treat the manual steps in
-> sections 0 and 3 as the route of record: they are the ones that have actually
-> been walked, on a bare `ubuntu:24.04` container, and they produced a verified
-> reconstruction. Try the script by all means, and please report what happens,
-> but if it fails, fall back rather than assuming your machine is at fault.
+> **VALIDATED END TO END on 2026-08-13.** `scripts/install.sh` was run on a bare
+> `ubuntu:24.04` container holding no compiler, no `curl`, no `git` and no
+> Python. It completed unaided (exit 0), and the four-stage pipeline then
+> reproduced the reference reconstruction: **1,324 gaussians at PSNR 46.530**,
+> against references of 1,301 at 46.537 and 1,343 at 46.570 on the same GPU.
+> Re-running the script took 3.4 seconds and correctly skipped every completed
+> step.
 
-**`scripts/install.sh` is intended to become the supported install route.**
-Sections 0 and 3 below describe the same procedure by hand. Read them when you
-need to adapt a step, when the script fails and you want to know what it was
-doing, or when you are installing somewhere it does not fit.
+**`scripts/install.sh` is the supported install route.** Sections 0 and 3 below
+describe the same procedure by hand. Read them when you need to adapt a step,
+when the script fails and you want to know what it was doing, or when you are
+installing somewhere it does not fit.
 
 ```bash
 git clone -b pipeline-alpha https://github.com/alex-feldman/jsps-dt4ag.git
@@ -38,6 +38,12 @@ at the first thing that does not check out rather than continuing.
 Only the apt step needs root, and it is skipped entirely when those packages are
 already present, so a normal desktop Ubuntu can run the whole thing with no
 sudo.
+
+**Two things must exist before the script can run, and a minimal container has
+neither:** `git`, because that is how you obtain this repository, and `sudo` (or
+a root shell) for the apt step. A desktop or server Ubuntu has both. If `sudo`
+is genuinely absent the script says so and prints the exact `apt-get` line to
+hand an administrator, after which it needs no root at all.
 
 To see what it would do without doing it:
 
@@ -392,7 +398,9 @@ curl -fLs https://github.com/mamba-org/micromamba-releases/releases/latest/downl
 chmod +x ~/opt/bin/micromamba
 
 # 2. COLMAP 3.12.0 CUDA build, plus ffmpeg, into one standalone prefix.
-#    ~4 GB on disk, ~2 GB to download, a few minutes.
+#    ~2 GB to download, a few minutes. Budget ~6 GB on disk, not 4: the
+#    prefix itself is 4.1 GB and micromamba leaves another 1.9 GB of
+#    package cache in MAMBA_ROOT_PREFIX that nothing cleans up.
 export MAMBA_ROOT_PREFIX=~/opt/mamba-root
 ~/opt/bin/micromamba create -y -p ~/opt/colmap-prefix -c conda-forge \
     colmap=3.12.0=cuda_126h825ca31_0 ffmpeg
@@ -405,6 +413,9 @@ export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 Do **not** fetch micromamba from `micro.mamba.pm`: that endpoint serves a
 `.tar.bz2`, and a minimal Ubuntu image has no `bzip2`, so `tar` fails. The
 GitHub URL above is the bare binary.
+
+That `curl` is silent while it pulls about 18 MB, so on a slow link it looks
+like a hung terminal for a few minutes. It is not.
 
 Confirm it is the CUDA build. Run bare `colmap` and read line 2:
 
@@ -556,11 +567,29 @@ reconstructions:
 [jsps-dt4ag alpha sample dataset](https://drive.google.com/file/d/1Co9RLorlKGWBHSfN6WihAmzLryW_W2Ji/view?usp=sharing)
 (2.2 GB, 120 masked images, five cameras)
 
-It unzips to a `datasets/` tree that matches the defaults above, so **the only
-config key you change is `data_root`**, which is the directory containing
-`datasets`. The zip carries a `README.txt` with the expected results and the
-one or two things people get wrong. On a supported GPU expect roughly 1,300 to
-1,360 gaussians at **PSNR ~46.5**, in about 20 minutes.
+Unzip it, then set **two** keys in your config:
+
+```ini
+[paths]
+data_root      = /full/path/to/jsps-dt4ag-alpha-sample   # the dir CONTAINING datasets
+[dataset]
+images_subpath = masked-images/test_251128
+```
+
+`data_root` is the directory that **contains** `datasets`, not `datasets`
+itself: the image path is built as `data_root / datasets_dirname /
+images_subpath`, so those levels come from the other two keys. And
+`example.ini` ships a neutral placeholder for `images_subpath`, so that one
+must change too. If you get either wrong, the config validator in step 3 names
+the exact key and the path it resolved to, in about a second.
+
+On a supported GPU expect roughly 1,300 to 1,360 gaussians at **PSNR ~46.5**,
+in about 20 minutes. The zip's `README.txt` repeats all of this.
+
+**You need `unzip`.** A minimal container has neither it nor a system Python.
+`scripts/install.sh` installs it; if you installed by hand,
+`sudo apt install unzip`, or use the environment you just built:
+`uv run --frozen python -m zipfile -e <zip> <destination>`.
 
 **Your own images work too**, with two caveats. There is no reference value to
 compare against, so a different PSNR means different data rather than a broken
@@ -677,9 +706,25 @@ Rough timings on an RTX 2060 with 120 images at 5184x3456:
 
 Measured stage by stage on a clean `ubuntu:24.04` container, 2026-08-11, same
 120-image dataset: COLMAP 5m49s, `ns-process-data` 2m55s, `ns-train` @ 30,000
-10m21s, `ns-export` 10s. Budget separately for `uv sync --frozen` the first
-time: 249 packages and 7.4 GB, which took nearly four hours on a link where
-`files.pythonhosted.org` was throttling to about 180 KB/s per connection.
+10m21s, `ns-export` 10s. A second clean run on 2026-08-13 through
+`scripts/install.sh` agreed: 6m00s, 3m00s, 10m42s, 10s.
+
+**Budget separately, and generously, for `uv sync --frozen` the first time.**
+249 packages and 7.4 GB. It has taken **4 hours 43 minutes** on a link where
+`files.pythonhosted.org` throttled to 150-425 KB/s while
+`download.pytorch.org` served 9-11 MB/s to the same machine. On a healthy link
+it is minutes. Both extremes are normal; the variable is the PyPI CDN, not this
+project.
+
+**It gives no progress output for the whole duration**, so a slow link is
+indistinguishable from a hang by watching the log. To tell them apart, check
+that the download cache is still growing:
+
+```bash
+du -sb "${UV_CACHE_DIR:-$HOME/.cache/uv}"     # run twice, a minute apart
+```
+
+Growing means alive.
 
 ## 7. Where this pipeline starts, and what it does NOT do
 
