@@ -8,10 +8,18 @@ objects and contains no subject-specific logic.
 
 ## Install it with the script
 
-**`scripts/install.sh` is the supported install route.** Sections 0 and 3 below
-describe the same procedure by hand, and they are the **fallback**: read them
-when you need to adapt a step, when the script fails and you want to know what
-it was doing, or when you are installing somewhere it does not fit.
+> **NEW AND NOT YET VALIDATED END TO END (2026-08-12).** `scripts/install.sh`
+> exists and each part of it has been checked, but it has **never completed a
+> full install on a clean machine**. Until it has, treat the manual steps in
+> sections 0 and 3 as the route of record: they are the ones that have actually
+> been walked, on a bare `ubuntu:24.04` container, and they produced a verified
+> reconstruction. Try the script by all means, and please report what happens,
+> but if it fails, fall back rather than assuming your machine is at fault.
+
+**`scripts/install.sh` is intended to become the supported install route.**
+Sections 0 and 3 below describe the same procedure by hand. Read them when you
+need to adapt a step, when the script fails and you want to know what it was
+doing, or when you are installing somewhere it does not fit.
 
 ```bash
 git clone -b pipeline-alpha https://github.com/alex-feldman/jsps-dt4ag.git
@@ -38,9 +46,18 @@ scripts/install.sh --dry-run
 ```
 
 That prints every command, and nothing else, as a runnable shell script. The
-manual steps in this document are generated from it, which is what keeps the two
-routes from drifting apart. Everything below still applies: read section 1
-before you buy or borrow a GPU, and section 4 before your first run.
+intention is that the manual steps in this document get generated from that
+output, so the two routes cannot drift apart; today they are still maintained by
+hand and kept in step deliberately. One deliberate difference: the script fetches
+micromamba with `curl -fLs` rather than `-Ls`, so an HTTP error cannot be saved
+as if it were the binary.
+
+Note that the verification commands in the `--dry-run` output only print their
+results for you to read. The script itself checks them and stops. So running the
+generated output as a script installs the same thing but does not verify it.
+
+Everything below still applies: read section 1 before you buy or borrow a GPU,
+and section 4 before your first run.
 
 ## 0. What you need
 
@@ -50,6 +67,8 @@ before you buy or borrow a GPU, and section 4 before your first run.
 | An NVIDIA GPU, Volta through Hopper | **RTX 50 series does NOT work.** See "Which GPUs work" below before anything else |
 | **A host C/C++ compiler** | `sudo apt install build-essential`. Needed at install time AND at training time. See "You do need a host compiler" below |
 | **X11 and OpenGL runtime libraries** | `sudo apt install libx11-6 libgl1 libgomp1`. `open3d` will not import without them. See "System libraries" below |
+| **`git`, `curl`, `ca-certificates`** | `sudo apt install git curl ca-certificates`. A bare `ubuntu:24.04` has none of them, and you need `git` before you can even clone. See "Get the code" |
+| **An NVIDIA driver** | `nvidia-smi` must work. Nothing here installs it, and on a fresh Ubuntu it is usually not present. See "Which GPUs work" |
 | **`uv`** | `curl -LsSf https://astral.sh/uv/install.sh \| sh`. See "Installing uv" below |
 | **COLMAP 3.12.0**, CUDA-enabled | **Not installable by pip or uv.** Copy-paste recipe under "COLMAP" below |
 | **ffmpeg** | Not installable by uv. Comes with the COLMAP recipe below, or `sudo apt install ffmpeg` |
@@ -304,7 +323,7 @@ the supported route for the alpha:
 # 1. micromamba: one static binary. Not a conda distribution: no base
 #    environment, no activate.d, nothing on your PATH afterwards.
 mkdir -p ~/opt/bin
-curl -Ls https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-linux-64 \
+curl -fLs https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-linux-64 \
      -o ~/opt/bin/micromamba
 chmod +x ~/opt/bin/micromamba
 

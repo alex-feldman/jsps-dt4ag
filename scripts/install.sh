@@ -51,7 +51,7 @@ MAMBA_BIN="$HOME/opt/bin/micromamba"
 MAMBA_BIN_DOC='$HOME/opt/bin/micromamba'
 UV_BIN_DIR="$HOME/.local/bin"
 
-APT_PACKAGES="build-essential libx11-6 libgl1 libgomp1"
+APT_PACKAGES="build-essential libx11-6 libgl1 libgomp1 curl ca-certificates git"
 
 # Pinned. The build string is the CUDA build; the default conda-forge colmap is
 # not CUDA-enabled and is uselessly slow.
@@ -156,7 +156,7 @@ have_lib() {
 }
 
 apt_satisfied() {
-    have_cmd cc && have_cmd c++ \
+    have_cmd cc && have_cmd c++ && have_cmd curl \
         && have_lib libX11.so.6 && have_lib libGL.so.1 && have_lib libgomp.so.1
 }
 
@@ -232,8 +232,9 @@ if $DRY_RUN; then
 # This is the COMPLETE procedure for a bare machine, not the subset any one
 # machine still needs. Steps you have already done are safe to skip.
 #
-# Assumes `curl` is present; on a bare image install it first with
-# `sudo apt-get install -y curl ca-certificates`.
+# The ONLY thing you need before this runs is `git`, to obtain the repository,
+# plus a working NVIDIA driver (check with `nvidia-smi`). Step 1 installs
+# everything else, curl included. A bare ubuntu:24.04 has none of it.
 #
 # Everything below runs from the repository root, the directory holding
 # pyproject.toml and uv.lock. Get there first; the -b pipeline-alpha is not
@@ -249,10 +250,11 @@ else
     printf '  repository root : %s\n' "$REPO_ROOT"
     printf '  COLMAP prefix   : %s\n' "$COLMAP_PREFIX"
     printf '  dry run         : no\n'
-    have_cmd curl || die \
-        "'curl' is not on PATH, and it is needed to fetch uv and micromamba." \
-        "Install it first:" \
-        "  sudo apt-get install -y curl ca-certificates"
+    if ! have_cmd curl; then
+        # Not fatal here: step 1 installs curl. It only becomes fatal if step 1
+        # is skipped or cannot run, which the check after step 1 catches.
+        printf '  note            : curl is missing and will be installed by step 1\n'
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -270,6 +272,11 @@ note ""
 note "libx11-6, libgl1 and libgomp1 are the complete set open3d needs. nerfstudio"
 note "imports open3d unconditionally, so stage 2 cannot start without them. A"
 note "desktop Ubuntu already has all three; a server image or container has none."
+note ""
+note "curl and ca-certificates are needed by steps 2 and 3 to fetch uv and"
+note "micromamba over HTTPS, and a bare ubuntu:24.04 has neither. git is listed"
+note "for completeness: you needed it to clone this repository, so it is already"
+note "present, but the generated procedure is then complete for a bare machine."
 
 if $DRY_RUN; then
     run "sudo apt-get update"
@@ -297,6 +304,10 @@ if ! $DRY_RUN; then
     # Verify the artefacts, not apt's exit code: a compiler that runs and three
     # sonames the loader can actually resolve. Runs even under --skip-apt,
     # because the point is to know, not to install.
+    have_cmd curl || die \
+        "'curl' is still not on PATH after the system-package step, and steps 2" \
+        "and 3 cannot fetch uv or micromamba without it. Install it:" \
+        "  sudo apt-get install -y curl ca-certificates"
     have_cmd cc || die \
         "'cc' is not on PATH. uv sync will die partway through building" \
         "pyliblzfse, after the whole multi-minute download." \
