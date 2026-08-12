@@ -59,6 +59,72 @@ generated output as a script installs the same thing but does not verify it.
 Everything below still applies: read section 1 before you buy or borrow a GPU,
 and section 4 before your first run.
 
+## Pre-steps: getting the machine ready
+
+Two things must be true before anything in this document works, and neither the
+script nor `uv` can supply them. Both need a reboot, which is why they are
+separate steps rather than part of the installer.
+
+**Check first. If both of these already work, skip this whole section.**
+
+```bash
+nvidia-smi        # must print a table naming your GPU
+git --version     # you need git to clone the repository
+```
+
+### The NVIDIA driver, on a normal Ubuntu machine
+
+A fresh Ubuntu install usually has no NVIDIA driver. Ubuntu's own tool picks a
+suitable one for your card:
+
+```bash
+sudo ubuntu-drivers install
+sudo reboot
+```
+
+Then check `nvidia-smi` again. Two things to look for in its output:
+
+- It names your GPU. If instead you get
+  `NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA
+  driver`, the driver modules were built for a different kernel than the one
+  you booted. This happened on the development machine: the driver metapackage
+  was pinned to an older kernel while a newer one was running. The fix is to
+  install the modules package matching your running kernel and reboot again,
+  for example `sudo apt install
+  linux-modules-nvidia-580-open-generic-hwe-24.04`.
+- The **`CUDA Version`** field in the top-right reads **12.1 or higher**. torch
+  ships its own CUDA 12.1 runtime, but the driver still has to be new enough to
+  run it. An older driver fails later, during training, rather than here.
+
+### WSL2, on Windows
+
+**Untested as of 2026-08-12.** WSL2 is Linux x86-64, so everything in this
+document should apply unchanged once the GPU is visible, but nobody has run this
+pipeline there yet. Please report the result either way.
+
+The driver rule is the **opposite** of the one above, and getting it wrong is
+the classic WSL mistake:
+
+1. **On Windows**, install the normal NVIDIA Windows driver. That is what gives
+   WSL the GPU.
+2. In PowerShell: `wsl --install -d Ubuntu-24.04`, then reboot.
+3. **Inside WSL, do NOT install any Linux NVIDIA driver.** No
+   `apt install nvidia-driver-*`, no `ubuntu-drivers install`. The GPU arrives
+   through `/usr/lib/wsl/lib` from the Windows side, and installing a Linux
+   driver over it is how people break a working setup.
+4. Inside WSL, check:
+
+```bash
+nvidia-smi
+```
+
+If that prints your GPU, continue with this document from section 0 exactly as
+written. A WSL Ubuntu is minimal in the same way a container is, so it will need
+the `apt` packages in section 0 rather than already having them.
+
+Budget disk space on the **Windows** drive: the environment alone is about 7.4 GB
+and the COLMAP prefix another 4 GB, before any data.
+
 ## 0. What you need
 
 | Requirement | Notes |
@@ -68,7 +134,7 @@ and section 4 before your first run.
 | **A host C/C++ compiler** | `sudo apt install build-essential`. Needed at install time AND at training time. See "You do need a host compiler" below |
 | **X11 and OpenGL runtime libraries** | `sudo apt install libx11-6 libgl1 libgomp1`. `open3d` will not import without them. See "System libraries" below |
 | **`git`, `curl`, `ca-certificates`** | `sudo apt install git curl ca-certificates`. A bare `ubuntu:24.04` has none of them, and you need `git` before you can even clone. See "Get the code" |
-| **An NVIDIA driver** | `nvidia-smi` must work. Nothing here installs it, and on a fresh Ubuntu it is usually not present. See "Which GPUs work" |
+| **An NVIDIA driver** | `nvidia-smi` must work, reporting CUDA 12.1 or higher. Nothing here installs it. See "Pre-steps" above |
 | **`uv`** | `curl -LsSf https://astral.sh/uv/install.sh \| sh`. See "Installing uv" below |
 | **COLMAP 3.12.0**, CUDA-enabled | **Not installable by pip or uv.** Copy-paste recipe under "COLMAP" below |
 | **ffmpeg** | Not installable by uv. Comes with the COLMAP recipe below, or `sudo apt install ffmpeg` |
@@ -100,17 +166,15 @@ macOS and Windows are tracked as beta work rather than abandoned. Expect macOS
 to be the hard one: no CUDA at all, so it may end up supporting viewing and
 analysis rather than training.
 
-**WSL2 has not been tested, and is expected to work.** It is stated here as a
-hypothesis so nobody mistakes it for a supported route. WSL2 *is* Linux
-x86-64, so the wheel platform tag, the conda-forge COLMAP and the whole uv path
-should apply unchanged, and a WSL2 Ubuntu is minimal in the same way a container
-is, so it will need the `build-essential` and `libx11-6 libgl1 libgomp1` steps
-above rather than having them already. The part that is genuinely unproven is
-the GPU: WSL2 reaches the card through a passthrough driver stack rather than a
-native one. If you try it, the first thing to check is that
-`nvidia-smi` runs inside WSL and that
-`python -c "import torch; print(torch.cuda.is_available())"` prints `True`; if
-both hold, the rest of this document should apply verbatim. Report the result
+**WSL2 has not been tested, and is expected to work.** It is stated as a
+hypothesis so nobody mistakes it for a supported route. WSL2 *is* Linux x86-64,
+so the wheel platform tag, the conda-forge COLMAP and the whole uv path should
+apply unchanged. The part that is genuinely unproven is the GPU, which WSL2
+reaches through a passthrough driver stack rather than a native one. Setup steps
+and the do-not-install-a-Linux-driver rule are under "Pre-steps" above. If
+`nvidia-smi` works inside WSL and
+`uv run python -c "import torch; print(torch.cuda.is_available())"` prints
+`True`, the rest of this document should apply verbatim. Report the result
 either way.
 
 ### You do need a host compiler
