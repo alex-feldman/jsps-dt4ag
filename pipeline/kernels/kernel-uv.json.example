@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "/REPO/.venv/bin/python",
+  "-m",
+  "ipykernel_launcher",
+  "-f",
+  "{connection_file}"
+ ],
+ "display_name": "Python (dt4ag uv, torch 2.4)",
+ "language": "python",
+ "metadata": {
+  "debugger": true
+ },
+ "env": {
+  "PATH": "/COLMAP/PREFIX/bin:/REPO/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ }
+}

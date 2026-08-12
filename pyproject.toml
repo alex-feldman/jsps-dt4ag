@@ -1,0 +1,67 @@
+[project]
+name = "jsps-dt4ag-pipeline"
+version = "0.1.0"
+description = "Reconstruction pipeline environment: nerfstudio + PREBUILT gsplat, no CUDA JIT, no compiler toolchain"
+readme = "pipeline/README.md"
+# Python 3.10 is MANDATORY, not a preference: cp310 is the only Python tag the
+# prebuilt gsplat wheel index publishes for pt24cu121.
+requires-python = "==3.10.*"
+
+dependencies = [
+    "nerfstudio==1.1.5",
+    # Resolves to 1.4.0+pt24cu121 via [tool.uv.sources] below. A bare ==1.4.0
+    # matches a local version under PEP 440, which is why nerfstudio's own
+    # gsplat==1.4.0 pin is satisfied by the prebuilt wheel.
+    "gsplat==1.4.0",
+    # torch 2.4.x is the whole point: it is the newest torch that gsplat
+    # publishes a prebuilt sm_75 wheel for. torch 2.5 forces a source JIT build,
+    # which drags in nvcc and a gcc<=12 host compiler.
+    "torch==2.4.1",
+    "torchvision==0.19.1",
+    # NOT a build tool here. gsplat/cuda/_backend.py imports
+    # torch.utils.cpp_extension at module top level, unconditionally, before it
+    # checks whether the prebuilt csrc is importable. That import needs
+    # setuptools. Without this pin a fresh uv venv fails at `import gsplat`.
+    "setuptools",
+    # Neither torch 2.4.1 nor nerfstudio 1.1.5 caps numpy, so a naive resolve
+    # lands on numpy 2.x. open3d / pymeshlab / nerfacc of this vintage are
+    # exactly where numpy 2 causes silent dtype and ABI surprises. Pinning <2
+    # also reproduces the 1.26.4 of the proven conda environment.
+    "numpy<2",
+]
+
+# tinycudann is deliberately absent. It is not a nerfstudio dependency and
+# splatfacto does not use it. Verified: nerfstudio.models.splatfacto imports and
+# rasterizes with no tinycudann installed and no compiler on PATH.
+
+[dependency-groups]
+# Optional: only for pipeline/notebooks/. `uv sync` does not install it.
+# Install with: uv sync --group notebook
+notebook = ["jupyterlab>=3.3.4"]
+
+[tool.uv]
+# cp310 + linux_x86_64 is the only platform the prebuilt gsplat wheel exists
+# for, so the lock is resolved for that platform only.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "gsplat-pt24cu121"
+url = "https://docs.gsplat.studio/whl/pt24cu121"
+explicit = true
+
+# explicit = true above is load-bearing. Without it, uv consults PyPI first and
+# silently installs gsplat's pure-Python py3-none-any wheel, which has no
+# csrc.so and falls straight back to JIT compilation. It reports success and
+# exits 0; the only symptom is a 10-minute compile at the start of training.
+# `explicit` means each index is consulted ONLY for the packages routed to it
+# here, so PyPI cannot shadow gsplat and the gsplat index cannot shadow
+# anything else.
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+gsplat = { index = "gsplat-pt24cu121" }
