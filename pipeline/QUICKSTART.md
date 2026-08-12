@@ -139,7 +139,7 @@ and the COLMAP prefix another 4 GB, before any data.
 | **COLMAP 3.12.0**, CUDA-enabled | **Not installable by pip or uv.** Copy-paste recipe under "COLMAP" below |
 | **ffmpeg** | Not installable by uv. Comes with the COLMAP recipe below, or `sudo apt install ffmpeg` |
 | Python | **Nothing to install.** uv downloads its own CPython 3.10; the system Python, if any, is not used |
-| Your images | Any number, in one directory. Sub-directories are supported and are treated as one camera each |
+| Your images, or the sample dataset | A published 2.2 GB sample exists and is the best way to verify an install. See "Where to get images" in section 4. Sub-directories are supported and are treated as one camera each |
 
 **No system CUDA toolkit is needed, and no CUDA compiler (`nvcc`) is ever
 needed**, at install time or at run time: torch ships its own CUDA 12.1 runtime
@@ -547,10 +547,27 @@ first run writes anything: `colmap_dirname`, `outputs_dirname` and
 `exports_dirname`, which name the working directories the pipeline creates under
 `data_root`.
 
-**Where the images themselves come from is not answered by this repository.**
-No sample dataset is committed. Supply your own, and read section 7 first: the
-pipeline starts at **masked** images, so raw photos will reconstruct the
-background along with the subject.
+### Where to get images
+
+**A sample dataset is published, and it is the right thing to test an install
+against**, because it is the exact data that produced this project's reference
+reconstructions:
+
+[jsps-dt4ag alpha sample dataset](https://drive.google.com/file/d/1Co9RLorlKGWBHSfN6WihAmzLryW_W2Ji/view?usp=sharing)
+(2.2 GB, 120 masked images, five cameras)
+
+It unzips to a `datasets/` tree that matches the defaults above, so **the only
+config key you change is `data_root`**, which is the directory containing
+`datasets`. The zip carries a `README.txt` with the expected results and the
+one or two things people get wrong. On a supported GPU expect roughly 1,300 to
+1,360 gaussians at **PSNR ~46.5**, in about 20 minutes.
+
+**Your own images work too**, with two caveats. There is no reference value to
+compare against, so a different PSNR means different data rather than a broken
+install. And read section 7 first: the pipeline starts at **masked** images, so
+raw photos reconstruct the background along with the subject, which is a
+supported thing to do but gives you far more gaussians and something to crop
+afterwards.
 
 Two more keys are worth setting even though nothing fails without them, because
 they are baked into the export filename and are how a `.ply` records what
