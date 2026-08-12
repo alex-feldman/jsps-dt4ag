@@ -6,6 +6,42 @@ splat. No Jupyter required.
 This pipeline is **object-agnostic**: it reconstructs arbitrary scenes and
 objects and contains no subject-specific logic.
 
+## Install it with the script
+
+**`scripts/install.sh` is the supported install route.** Sections 0 and 3 below
+describe the same procedure by hand, and they are the **fallback**: read them
+when you need to adapt a step, when the script fails and you want to know what
+it was doing, or when you are installing somewhere it does not fit.
+
+```bash
+git clone -b pipeline-alpha https://github.com/alex-feldman/jsps-dt4ag.git
+cd jsps-dt4ag
+scripts/install.sh
+```
+
+It does the apt prerequisites, `uv`, the micromamba COLMAP 3.12.0 CUDA prefix
+with ffmpeg beside it, and `uv sync --frozen`, then **verifies the result**:
+that the GPU is one the prebuilt gsplat wheel can actually run, that COLMAP
+reports `with CUDA`, that ffmpeg resolves, and that the installed gsplat is the
+prebuilt wheel rather than the pure-Python PyPI one. It skips whatever is
+already installed, so it is safe to re-run after a partial failure, and it stops
+at the first thing that does not check out rather than continuing.
+
+Only the apt step needs root, and it is skipped entirely when those packages are
+already present, so a normal desktop Ubuntu can run the whole thing with no
+sudo.
+
+To see what it would do without doing it:
+
+```bash
+scripts/install.sh --dry-run
+```
+
+That prints every command, and nothing else, as a runnable shell script. The
+manual steps in this document are generated from it, which is what keeps the two
+routes from drifting apart. Everything below still applies: read section 1
+before you buy or borrow a GPU, and section 4 before your first run.
+
 ## 0. What you need
 
 | Requirement | Notes |
