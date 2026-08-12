@@ -10,7 +10,7 @@ objects and contains no subject-specific logic.
 
 | Requirement | Notes |
 |---|---|
-| Linux x86-64 | Developed on Ubuntu 24.04, driver 580.173.02 |
+| Linux x86-64 | Developed on Ubuntu 24.04, driver 580.173.02. **Linux only**, see "Which platforms work" below |
 | An NVIDIA GPU, Volta through Hopper | **RTX 50 series does NOT work.** See "Which GPUs work" below before anything else |
 | **A host C/C++ compiler** | `sudo apt install build-essential`. Needed at install time AND at training time. See "You do need a host compiler" below |
 | **X11 and OpenGL runtime libraries** | `sudo apt install libx11-6 libgl1 libgomp1`. `open3d` will not import without them. See "System libraries" below |
@@ -30,6 +30,33 @@ proof that gsplat did not build itself.
 **A host C/C++ compiler is a different question, and the answer is yes.** See
 the next section. Getting rid of `nvcc` and the ten-minute gsplat JIT is what
 the torch 2.4 migration bought; it did not remove `cc`.
+
+### Which platforms work
+
+**Linux x86-64 only, and that is a deliberate scope decision for this release,
+not an oversight.** Two things pin it, and neither is a matter of effort:
+
+- The prebuilt `gsplat 1.4.0+pt24cu121` wheel this environment depends on is
+  published for `linux_x86_64` and nothing else.
+- COLMAP publishes no macOS binary in any release, and the conda-forge CUDA
+  build used here is `linux-64`.
+
+macOS and Windows are tracked as beta work rather than abandoned. Expect macOS
+to be the hard one: no CUDA at all, so it may end up supporting viewing and
+analysis rather than training.
+
+**WSL2 has not been tested, and is expected to work.** It is stated here as a
+hypothesis so nobody mistakes it for a supported route. WSL2 *is* Linux
+x86-64, so the wheel platform tag, the conda-forge COLMAP and the whole uv path
+should apply unchanged, and a WSL2 Ubuntu is minimal in the same way a container
+is, so it will need the `build-essential` and `libx11-6 libgl1 libgomp1` steps
+above rather than having them already. The part that is genuinely unproven is
+the GPU: WSL2 reaches the card through a passthrough driver stack rather than a
+native one. If you try it, the first thing to check is that
+`nvidia-smi` runs inside WSL and that
+`python -c "import torch; print(torch.cuda.is_available())"` prints `True`; if
+both hold, the rest of this document should apply verbatim. Report the result
+either way.
 
 ### You do need a host compiler
 
@@ -119,7 +146,7 @@ check runs **even when the pipeline passes `--skip-colmap`**, which it always
 does, and it calls `sys.exit(1)` if `colmap -h` returns nonzero. So a COLMAP
 binary is required even for a run that never asks COLMAP to do anything.
 
-## 0b. Which GPUs work
+## 1. Which GPUs work
 
 The pipeline compiles no **CUDA** code, which is what makes it install in
 minutes rather than needing a CUDA toolkit. The cost of that is a **closed**
@@ -167,18 +194,46 @@ release: 1.0 will not be cut while current-generation consumer GPUs cannot run
 the pipeline. It is out of scope only for this alpha, whose purpose is to prove
 the install works at all on one platform.
 
-## 0a. The environment
+## 2. Get the code
 
-There are two, and they are independent. Neither touches the other.
+```bash
+git clone -b pipeline-alpha https://github.com/alex-feldman/jsps-dt4ag.git
+cd jsps-dt4ag
+```
 
-### The uv environment (default, reproducible)
+**The `-b pipeline-alpha` is not optional.** The default branch, `main`, holds
+only the project's demo web page and contains **zero** files under `pipeline/`.
+A plain `git clone` gets you a repository with none of this in it, and the
+failure is confusing rather than obvious.
+
+**Where you clone to does not matter.** Any directory you can write to is fine.
+But every command from here on assumes you are **at the repository root**, the
+directory containing `pyproject.toml` and `uv.lock`. Check with:
+
+```bash
+ls pyproject.toml uv.lock pipeline/run_pipeline.py
+```
+
+If that errors, you are in the wrong directory. Nothing below will work until
+it succeeds.
+
+## 3. Set up the environment
+
+**`uv` is the environment. There is one supported path and this is it.** A conda
+environment (`ns-l-oci`) also exists and still works, but it is a **fallback**
+for the case where the uv environment misbehaves, it is not reproducible from
+this repository, and a first-time install should ignore it entirely. It is
+documented at the end of this section so the older route is not lost, not
+because it is an equal choice.
+
+### The uv environment (this is the one)
 
 `pyproject.toml` and `uv.lock` at the repository root pin the whole Python side:
 Python 3.10, torch 2.4.1+cu121, gsplat 1.4.0+pt24cu121 (**prebuilt**, not
 compiled), nerfstudio 1.1.5, numpy 1.26.4.
 
 ```bash
-cd <repo root>
+# from the repository root
 uv sync --frozen              # ~250 packages, 7.4 GB venv, a few minutes
 
 export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
@@ -198,21 +253,6 @@ minutes at the start of every training run. That is all gone. Full rationale,
 verification numbers and revert instructions:
 `knowledge-base/pm/kibanc-dt/artifacts/2026-08-08_torch24-migration-record.md`
 in the notes repository.
-
-### The conda environment `ns-l-oci` (fallback)
-
-The original environment: Python 3.10, torch 2.5.0+cu121, nerfstudio 1.1.5,
-gsplat 1.4.0 compiled by JIT. It is deliberately left intact and unmodified, and
-it still works:
-
-```bash
-conda activate ns-l-oci
-python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
-```
-
-Use it if the uv environment misbehaves. It is not reproducible from this repo
-(no lockfile, and it depends on `gcc-10` being installed), which is why it is the
-fallback rather than the default.
 
 ### COLMAP
 
@@ -297,7 +337,36 @@ For the second route the `PATH` export from the recipe already resolves it: no
 extra configuration. Verified on the clean machine with conda-forge ffmpeg 9.0
 and no system ffmpeg at all.
 
-## 1. Make a config
+### The conda environment `ns-l-oci` (fallback only, skip on a first install)
+
+**Do not use this to install the pipeline.** It exists on the development
+machine only, it cannot be recreated from this repository, and following it on a
+new machine is the single most common way to end up somewhere this document
+cannot help you.
+
+It is the environment that predates the uv migration: Python 3.10, torch
+2.5.0+cu121, nerfstudio 1.1.5, and gsplat 1.4.0 **compiled by JIT** rather than
+prebuilt. It is deliberately left intact and unmodified, and it still works:
+
+```bash
+conda activate ns-l-oci
+python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
+```
+
+Reach for it in exactly one situation: the uv environment misbehaves and you
+need to know whether the pipeline itself or the environment is at fault. Three
+things it costs you, all of which the uv path removed:
+
+- **It is not reproducible.** No lockfile, and it depends on a `gcc-10` that
+  happens to be installed on that machine.
+- **gsplat compiles itself on first use**, roughly ten minutes at the start of a
+  training run, and CUDA 12.1 refuses any host compiler newer than GCC 12.
+- **Its COLMAP was built by hand into the conda prefix** and has no RPATH, so it
+  needs `LD_LIBRARY_PATH` where the supported route needs only `PATH`.
+
+That is why it is the fallback and `uv` is the path.
+
+## 4. Make a config
 
 Everything the pipeline needs lives in one INI file. Nothing is hardcoded.
 
@@ -305,51 +374,113 @@ Everything the pipeline needs lives in one INI file. Nothing is hardcoded.
 cp pipeline/configs/example.ini pipeline/configs/my-run.ini
 ```
 
-Edit two keys and you are done:
+### The keys a first run must set
+
+These five are the complete set for a fresh machine. Every other key in
+`example.ini` has a working default, and `configs/README.md` documents them all.
 
 ```ini
 [paths]
-data_root = /path/to/your/data       # everything hangs off this
+data_root = /path/to/your/data        # 1. everything else hangs off this
 
 [dataset]
-images_subpath = scene-01/images      # relative to <data_root>/datasets
+images_subpath = scene-01/images      # 2. see "where this path is rooted" below
+
+[train]
+max_num_iterations = 30000            # 3. NOT the default. See "How long" below
+quit_on_train_completion = true       # 4. NOT the default. See below, this one bites
+
+[paths]
+exports_dirname = exports             # 5. where finished .ply files collect
 ```
 
-`configs/README.md` documents every other key. The ones you are most likely to
-touch:
+**Two of those five ship with the wrong value for a command-line run**, so
+copying `example.ini` and editing only the paths is not enough:
+
+- **`max_num_iterations`** is 30000 in `example.ini`, which is what you want,
+  but confirm it: a run of 500 or fewer produces the raw COLMAP seed cloud
+  rather than a reconstruction. See "How long" in section 6.
+- **`quit_on_train_completion` defaults to `false`**, which leaves `ns-train`'s
+  viewer running forever after training finishes and deadlocks any unattended
+  run. **Set it to `true`.** The runner refuses to start the train stage
+  otherwise rather than letting you discover this an hour in.
+
+**Where `images_subpath` is rooted, which matters if your data is laid out
+differently from the development machine.** It is relative to
+`<data_root>/<datasets_dirname>`, **not** to `data_root` itself, and
+`datasets_dirname` is a key too:
 
 ```ini
-[train]
-max_num_iterations = 30000            # see "How long" below
 [paths]
-exports_dirname = auto-exports        # where finished .ply files collect
+data_root        = /media/you/drive/DT-data
+datasets_dirname = datasets           # default; change it if yours differs
+
+[dataset]
+images_subpath   = scene-01/images    # resolves to
+                                      # /media/you/drive/DT-data/datasets/scene-01/images
+```
+
+Any depth works, including a single level. If your images do not sit under a
+`datasets/` directory at all, set `datasets_dirname` to the directory they *do*
+sit under, or set it to `.` and put the whole relative path in `images_subpath`.
+Three sibling keys work the same way and are worth knowing about before the
+first run writes anything: `colmap_dirname`, `outputs_dirname` and
+`exports_dirname`, which name the working directories the pipeline creates under
+`data_root`.
+
+**Where the images themselves come from is not answered by this repository.**
+No sample dataset is committed. Supply your own, and read section 7 first: the
+pipeline starts at **masked** images, so raw photos will reconstruct the
+background along with the subject.
+
+Two more keys are worth setting even though nothing fails without them, because
+they are baked into the export filename and are how a `.ply` records what
+produced it:
+
+```ini
+[export]
+env_label      = uv                   # e.g. uv, conda
+platform_label = ubuntu2404           # e.g. ubuntu2404, ubuntu2404-container
 ```
 
 Real config files are gitignored, because they carry real paths and dataset
 names. Only `example.ini` is committed, and it stays neutral.
 
-Validate a config without running anything:
+Validate a config without running anything. It resolves the whole path tree and
+fails if the data root, the datasets directory or the image directory does not
+exist, which is much cheaper than finding out during stage 1:
 
 ```bash
-python pipeline/dt4ag_config.py pipeline/configs/my-run.ini
+uv run python pipeline/dt4ag_config.py pipeline/configs/my-run.ini
 ```
 
-## 2. Run it
+Use `uv run`, not a bare `python`: on a clean machine there is no system Python
+at all, because uv downloaded its own.
+
+## 5. Run it
+
+From the repository root:
 
 ```bash
-# uv (default)
 export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
-
-# conda (fallback)
-conda activate ns-l-oci
-python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
 ```
+
+The `PATH` export is needed in **every new shell**, because it is what puts
+`colmap` and `ffmpeg` where `ns-process-data` looks for them. Nothing else has
+to be activated: `uv run` supplies the whole Python environment.
 
 That runs four stages in order: COLMAP structure-from-motion, `ns-process-data`,
 `ns-train splatfacto`, and `ns-export gaussian-splat`. It exits non-zero if any
 stage fails, and it verifies the output file rather than trusting a success
 message.
+
+**Do a dry run first.** It resolves the config, derives the run id, counts your
+input images and prints every command it would execute, in about a second:
+
+```bash
+uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini --dry-run
+```
 
 Useful flags:
 
@@ -375,7 +506,7 @@ so runs never overwrite each other:
 
 Change `[run] id_prefix` to keep a set of runs separate from another set.
 
-## 3. Check it actually worked
+## 6. Check it actually worked
 
 **Do not judge quality by gaussian count.** On data where the subject fills a
 small part of the frame, more gaussians means *worse*. COLMAP seeds tens of
@@ -414,7 +545,7 @@ Measured stage by stage on a clean `ubuntu:24.04` container, 2026-08-11, same
 time: 249 packages and 7.4 GB, which took nearly four hours on a link where
 `files.pythonhosted.org` was throttling to about 180 KB/s per connection.
 
-## 4. Where this pipeline starts, and what it does NOT do
+## 7. Where this pipeline starts, and what it does NOT do
 
 **The pipeline begins at MASKED images. It does not create masks.**
 
@@ -451,7 +582,7 @@ blocked on samask becoming installable.
 You do not need to remove the background by hand after export. When the input is
 masked, training drives the background gaussians to zero opacity and the export
 drops them. Expect a small gaussian count on a small subject: about 1,300 on the
-development dataset. **More gaussians means worse, not better**, see section 3.
+development dataset. **More gaussians means worse, not better**, see section 6.
 
 ## Troubleshooting
 
@@ -462,7 +593,7 @@ above. The pipeline stops before doing any work, which is deliberate.
 
 **`colmap: error while loading shared libraries: ...`**
 This COLMAP does not resolve its own libraries, so it was not installed by the
-recipe in section 0a. The conda-forge build there carries an `$ORIGIN`-relative
+recipe in section 3. The conda-forge build there carries an `$ORIGIN`-relative
 RPATH and needs nothing but `PATH`. Install it that way rather than reaching for
 `LD_LIBRARY_PATH`, which breaks torch (see "Why the prefix must not go on
 LD_LIBRARY_PATH").

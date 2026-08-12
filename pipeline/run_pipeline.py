@@ -321,7 +321,7 @@ _HINT = (
     "    export PATH=$HOME/opt/colmap-prefix/bin:$PATH\n"
     "  With conda (the fallback):\n"
     "    conda activate ns-l-oci\n"
-    "  See pipeline/QUICKSTART.md section 0a."
+    "  See pipeline/QUICKSTART.md section 3."
 )
 
 
