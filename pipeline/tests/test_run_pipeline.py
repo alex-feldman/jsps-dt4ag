@@ -800,15 +800,18 @@ class DownscaleFactorTests(TempTreeTestCase):
         cfg = make_config(self.root)
         self.assertEqual(cfg.downscale_factor, 0)
         self.assertNotIn(
-            "--pipeline.datamanager.dataparser.downscale-factor",
+            "nerfstudio-data",
             train_command(cfg, self.root / "ws"),
         )
 
     def test_a_pinned_factor_is_passed_through(self):
         cfg = make_config(self.root, train_extra="downscale_factor = 4")
         command = train_command(cfg, self.root / "ws")
-        index = command.index("--pipeline.datamanager.dataparser.downscale-factor")
-        self.assertEqual(command[index + 1], "4")
+        # The dataparser is a tyro subcommand appended after the parent's
+        # options, not a nested config path. Asserting the tail catches a
+        # regression to the plausible-but-rejected --pipeline.datamanager.
+        # dataparser.downscale-factor form.
+        self.assertEqual(command[-3:], ["nerfstudio-data", "--downscale-factor", "4"])
 
     def test_non_power_of_two_is_rejected(self):
         with self.assertRaises(Exception):

@@ -195,10 +195,20 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     ]
     # Left off entirely when 0, so nerfstudio keeps choosing for itself and
     # configs written before this key behave exactly as they did.
+    #
+    # The dataparser is a tyro SUBCOMMAND, not a nested config path: the flag
+    # only exists as `... nerfstudio-data --downscale-factor N`, appended after
+    # every option of the parent command. `--pipeline.datamanager.dataparser.
+    # downscale-factor` looks right, matches how config.yml nests it, and is
+    # rejected as an unrecognized option.
+    #
+    # `nerfstudio-data` is also the default subcommand, and it is what a
+    # workspace with a transforms.json resolves to anyway, so naming it changes
+    # nothing else about the run.
     if cfg.downscale_factor:
         command += [
-            "--pipeline.datamanager.dataparser.downscale-factor",
-            str(cfg.downscale_factor),
+            "nerfstudio-data",
+            "--downscale-factor", str(cfg.downscale_factor),
         ]
     return command
 
