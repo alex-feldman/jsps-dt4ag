@@ -346,6 +346,18 @@ class TestCommands(TempTreeTestCase):
             "capture-a_run_260101-03-3120_splat_ubuntu_my-env_500steps_individual.ply",
         )
 
+    def test_export_filename_carries_the_resolution_when_known(self):
+        """Two resolutions of one dataset must not collide on one filename."""
+        cfg = make_config(self.root)
+        self.assertEqual(
+            export_filename(cfg, "run_260101-03-3120", 2),
+            "capture-a_run_260101-03-3120_splat_ubuntu_my-env_500steps_ds2_individual.ply",
+        )
+        self.assertNotEqual(
+            export_filename(cfg, "run_260101-03-3120", 2),
+            export_filename(cfg, "run_260101-03-3120", 4),
+        )
+
     def test_export_command(self):
         cfg = make_config(self.root)
         command = export_command(
@@ -801,6 +813,51 @@ class DownscaleFactorTests(TempTreeTestCase):
     def test_non_power_of_two_is_rejected(self):
         with self.assertRaises(Exception):
             make_config(self.root, train_extra="downscale_factor = 3")
+
+    def _pyramid(self, cfg, levels, width=5184, height=2912, first="frame_00047.jpg"):
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "transforms.json").write_text(json.dumps({
+            "frames": [{"file_path": f"images/{first}", "w": width, "h": height}]
+        }))
+        for level in levels:
+            directory = workspace / f"images_{level}"
+            directory.mkdir(exist_ok=True)
+            (directory / first).write_bytes(b"")
+        return workspace
+
+    def test_a_pinned_factor_wins_without_touching_the_disk(self):
+        cfg = make_config(self.root, train_extra="downscale_factor = 8")
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 8)
+
+    def test_auto_resolves_to_the_level_nerfstudio_would_pick(self):
+        cfg = make_config(self.root)
+        workspace = self._pyramid(cfg, [2, 4, 8])
+        # 5184 -> 2592 -> 1296, the first at or under 1600.
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 4)
+
+    def test_auto_stops_where_the_pyramid_stops(self):
+        """A level that exists on disk but lacks the probed frame reads as absent."""
+        cfg = make_config(self.root)
+        workspace = self._pyramid(cfg, [2])
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 2)
+
+    def test_auto_is_native_when_there_is_no_pyramid(self):
+        cfg = make_config(self.root)
+        workspace = self._pyramid(cfg, [])
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 1)
+
+    def test_small_images_need_no_downscale(self):
+        cfg = make_config(self.root)
+        workspace = self._pyramid(cfg, [2, 4], width=1280, height=720)
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 1)
+
+    def test_undeterminable_returns_zero_rather_than_guessing(self):
+        cfg = make_config(self.root)
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        workspace.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(run_pipeline.resolve_downscale_factor(cfg, workspace), 0)
 
 
 class DownscalePyramidTests(unittest.TestCase):

@@ -444,14 +444,30 @@ class Dt4agConfig:
         is_new = not self.run_log.exists()
         if not is_new:
             # An existing log was written under whatever columns were current
-            # then. Keep writing under ITS header rather than this one: a row
-            # with more fields than the header is a corrupt CSV, and silently
-            # corrupting the provenance log is worse than omitting a column
-            # from it. Delete the log to start one with the current columns.
+            # then. A row with more fields than its header is a corrupt CSV, so
+            # the file has to be reconciled before appending.
             with self.run_log.open("r", newline="", encoding="utf-8") as handle:
-                existing = next(csv.reader(handle), None)
-            if existing:
-                columns = existing
+                rows = list(csv.reader(handle))
+            existing = rows[0] if rows else None
+            if existing and existing != columns:
+                if set(existing) <= set(columns):
+                    # Older, narrower header: upgrade the file in place so the
+                    # new fields are actually recorded from here on. Old rows
+                    # get empty cells for columns that did not exist when they
+                    # were written, which is honest: the value was never
+                    # captured. A .bak is kept because this rewrites a
+                    # provenance record.
+                    shutil.copy2(self.run_log, self.run_log.with_suffix(".csv.bak"))
+                    with self.run_log.open("w", newline="", encoding="utf-8") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=columns)
+                        writer.writeheader()
+                        for old in rows[1:]:
+                            writer.writerow(dict(zip(existing, old)))
+                else:
+                    # The existing header has columns this version does not
+                    # know. Do not rewrite someone else's schema; append under
+                    # theirs and drop what does not fit.
+                    columns = existing
         with self.run_log.open("a", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
             if is_new:

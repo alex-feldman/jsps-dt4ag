@@ -64,6 +64,7 @@ __all__ = [
     "train_command",
     "export_command",
     "export_filename",
+    "resolve_downscale_factor",
     "count_images",
     "read_ply_vertex_count",
     "verify_downscale_pyramid",
@@ -202,17 +203,78 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     return command
 
 
-def export_filename(cfg: Dt4agConfig, run_id: str) -> str:
-    """The notebook's export filename: the run's whole provenance in one name."""
-    return "_".join([
+def resolve_downscale_factor(cfg: Dt4agConfig, workspace: Path) -> int:
+    """The factor training will ACTUALLY use, not the one the config requested.
+
+    ``[train] downscale_factor = 0`` delegates the choice to nerfstudio, which
+    picks it by probing the pyramid on disk (``nerfstudio_dataparser._get_fname``):
+    step down while the long edge is over ``MAX_AUTO_RESOLUTION`` AND the next
+    level actually holds the first frame. The chosen value is then written to no
+    artefact, because ``config.yml`` records the request (``null``), not the
+    decision.
+
+    That matters beyond tidiness: resolution changes a reconstruction more than
+    most settings, and without this the resolution a run trained at is a
+    property of what happened to be on disk that day. Mirrored here, rather
+    than read back from nerfstudio, so the value is known BEFORE training and
+    can be stamped into the artefacts training produces.
+
+    Returns 0 only when it genuinely cannot be determined (no transforms.json),
+    which callers should report rather than treat as a factor.
+    """
+    if cfg.downscale_factor:
+        return cfg.downscale_factor
+    transforms = workspace / "transforms.json"
+    if not transforms.is_file():
+        return 0
+    try:
+        meta = json.loads(transforms.read_text())
+    except (OSError, ValueError):
+        return 0
+    frames = meta.get("frames") or []
+    if not frames:
+        return 0
+    max_edge = 0
+    for frame in frames:
+        for key in ("w", "h"):
+            value = frame.get(key, meta.get(key))
+            if value:
+                max_edge = max(max_edge, int(value))
+    if not max_edge:
+        return 0
+    # The probe tests ONE filename, the first frame as listed (not sorted),
+    # exactly as the dataparser does.
+    first = Path(frames[0]["file_path"]).name
+    exponent = 0
+    while True:
+        if max_edge / (2 ** exponent) <= MAX_AUTO_RESOLUTION:
+            break
+        if not (workspace / f"images_{2 ** (exponent + 1)}" / first).is_file():
+            break
+        exponent += 1
+    return 2 ** exponent
+
+
+def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) -> str:
+    """The notebook's export filename: the run's whole provenance in one name.
+
+    ``downscale_factor`` joined the name on 2026-08-17. Without it, the same
+    dataset reconstructed at two resolutions produces the same filename twice
+    and the second export silently overwrites the first, which is exactly the
+    comparison anyone changing the resolution is trying to make.
+    """
+    parts = [
         cfg.images_path.parent.name,
         run_id,
         "splat",
         cfg.platform_label,
         cfg.env_label,
         f"{cfg.max_num_iterations}steps",
-        cfg.resolve_colmap_data_type(),
-    ]) + ".ply"
+    ]
+    if downscale_factor:
+        parts.append(f"ds{downscale_factor}")
+    parts.append(cfg.resolve_colmap_data_type())
+    return "_".join(parts) + ".ply"
 
 
 def export_command(
@@ -1141,6 +1203,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
 
     overall_start = time.time()
     train_started: Optional[float] = None
+    effective_downscale: int = cfg.downscale_factor
 
     for stage in stages:
         stage_start = time.time()
@@ -1211,10 +1274,13 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                         f"to 0 to let nerfstudio pick from what is there."
                     )
             train_started = time.time()
+            if not dry_run:
+                effective_downscale = resolve_downscale_factor(cfg, workspace)
             log(f"train resolution  : "
                 + (f"downscale {cfg.downscale_factor} (pinned)"
                    if cfg.downscale_factor
-                   else "auto (nerfstudio picks from the pyramid on disk)"))
+                   else f"downscale {effective_downscale or '?'} "
+                        f"(auto, resolved from the pyramid on disk)"))
             run_command(train_command(cfg, workspace), "ns-train", dry_run)
 
         elif stage == "export":
@@ -1236,7 +1302,12 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             # carries the run id, so a single flat directory cannot collide and
             # gives one place to find every export.
             export_dir = cfg.exports_dir
-            filename = export_filename(cfg, run_id)
+            # Export can run without train in the same invocation
+            # (--stage export), so resolve it here too rather than relying on
+            # the train stage having set it.
+            if not dry_run and not effective_downscale:
+                effective_downscale = resolve_downscale_factor(cfg, workspace)
+            filename = export_filename(cfg, run_id, effective_downscale)
             ply = export_dir / filename
             run_command(
                 export_command(cfg, config_yml, export_dir, filename),
