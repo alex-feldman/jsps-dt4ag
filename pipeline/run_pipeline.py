@@ -305,6 +305,15 @@ def stage_sfm_inputs(cfg: Dt4agConfig, staged_root: Path) -> List[Path]:
         destination = staged_root / photograph.relative_to(cfg.images_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         _link_or_copy(photograph, destination)
+    # exFAT, which is what an external data drive usually is, supports neither
+    # symlinks nor hardlinks, so this is a full copy of the photographs. Say so
+    # rather than letting a silent multi-hundred-megabyte write look like a
+    # pause. The process stage removes the tree when it is done with it.
+    sample = staged_root / photographs[0].relative_to(cfg.images_path)
+    if not sample.is_symlink() and sample.stat().st_nlink == 1:
+        megabytes = sum(p.stat().st_size for p in photographs) / (1 << 20)
+        log(f"sfm input tree    : copied ({megabytes:.0f} MiB); "
+            f"{staged_root.parent} supports no links")
     return photographs
 
 
@@ -1119,6 +1128,17 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 if cfg.use_masks:
                     for line in attach_masks(cfg, workspace):
                         log(line)
+                # ns-process-data has copied the photographs into images/ and
+                # nothing downstream reads the staged tree, so drop it. On a
+                # filesystem that supports neither symlinks nor hardlinks it is
+                # a full copy of the dataset (exFAT, which is what an external
+                # data drive usually is), and leaving one behind per run adds up
+                # fast. --from-stage process rebuilds it, so this is not a
+                # one-way door.
+                staged = sfm_input_path(cfg, workspace)
+                if cfg.filters_dataset_files and staged.is_dir():
+                    shutil.rmtree(staged)
+                    log(f"sfm input tree    : removed {staged.name} (no longer needed)")
 
         elif stage == "train":
             if not dry_run and cfg.downscale_factor > 1:
