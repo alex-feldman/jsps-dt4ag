@@ -223,6 +223,7 @@ class Dt4agConfig:
     images_rel: Path
     image_extensions: frozenset
     mask_extensions: frozenset
+    masks_path: Path
     use_masks: bool
 
     # [run]
@@ -306,12 +307,21 @@ class Dt4agConfig:
     def mask_for(self, photograph: Path) -> Optional[Path]:
         """The mask paired with a photograph, or None.
 
-        Pairing is by filename stem in the same directory, which is how every
-        masking tool that writes alongside its input names things. Anything
-        else would need a mapping file the operator has to maintain by hand.
+        Pairing is by filename stem at the same position under ``masks_path``.
+        Both real layouts fall out of that one rule: with ``mask_subpath``
+        unset, ``masks_path`` IS the image directory and the mask is the file
+        beside the photograph, which is what a tool writing next to its input
+        produces. With it set, the masks live in a parallel tree of identical
+        shape, which is what a batch segmentation run produces.
+
+        Anything looser would need a mapping file kept by hand.
         """
+        try:
+            relative = photograph.relative_to(self.images_path)
+        except ValueError:
+            relative = Path(photograph.name)
         for extension in sorted(self.mask_extensions):
-            candidate = photograph.with_suffix(extension)
+            candidate = self.masks_path / relative.with_suffix(extension)
             if candidate.is_file():
                 return candidate
         return None
@@ -465,6 +475,8 @@ class Dt4agConfig:
             f"{', '.join(sorted(self.image_extensions)) or '(any)'}",
             f"mask_extensions    : "
             f"{', '.join(sorted(self.mask_extensions)) or '(none)'}",
+            f"masks_path         : "
+            f"{self.masks_path if self.masks_path != self.images_path else '(beside the images)'}",
             f"use_masks          : {self.use_masks}",
             f"run_id_prefix      : {self.run_id_prefix}",
             f"run_date           : {self.run_date or '(auto: today)'}",
@@ -552,6 +564,17 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"{', '.join(sorted(overlap))}. A file cannot be both a "
             f"photograph and a mask."
         )
+    mask_subpath_raw = _get_str(
+        parser, "dataset", "mask_subpath", source, "", allow_empty=True
+    )
+    if mask_subpath_raw:
+        mask_subpath = Path(mask_subpath_raw)
+        masks_path = (
+            mask_subpath if mask_subpath.is_absolute() else datasets_dir / mask_subpath
+        )
+    else:
+        masks_path = images_path
+
     use_masks = _get_bool(parser, "dataset", "use_masks", source, False)
     if use_masks and not mask_extensions:
         raise ConfigError(
@@ -565,6 +588,11 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             ("data root", data_root, "[paths] data_root"),
             ("datasets directory", datasets_dir, "[paths] datasets_dirname"),
             ("dataset image directory", images_path, "[dataset] images_subpath"),
+            *(
+                [("mask directory", masks_path, "[dataset] mask_subpath")]
+                if mask_subpath_raw
+                else []
+            ),
         ):
             if not candidate.is_dir():
                 raise ConfigError(
@@ -679,6 +707,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         images_rel=images_rel,
         image_extensions=image_extensions,
         mask_extensions=mask_extensions,
+        masks_path=masks_path,
         use_masks=use_masks,
         run_id_prefix=run_id_prefix,
         run_date=run_date,

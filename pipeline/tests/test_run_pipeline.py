@@ -602,6 +602,43 @@ class MaskSupportTests(TempTreeTestCase):
         cfg = make_config(self.root)
         self.assertFalse(cfg.filters_dataset_files)
 
+    def test_masks_default_to_beside_the_photographs(self):
+        cfg = self._dataset()
+        self.assertEqual(cfg.masks_path, cfg.images_path)
+        self.assertEqual(
+            cfg.mask_for(cfg.images_path / "shot_1.jpg"),
+            cfg.images_path / "shot_1.png",
+        )
+
+    def test_masks_can_live_in_a_parallel_tree(self):
+        """A batch segmentation run writes masks/<session>/<camera>/, not inline."""
+        masks = self.root / "datasets" / "scene-01" / "capture-a" / "masks"
+        (masks / "session-001" / "cam-002").mkdir(parents=True)
+        (masks / "session-001" / "cam-002" / "shot_1.png").write_bytes(b"mask")
+        cfg = make_config(
+            self.root,
+            dataset_extra=(
+                "image_extensions = .jpg\nmask_extensions = .png\n"
+                "use_masks = false\n"
+                "mask_subpath = scene-01/capture-a/masks/session-001"
+            ),
+        )
+        photograph = cfg.images_path / "cam-002" / "shot_1.jpg"
+        photograph.parent.mkdir(parents=True)
+        photograph.write_bytes(b"rgb")
+        self.assertNotEqual(cfg.masks_path, cfg.images_path)
+        self.assertEqual(
+            cfg.mask_for(photograph),
+            masks / "session-001" / "cam-002" / "shot_1.png",
+        )
+
+    def test_a_parallel_tree_that_does_not_exist_is_rejected_at_load(self):
+        with self.assertRaises(Exception):
+            make_config(
+                self.root,
+                dataset_extra="mask_extensions = .png\nmask_subpath = nope/missing",
+            )
+
     def test_extensions_classify_photographs_and_masks(self):
         cfg = self._dataset()
         self.assertTrue(cfg.is_photograph(Path("a.JPG")))     # case insensitive
