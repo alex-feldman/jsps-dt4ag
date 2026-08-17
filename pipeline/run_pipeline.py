@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import re
 import shlex
@@ -64,6 +65,7 @@ __all__ = [
     "export_filename",
     "count_images",
     "read_ply_vertex_count",
+    "verify_downscale_pyramid",
     "main",
 ]
 
@@ -71,6 +73,14 @@ __all__ = [
 STAGES: Tuple[str, ...] = ("colmap", "process", "train", "export")
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+
+#: nerfstudio's ``MAX_AUTO_RESOLUTION``, the longest edge its dataparser will
+#: train at when it picks the downscale factor itself. Mirrored rather than
+#: imported because this runner must be able to report the problem in an
+#: environment where nerfstudio is not importable, and because a value that
+#: drifts is caught by ``test_run_pipeline.py``, which asserts the two agree
+#: whenever nerfstudio IS importable.
+MAX_AUTO_RESOLUTION = 1600
 
 #: A gaussian-splat PLY smaller than this is a header with no geometry behind
 #: it. The real thing runs to tens of megabytes.
@@ -215,6 +225,109 @@ def count_images(images_path: Path) -> List[Path]:
         p for p in images_path.rglob("*")
         if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
     )
+
+
+def verify_downscale_pyramid(
+    workspace: Path, allow_full_resolution: bool = False
+) -> List[str]:
+    """Prove ns-process-data actually built the downscaled image pyramid.
+
+    ns-process-data downscales with a SINGLE ffmpeg ``image2`` sequence per
+    level (``frame_%05d`` plus the suffix of the first copied file, see
+    nerfstudio ``process_data/process_data_utils.py``, ``copy_images_list``).
+    An image2 sequence stops at the first index it cannot open, and ffmpeg
+    still exits 0. So any input set whose file extensions are not uniform, for
+    example RGB ``.jpg`` frames interleaved with ``.png`` masks, yields an
+    ``images_N/`` directory holding exactly the frames before the first
+    extension change, with no error anywhere.
+
+    Nothing downstream notices. nerfstudio's dataparser probes the pyramid by
+    testing ONE filename (``nerfstudio_dataparser.py``, ``_get_fname``), so a
+    pyramid that is one file deep reads as absent, the auto downscale factor
+    collapses to 1, and training runs at native resolution. On 2026-08-17 that
+    put 15 MP images through a 6 GB card: it survived to exactly step 3000,
+    where splatfacto's ``resolution_schedule`` ends and rasterisation jumps to
+    full resolution, and died there with a CUDA OOM that named none of this.
+
+    The check is against ``transforms.json`` rather than a file count, because
+    a count cannot tell a mask set apart from a missing frame. Only the frames
+    the reconstruction actually references have to resolve.
+
+    Returns the log lines to emit. Raises StageError if any level is partial,
+    or if there is no pyramid at all and the images are large enough that
+    nerfstudio would silently train at native resolution.
+    """
+    transforms = workspace / "transforms.json"
+    if not transforms.is_file():
+        raise StageError(f"{transforms} does not exist; nothing to verify.")
+    try:
+        meta = json.loads(transforms.read_text())
+    except (OSError, ValueError) as exc:
+        raise StageError(f"{transforms} could not be read as JSON: {exc}") from exc
+
+    frames = meta.get("frames") or []
+    if not frames:
+        raise StageError(f"{transforms} lists no frames.")
+    names = [Path(frame["file_path"]).name for frame in frames]
+
+    # Longest edge of the registered frames. Per-frame intrinsics win over the
+    # top-level ones, matching how the dataparser reads them.
+    max_edge = 0
+    for frame in frames:
+        for key in ("w", "h"):
+            value = frame.get(key, meta.get(key))
+            if value:
+                max_edge = max(max_edge, int(value))
+
+    levels = sorted(
+        int(p.name.split("_")[-1])
+        for p in workspace.glob("images_*")
+        if p.is_dir() and p.name.split("_")[-1].isdigit()
+    )
+
+    if not levels:
+        if max_edge > MAX_AUTO_RESOLUTION and not allow_full_resolution:
+            raise StageError(
+                f"no downscaled image directories in {workspace}, and the "
+                f"registered frames are {max_edge}px on the longest edge.\n"
+                f"  nerfstudio only downscales to <= {MAX_AUTO_RESOLUTION}px "
+                f"when a pyramid already exists on disk; with none it trains "
+                f"at native resolution,\n"
+                f"  which caches every training image on the GPU at full size "
+                f"and typically dies mid-run with a CUDA OOM.\n"
+                f"  Re-run the process stage with ffmpeg available, or pass "
+                f"--allow-full-resolution if that is genuinely what you want."
+            )
+        return [f"downscale pyramid : none (frames are {max_edge}px, allowed)"]
+
+    lines: List[str] = []
+    for level in levels:
+        directory = workspace / f"images_{level}"
+        present = {p.name for p in directory.iterdir() if p.is_file()}
+        missing = [name for name in names if name not in present]
+        if missing:
+            shown = ", ".join(missing[:3])
+            more = f", and {len(missing) - 3} more" if len(missing) > 3 else ""
+            suffixes = sorted({Path(name).suffix.lower() for name in names})
+            hint = (
+                "  The registered frames use a single extension, so the usual "
+                "cause is an ffmpeg failure mid-sequence.\n"
+                if len(suffixes) == 1
+                else f"  The input set mixes extensions ({', '.join(suffixes)}), "
+                "which is exactly what breaks ns-process-data's image2 "
+                "sequence.\n  Separate them (masks belong in masks/, not "
+                "images/) and re-run the process stage.\n"
+            )
+            raise StageError(
+                f"{directory} is missing {len(missing)} of {len(names)} "
+                f"registered frames: {shown}{more}.\n"
+                f"{hint}"
+                f"  A partial pyramid is worse than none: nerfstudio probes it "
+                f"with one filename, so it reads as absent and training falls "
+                f"back to native resolution."
+            )
+        lines.append(f"images_{level:<11}: {len(names)}/{len(names)} registered frames present")
+    return lines
 
 
 def _run_dir_time(path: Path) -> float:
@@ -367,6 +480,29 @@ def _check_nerfstudio(problems: List[str], commands: Iterable[str]) -> None:
             )
         else:
             log(f"{name:<18}: {found}")
+
+
+def _check_ffmpeg(problems: List[str]) -> None:
+    """ns-process-data shells out to ffmpeg; nerfstudio itself does not check.
+
+    Without ffmpeg the copy still runs and ``transforms.json`` still appears,
+    so every existing artefact check passes. What silently does not happen is
+    the downscale pyramid, which is what keeps training inside a small card's
+    memory. NUC1 shipped without ffmpeg and this is how it was found.
+    """
+    found = shutil.which("ffmpeg")
+    if found is None:
+        problems.append(
+            "'ffmpeg' is not on PATH. ns-process-data shells out to it to "
+            "build the downscaled image\n"
+            "  pyramid, and does not check for it: without ffmpeg the stage "
+            "still reports success and still\n"
+            "  writes transforms.json, but no images_2/4/8 are produced and "
+            "training silently runs at native\n"
+            f"  resolution.\n  {_HINT}"
+        )
+    else:
+        log(f"{'ffmpeg':<18}: {found}")
 
 
 #: Compute capability -> the GPU family a user would recognise. Only used to
@@ -527,6 +663,7 @@ def check_prerequisites(stages: Sequence[str]) -> None:
     needed = []
     if "process" in stages:
         needed.append("ns-process-data")
+        _check_ffmpeg(problems)
     if "train" in stages:
         needed.append("ns-train")
     if "export" in stages:
@@ -607,6 +744,17 @@ def build_parser() -> argparse.ArgumentParser:
             "permit [train] quit_on_train_completion = false. Off by default "
             "because ns-train then keeps its viewer alive after training ends, "
             "which never returns in a non-interactive run."
+        ),
+    )
+    parser.add_argument(
+        "--allow-full-resolution",
+        action="store_true",
+        help=(
+            "permit a [process] result with no downscaled image pyramid. Off "
+            "by default because nerfstudio then trains at native resolution, "
+            "which on a small card dies with a CUDA OOM part-way through the "
+            "run. A PARTIAL pyramid is always an error and this does not "
+            "override it."
         ),
     )
     return parser
@@ -753,6 +901,10 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 )
             if not dry_run:
                 log(f"transforms.json   : {transforms.stat().st_size} bytes")
+                for line in verify_downscale_pyramid(
+                    workspace, allow_full_resolution=args.allow_full_resolution
+                ):
+                    log(line)
 
         elif stage == "train":
             train_started = time.time()

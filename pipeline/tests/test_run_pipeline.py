@@ -16,6 +16,7 @@ run, which is the point of the end-to-end verification, not of a unit test.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -565,6 +566,83 @@ class GsplatBinaryScanTests(unittest.TestCase):
     def test_returns_none_when_nothing_parses(self):
         archs, _ = self._scan(b"not an elf at all")
         self.assertIsNone(archs)
+
+
+class DownscalePyramidTests(unittest.TestCase):
+    """The check that catches ns-process-data's silent half-built pyramid.
+
+    Regression cover for the 2026-08-17 CUDA OOM: a dataset of .jpg frames
+    interleaved with .png masks left one file in each images_N/, nerfstudio
+    read that as no pyramid at all, and training ran at 5184x2912.
+    """
+
+    def _workspace(self, frames, levels, width=5184, height=2912):
+        root = Path(tempfile.mkdtemp())
+        (root / "transforms.json").write_text(json.dumps({
+            "frames": [
+                {"file_path": f"images/{name}", "w": width, "h": height}
+                for name in frames
+            ]
+        }))
+        for level, present in levels.items():
+            directory = root / f"images_{level}"
+            directory.mkdir()
+            for name in present:
+                (directory / name).write_bytes(b"")
+        return root
+
+    def test_complete_pyramid_passes(self):
+        frames = ["frame_00001.jpg", "frame_00003.jpg"]
+        root = self._workspace(frames, {2: frames, 4: frames})
+        lines = run_pipeline.verify_downscale_pyramid(root)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("2/2", lines[0])
+
+    def test_partial_pyramid_raises_and_names_the_mixed_extensions(self):
+        frames = ["frame_00001.jpg", "frame_00003.jpg"]
+        root = self._workspace(frames, {4: ["frame_00001.jpg"]})
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.verify_downscale_pyramid(root)
+        self.assertIn("frame_00003.jpg", str(caught.exception))
+
+    def test_partial_pyramid_is_an_error_even_with_the_escape_hatch(self):
+        frames = ["frame_00001.jpg", "frame_00003.jpg"]
+        root = self._workspace(frames, {4: ["frame_00001.jpg"]})
+        with self.assertRaises(StageError):
+            run_pipeline.verify_downscale_pyramid(root, allow_full_resolution=True)
+
+    def test_absent_pyramid_raises_when_frames_are_large(self):
+        root = self._workspace(["frame_00001.jpg"], {})
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.verify_downscale_pyramid(root)
+        self.assertIn("native resolution", str(caught.exception))
+
+    def test_absent_pyramid_is_fine_for_small_frames(self):
+        root = self._workspace(["frame_00001.jpg"], {}, width=1280, height=720)
+        self.assertEqual(len(run_pipeline.verify_downscale_pyramid(root)), 1)
+
+    def test_absent_pyramid_can_be_allowed_explicitly(self):
+        root = self._workspace(["frame_00001.jpg"], {})
+        self.assertEqual(
+            len(run_pipeline.verify_downscale_pyramid(root, allow_full_resolution=True)),
+            1,
+        )
+
+    def test_unregistered_extra_files_do_not_matter(self):
+        """The masks live in images/ but are not registered, so they are not required."""
+        frames = ["frame_00001.jpg"]
+        root = self._workspace(frames, {4: ["frame_00001.jpg", "frame_00002.png"]})
+        self.assertEqual(len(run_pipeline.verify_downscale_pyramid(root)), 1)
+
+    def test_max_auto_resolution_matches_nerfstudio(self):
+        try:
+            from nerfstudio.data.dataparsers import nerfstudio_dataparser
+        except Exception:
+            self.skipTest("nerfstudio not importable")
+        self.assertEqual(
+            run_pipeline.MAX_AUTO_RESOLUTION,
+            nerfstudio_dataparser.MAX_AUTO_RESOLUTION,
+        )
 
 
 if __name__ == "__main__":
