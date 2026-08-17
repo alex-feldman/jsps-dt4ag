@@ -17,6 +17,7 @@ run, which is the point of the end-to-end verification, not of a unit test.
 from __future__ import annotations
 
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -638,22 +639,67 @@ class MaskSupportTests(TempTreeTestCase):
         workspace = cfg.colmap_workspace("run_260101-03-3120")
         self.assertIn(str(cfg.images_path), colmap_command(cfg, workspace))
 
+    @staticmethod
+    def _images_bin(entries):
+        """A COLMAP images.bin holding {image_id: name}, in its real layout."""
+        blob = struct.pack("<Q", len(entries))
+        for image_id, name in entries.items():
+            blob += struct.pack("<I", image_id)
+            blob += struct.pack("<7d", *([0.0] * 7))     # qvec + tvec
+            blob += struct.pack("<I", 1)                 # camera_id
+            blob += name.encode("utf-8") + b"\x00"
+            blob += struct.pack("<Q", 1)                 # one 2D observation
+            blob += struct.pack("<ddQ", 1.0, 2.0, 3)
+        return blob
+
     def _processed(self, cfg, mapping):
-        """A post-ns-process-data workspace, no downscale levels so no ffmpeg."""
+        """A post-ns-process-data workspace, no downscale levels so no ffmpeg.
+
+        ``mapping`` is {frame filename: source filename}. The images/ payload is
+        deliberately NOT the source bytes: ns-process-data re-encodes every
+        frame, so matching by content is impossible and the mapping has to come
+        from colmap_im_id.
+        """
         workspace = cfg.colmap_workspace("run_260101-03-3120")
         (workspace / "images").mkdir(parents=True)
-        frames = []
-        for frame_name, source_name in mapping.items():
-            payload = (cfg.images_path / source_name).read_bytes()
-            (workspace / "images" / frame_name).write_bytes(payload)
-            frames.append({"file_path": f"images/{frame_name}", "w": 800, "h": 600})
+        model = workspace / cfg.colmap_model_path
+        model.mkdir(parents=True)
+        frames, entries = [], {}
+        for image_id, (frame_name, source_name) in enumerate(mapping.items(), 1):
+            (workspace / "images" / frame_name).write_bytes(b"re-encoded")
+            frames.append({
+                "file_path": f"images/{frame_name}",
+                "colmap_im_id": image_id,
+                "w": 800,
+                "h": 600,
+            })
+            entries[image_id] = source_name
+        (model / "images.bin").write_bytes(self._images_bin(entries))
         (workspace / "transforms.json").write_text(json.dumps({"frames": frames}))
         return workspace
 
-    def test_masks_are_matched_by_content_not_by_position(self):
+    def test_images_bin_round_trips(self):
+        cfg = self._dataset()
+        workspace = self._processed(
+            cfg, {"frame_00001.jpg": "shot_2.jpg", "frame_00002.jpg": "shot_1.jpg"}
+        )
+        names = run_pipeline.read_colmap_image_names(workspace / cfg.colmap_model_path)
+        self.assertEqual(names, {1: "shot_2.jpg", 2: "shot_1.jpg"})
+
+    def test_a_truncated_model_is_rejected_rather_than_half_read(self):
+        cfg = self._dataset()
+        workspace = self._processed(cfg, {"frame_00001.jpg": "shot_1.jpg"})
+        model = workspace / cfg.colmap_model_path
+        blob = (model / "images.bin").read_bytes()
+        (model / "images.bin").write_bytes(blob + b"trailing")
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.read_colmap_image_names(model)
+        self.assertIn("did not parse cleanly", str(caught.exception))
+
+    def test_masks_follow_colmap_ids_not_sort_position(self):
         cfg = self._dataset(use_masks="true")
-        # frame_00001 is the SECOND source photograph: a position-based pairing
-        # would attach the wrong mask here and never say so.
+        # frame_00001 is COLMAP image 1, which is the SECOND photograph by name.
+        # Pairing by position would attach shot_1's mask and never say so.
         workspace = self._processed(
             cfg, {"frame_00001.jpg": "shot_2.jpg", "frame_00002.jpg": "shot_1.jpg"}
         )
@@ -677,13 +723,27 @@ class MaskSupportTests(TempTreeTestCase):
             run_pipeline.attach_masks(cfg, workspace)
         self.assertIn("no paired mask", str(caught.exception))
 
-    def test_a_frame_that_matches_no_source_is_an_error(self):
+    def test_a_frame_with_no_colmap_id_is_an_error(self):
         cfg = self._dataset(use_masks="true")
         workspace = self._processed(cfg, {"frame_00001.jpg": "shot_1.jpg"})
-        (workspace / "images" / "frame_00001.jpg").write_bytes(b"re-encoded")
+        transforms = workspace / "transforms.json"
+        meta = json.loads(transforms.read_text())
+        del meta["frames"][0]["colmap_im_id"]
+        transforms.write_text(json.dumps(meta))
         with self.assertRaises(StageError) as caught:
             run_pipeline.attach_masks(cfg, workspace)
-        self.assertIn("content hash", str(caught.exception))
+        self.assertIn("colmap_im_id", str(caught.exception))
+
+    def test_a_colmap_id_absent_from_the_model_is_an_error(self):
+        cfg = self._dataset(use_masks="true")
+        workspace = self._processed(cfg, {"frame_00001.jpg": "shot_1.jpg"})
+        transforms = workspace / "transforms.json"
+        meta = json.loads(transforms.read_text())
+        meta["frames"][0]["colmap_im_id"] = 999
+        transforms.write_text(json.dumps(meta))
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.attach_masks(cfg, workspace)
+        self.assertIn("not in the model", str(caught.exception))
 
 
 class DownscaleFactorTests(TempTreeTestCase):

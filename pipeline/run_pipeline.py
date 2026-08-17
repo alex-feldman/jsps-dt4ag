@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -70,6 +70,7 @@ __all__ = [
     "sfm_input_path",
     "stage_sfm_inputs",
     "attach_masks",
+    "read_colmap_image_names",
     "main",
 ]
 
@@ -317,12 +318,52 @@ def stage_sfm_inputs(cfg: Dt4agConfig, staged_root: Path) -> List[Path]:
     return photographs
 
 
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def read_colmap_image_names(model_dir: Path) -> dict:
+    """Map COLMAP image id -> the image's original name, from ``images.bin``.
+
+    ``images.bin`` is a length-prefixed binary record per registered image:
+    uint32 image_id, 4+3 doubles of pose, uint32 camera_id, a NUL-terminated
+    name, then uint64 num_points2D followed by that many (double, double,
+    uint64) observations.
+
+    Parsed here with ``struct`` rather than imported from nerfstudio, because
+    this runner deliberately depends on nerfstudio being on PATH, not on being
+    importable from the same interpreter. The parse is self-checking: it must
+    consume the file exactly, which is what catches a format change instead of
+    returning plausible garbage.
+    """
+    path = model_dir / "images.bin"
+    if not path.is_file():
+        raise StageError(
+            f"{path} does not exist, so processed frames cannot be mapped back "
+            f"to their source photographs.\n"
+            f"  A text-format COLMAP model is not supported here; re-run the "
+            f"colmap stage, or set [dataset] use_masks = false."
+        )
+    blob = path.read_bytes()
+    offset = 0
+    (count,) = struct.unpack_from("<Q", blob, offset)
+    offset += 8
+    names = {}
+    try:
+        for _ in range(count):
+            (image_id,) = struct.unpack_from("<I", blob, offset)
+            offset += 4 + 8 * 7 + 4          # pose (7 doubles) and camera_id
+            end = blob.index(b"\x00", offset)
+            names[image_id] = blob[offset:end].decode("utf-8")
+            offset = end + 1
+            (num_points,) = struct.unpack_from("<Q", blob, offset)
+            offset += 8 + num_points * 24
+    except (struct.error, ValueError, UnicodeDecodeError) as exc:
+        raise StageError(f"{path} could not be parsed: {exc}") from exc
+    if offset != len(blob) or len(names) != count:
+        raise StageError(
+            f"{path} did not parse cleanly: read {len(names)} of {count} "
+            f"images and consumed {offset} of {len(blob)} bytes.\n"
+            f"  This COLMAP writes a format this runner does not understand, "
+            f"so frames cannot be mapped back to source photographs safely."
+        )
+    return names
 
 
 def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
@@ -333,12 +374,21 @@ def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     ``mask_path`` on each frame pointing into ``masks/``, with downscaled
     copies in ``masks_N/`` matching the image pyramid.
 
-    ns-process-data renames every photograph to ``frame_%05d``, and does not
-    persist the mapping back to the original filename. Rather than reproduce
-    its traversal order and hope, each copied frame is matched to its source by
-    content hash. That is exact, order-independent, and it fails loudly instead
-    of silently pairing a frame with the wrong mask, which would be invisible
-    in the output and fatal to the reconstruction.
+    ns-process-data renames every photograph to ``frame_%05d`` and does not
+    persist the rename map, so the pairing has to be recovered. It is recovered
+    from ``colmap_im_id``, which nerfstudio stamps on every frame it writes
+    (``colmap_utils.colmap_to_json``), resolved against the names in the COLMAP
+    model. That is nerfstudio's own identifier for the image, so it is exact.
+
+    Comparing file contents does NOT work here, which is worth recording
+    because it looks like it should. ``copy_images_list`` copies each file into
+    place and then re-encodes it: its ffmpeg downscale chain writes level 0
+    back over ``images/`` at ``-q:v 2``, so every processed frame is a lossy
+    re-encode of its source and never byte-identical to it.
+
+    Pairing by sort position would work today and fail silently the day
+    nerfstudio changes its traversal, attaching the wrong mask to every frame
+    with nothing visibly wrong in the output.
 
     Masks are downscaled one ffmpeg call per file with nearest-neighbour
     sampling: one call per file because the image2 sequence is what broke the
@@ -351,10 +401,12 @@ def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     if not frames:
         raise StageError(f"{transforms_path} lists no frames; cannot attach masks.")
 
-    photographs = [p for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
-    by_hash = {}
-    for photograph in photographs:
-        by_hash.setdefault(_hash_file(photograph), photograph)
+    model_dir = workspace / cfg.colmap_model_path
+    if not model_dir.is_dir():
+        # skip_colmap = false puts nerfstudio's own reconstruction one level
+        # deeper, under colmap/.
+        model_dir = workspace / "colmap" / cfg.colmap_model_path
+    colmap_names = read_colmap_image_names(model_dir)
 
     masks_dir = workspace / "masks"
     masks_dir.mkdir(parents=True, exist_ok=True)
@@ -371,13 +423,17 @@ def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     attached = 0
     for frame in frames:
         name = Path(frame["file_path"]).name
-        copied = workspace / "images" / name
-        if not copied.is_file():
-            unmatched.append(f"{name} (not in images/)")
+        image_id = frame.get("colmap_im_id")
+        if image_id is None:
+            unmatched.append(f"{name} (no colmap_im_id)")
             continue
-        source = by_hash.get(_hash_file(copied))
-        if source is None:
-            unmatched.append(name)
+        original = colmap_names.get(image_id)
+        if original is None:
+            unmatched.append(f"{name} (colmap_im_id {image_id} not in the model)")
+            continue
+        source = cfg.images_path / original
+        if not source.is_file():
+            unmatched.append(f"{name} -> {original} (not under the dataset)")
             continue
         mask = cfg.mask_for(source)
         if mask is None:
@@ -403,9 +459,9 @@ def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         shown = ", ".join(unmatched[:3])
         raise StageError(
             f"{len(unmatched)} of {len(frames)} processed frames could not be "
-            f"matched back to a source photograph by content hash: {shown}.\n"
-            f"  ns-process-data re-encoded rather than copied them, which "
-            f"happens when the input images are not all the same size.\n"
+            f"mapped back to a source photograph: {shown}.\n"
+            f"  The mapping comes from each frame's colmap_im_id resolved "
+            f"against {model_dir}/images.bin.\n"
             f"  Masks cannot be attached safely: pairing them by position "
             f"instead would silently mask the wrong frames."
         )
