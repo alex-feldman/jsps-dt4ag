@@ -65,6 +65,7 @@ exports_dirname = exports
 
 [dataset]
 images_subpath = scene-01/capture-a/session-001
+{dataset_extra}
 
 [run]
 id_prefix = run
@@ -89,6 +90,7 @@ colmap_model_path = sparse/0
 [train]
 method = splatfacto
 max_num_iterations = 500
+{train_extra}
 use_scale_regularization = true
 background_color = random
 quit_on_train_completion = true
@@ -107,7 +109,13 @@ def make_config(root: Path, **overrides):
     """Build a data tree and a config file inside ``root``, and load it."""
     images = root / "datasets" / "scene-01" / "capture-a" / "session-001"
     images.mkdir(parents=True, exist_ok=True)
-    values = {"data_root": root, "extra_args": "", "skip_colmap": "true"}
+    values = {
+        "data_root": root,
+        "extra_args": "",
+        "skip_colmap": "true",
+        "dataset_extra": "",
+        "train_extra": "",
+    }
     values.update(overrides)
     config_path = root / "run.ini"
     config_path.write_text(CONFIG_TEMPLATE.format(**values), encoding="utf-8")
@@ -568,6 +576,136 @@ class GsplatBinaryScanTests(unittest.TestCase):
         self.assertIsNone(archs)
 
 
+class MaskSupportTests(TempTreeTestCase):
+    """Per-image masks: kept out of SfM, optionally wired into transforms.json.
+
+    The dataset that motivated this stores every frame twice, RGB as .jpg and a
+    binary subject mask as .png with the same stem, and both were reaching
+    COLMAP as photographs.
+    """
+
+    DATASET = "image_extensions = .jpg\nmask_extensions = .png\nuse_masks = {use}"
+
+    def _dataset(self, use_masks="false", pairs=2, unpaired=0):
+        cfg = make_config(
+            self.root, dataset_extra=self.DATASET.format(use=use_masks)
+        )
+        for index in range(1, pairs + 1):
+            (cfg.images_path / f"shot_{index}.jpg").write_bytes(b"rgb%d" % index)
+            (cfg.images_path / f"shot_{index}.png").write_bytes(b"mask%d" % index)
+        for index in range(pairs + 1, pairs + unpaired + 1):
+            (cfg.images_path / f"shot_{index}.jpg").write_bytes(b"rgb%d" % index)
+        return cfg
+
+    def test_default_config_filters_nothing(self):
+        cfg = make_config(self.root)
+        self.assertFalse(cfg.filters_dataset_files)
+
+    def test_extensions_classify_photographs_and_masks(self):
+        cfg = self._dataset()
+        self.assertTrue(cfg.is_photograph(Path("a.JPG")))     # case insensitive
+        self.assertFalse(cfg.is_photograph(Path("a.png")))
+        self.assertTrue(cfg.is_mask(Path("a.png")))
+
+    def test_an_extension_cannot_be_both(self):
+        with self.assertRaises(Exception):
+            make_config(
+                self.root,
+                dataset_extra="image_extensions = .jpg\nmask_extensions = .jpg",
+            )
+
+    def test_use_masks_without_mask_extensions_is_rejected(self):
+        with self.assertRaises(Exception):
+            make_config(self.root, dataset_extra="use_masks = true")
+
+    def test_staged_tree_holds_only_photographs(self):
+        cfg = self._dataset()
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        staged = run_pipeline.sfm_input_path(cfg, workspace)
+        run_pipeline.stage_sfm_inputs(cfg, staged)
+        staged_names = sorted(p.name for p in staged.rglob("*") if p.is_file())
+        self.assertEqual(staged_names, ["shot_1.jpg", "shot_2.jpg"])
+
+    def test_colmap_and_process_are_pointed_at_the_staged_tree(self):
+        cfg = self._dataset()
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        staged = str(run_pipeline.sfm_input_path(cfg, workspace))
+        self.assertIn(staged, colmap_command(cfg, workspace))
+        self.assertIn(staged, process_command(cfg, workspace))
+
+    def test_unfiltered_configs_still_point_at_the_dataset_directory(self):
+        cfg = make_config(self.root)
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        self.assertIn(str(cfg.images_path), colmap_command(cfg, workspace))
+
+    def _processed(self, cfg, mapping):
+        """A post-ns-process-data workspace, no downscale levels so no ffmpeg."""
+        workspace = cfg.colmap_workspace("run_260101-03-3120")
+        (workspace / "images").mkdir(parents=True)
+        frames = []
+        for frame_name, source_name in mapping.items():
+            payload = (cfg.images_path / source_name).read_bytes()
+            (workspace / "images" / frame_name).write_bytes(payload)
+            frames.append({"file_path": f"images/{frame_name}", "w": 800, "h": 600})
+        (workspace / "transforms.json").write_text(json.dumps({"frames": frames}))
+        return workspace
+
+    def test_masks_are_matched_by_content_not_by_position(self):
+        cfg = self._dataset(use_masks="true")
+        # frame_00001 is the SECOND source photograph: a position-based pairing
+        # would attach the wrong mask here and never say so.
+        workspace = self._processed(
+            cfg, {"frame_00001.jpg": "shot_2.jpg", "frame_00002.jpg": "shot_1.jpg"}
+        )
+        run_pipeline.attach_masks(cfg, workspace)
+        meta = json.loads((workspace / "transforms.json").read_text())
+        paths = {Path(f["file_path"]).name: f["mask_path"] for f in meta["frames"]}
+        self.assertEqual(paths["frame_00001.jpg"], "masks/frame_00001.png")
+        self.assertEqual(
+            (workspace / "masks" / "frame_00001.png").read_bytes(), b"mask2"
+        )
+        self.assertEqual(
+            (workspace / "masks" / "frame_00002.png").read_bytes(), b"mask1"
+        )
+
+    def test_a_photograph_with_no_mask_is_an_error(self):
+        cfg = self._dataset(use_masks="true", pairs=1, unpaired=1)
+        workspace = self._processed(
+            cfg, {"frame_00001.jpg": "shot_1.jpg", "frame_00002.jpg": "shot_2.jpg"}
+        )
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.attach_masks(cfg, workspace)
+        self.assertIn("no paired mask", str(caught.exception))
+
+    def test_a_frame_that_matches_no_source_is_an_error(self):
+        cfg = self._dataset(use_masks="true")
+        workspace = self._processed(cfg, {"frame_00001.jpg": "shot_1.jpg"})
+        (workspace / "images" / "frame_00001.jpg").write_bytes(b"re-encoded")
+        with self.assertRaises(StageError) as caught:
+            run_pipeline.attach_masks(cfg, workspace)
+        self.assertIn("content hash", str(caught.exception))
+
+
+class DownscaleFactorTests(TempTreeTestCase):
+    def test_zero_leaves_the_flag_off_entirely(self):
+        cfg = make_config(self.root)
+        self.assertEqual(cfg.downscale_factor, 0)
+        self.assertNotIn(
+            "--pipeline.datamanager.dataparser.downscale-factor",
+            train_command(cfg, self.root / "ws"),
+        )
+
+    def test_a_pinned_factor_is_passed_through(self):
+        cfg = make_config(self.root, train_extra="downscale_factor = 4")
+        command = train_command(cfg, self.root / "ws")
+        index = command.index("--pipeline.datamanager.dataparser.downscale-factor")
+        self.assertEqual(command[index + 1], "4")
+
+    def test_non_power_of_two_is_rejected(self):
+        with self.assertRaises(Exception):
+            make_config(self.root, train_extra="downscale_factor = 3")
+
+
 class DownscalePyramidTests(unittest.TestCase):
     """The check that catches ns-process-data's silent half-built pyramid.
 
@@ -633,6 +771,15 @@ class DownscalePyramidTests(unittest.TestCase):
         frames = ["frame_00001.jpg"]
         root = self._workspace(frames, {4: ["frame_00001.jpg", "frame_00002.png"]})
         self.assertEqual(len(run_pipeline.verify_downscale_pyramid(root)), 1)
+
+    def test_mask_directories_do_not_confuse_the_image_check(self):
+        """masks_N/ is built per-file by attach_masks, not by ns-process-data."""
+        frames = ["frame_00001.jpg"]
+        root = self._workspace(frames, {4: frames})
+        (root / "masks_4").mkdir()
+        lines = run_pipeline.verify_downscale_pyramid(root)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("images_4", lines[0])
 
     def test_max_auto_resolution_matches_nerfstudio(self):
         try:

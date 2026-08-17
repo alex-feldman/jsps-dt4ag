@@ -93,6 +93,31 @@ def _get_str(
     return value
 
 
+def _parse_extensions(
+    parser: configparser.ConfigParser,
+    section: str,
+    key: str,
+    source: Path,
+) -> frozenset:
+    """Read a comma-separated extension list, normalised to lowercase '.ext'.
+
+    Empty means "no opinion", which for image_extensions is every supported
+    image type and for mask_extensions is no masks at all. Accepts 'jpg' and
+    '.JPG' alike, because requiring the leading dot is a rule nobody would
+    remember and the error would arrive four stages later.
+    """
+    raw = _get_str(parser, section, key, source, "", allow_empty=True)
+    if not raw:
+        return frozenset()
+    parsed = set()
+    for part in raw.replace(",", " ").split():
+        ext = part.strip().lower()
+        if not ext:
+            continue
+        parsed.add(ext if ext.startswith(".") else f".{ext}")
+    return frozenset(parsed)
+
+
 def _get_int(
     parser: configparser.ConfigParser,
     section: str,
@@ -196,6 +221,9 @@ class Dt4agConfig:
     # [dataset]
     images_path: Path
     images_rel: Path
+    image_extensions: frozenset
+    mask_extensions: frozenset
+    use_masks: bool
 
     # [run]
     run_id_prefix: str
@@ -220,6 +248,7 @@ class Dt4agConfig:
     # [train]
     train_method: str
     max_num_iterations: int
+    downscale_factor: int
     use_scale_regularization: bool
     background_color: str
     quit_on_train_completion: bool
@@ -253,6 +282,39 @@ class Dt4agConfig:
         return self.output_parent / run_id
 
     # -- run identity ------------------------------------------------------
+
+    @property
+    def filters_dataset_files(self) -> bool:
+        """True when the dataset directory holds files SfM must not see.
+
+        When false the pipeline points COLMAP and ns-process-data straight at
+        the dataset directory, exactly as it always has. Existing configs set
+        neither key, so they take that path and nothing about them changes.
+        """
+        return bool(self.image_extensions or self.mask_extensions)
+
+    def is_photograph(self, path: Path) -> bool:
+        """Is this file one of the photographs the reconstruction is built from?"""
+        suffix = path.suffix.lower()
+        if self.image_extensions:
+            return suffix in self.image_extensions
+        return suffix not in self.mask_extensions
+
+    def is_mask(self, path: Path) -> bool:
+        return path.suffix.lower() in self.mask_extensions
+
+    def mask_for(self, photograph: Path) -> Optional[Path]:
+        """The mask paired with a photograph, or None.
+
+        Pairing is by filename stem in the same directory, which is how every
+        masking tool that writes alongside its input names things. Anything
+        else would need a mapping file the operator has to maintain by hand.
+        """
+        for extension in sorted(self.mask_extensions):
+            candidate = photograph.with_suffix(extension)
+            if candidate.is_file():
+                return candidate
+        return None
 
     def resolve_colmap_data_type(self) -> str:
         """Return the ``--data_type`` value for ``colmap automatic_reconstructor``.
@@ -350,6 +412,8 @@ class Dt4agConfig:
             "colmap_version",
             "train_method",
             "max_num_iterations",
+            "downscale_factor",
+            "masks",
             "config_file",
             "note",
         ]
@@ -361,13 +425,25 @@ class Dt4agConfig:
             "colmap_version": run_id.rsplit("-", 1)[-1],
             "train_method": self.train_method,
             "max_num_iterations": self.max_num_iterations,
+            "downscale_factor": self.downscale_factor or "auto",
+            "masks": "used" if self.use_masks else "none",
             "config_file": str(self.source),
             "note": "",
         }
         row.update({k: v for k, v in extra.items() if k in columns})
         is_new = not self.run_log.exists()
+        if not is_new:
+            # An existing log was written under whatever columns were current
+            # then. Keep writing under ITS header rather than this one: a row
+            # with more fields than the header is a corrupt CSV, and silently
+            # corrupting the provenance log is worse than omitting a column
+            # from it. Delete the log to start one with the current columns.
+            with self.run_log.open("r", newline="", encoding="utf-8") as handle:
+                existing = next(csv.reader(handle), None)
+            if existing:
+                columns = existing
         with self.run_log.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns)
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
             if is_new:
                 writer.writeheader()
             writer.writerow(row)
@@ -385,6 +461,11 @@ class Dt4agConfig:
             f"exports_dir        : {self.exports_dir}",
             f"images_path        : {self.images_path}",
             f"images_rel         : {self.images_rel}",
+            f"image_extensions   : "
+            f"{', '.join(sorted(self.image_extensions)) or '(any)'}",
+            f"mask_extensions    : "
+            f"{', '.join(sorted(self.mask_extensions)) or '(none)'}",
+            f"use_masks          : {self.use_masks}",
             f"run_id_prefix      : {self.run_id_prefix}",
             f"run_date           : {self.run_date or '(auto: today)'}",
             f"run_count          : {self.run_count or '(auto: increment)'}",
@@ -456,6 +537,28 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"{images_rel}"
         )
     images_path = datasets_dir / images_rel
+
+    image_extensions = _parse_extensions(
+        parser, "dataset", "image_extensions", source
+    )
+    mask_extensions = _parse_extensions(
+        parser, "dataset", "mask_extensions", source
+    )
+    overlap = image_extensions & mask_extensions
+    if overlap:
+        raise ConfigError(
+            f"keys 'image_extensions' and 'mask_extensions' in section "
+            f"[dataset] of config file {source} both list "
+            f"{', '.join(sorted(overlap))}. A file cannot be both a "
+            f"photograph and a mask."
+        )
+    use_masks = _get_bool(parser, "dataset", "use_masks", source, False)
+    if use_masks and not mask_extensions:
+        raise ConfigError(
+            f"key 'use_masks' in section [dataset] of config file {source} is "
+            f"true but 'mask_extensions' is empty, so no file would ever be "
+            f"treated as a mask."
+        )
 
     if validate_paths:
         for label, candidate, key in (
@@ -531,6 +634,17 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"key 'max_num_iterations' in section [train] of config file {source} "
             f"must be positive, got {max_num_iterations}"
         )
+    # 0 means "let nerfstudio choose", which it does by probing the downscale
+    # pyramid on disk. Pinning it makes the training resolution a recorded
+    # input of the run rather than a property of which files happen to be
+    # present, which is what a reconstruction anyone has to reproduce needs.
+    downscale_factor = _get_int(parser, "train", "downscale_factor", source, 0)
+    if downscale_factor < 0 or (downscale_factor > 1 and downscale_factor & (downscale_factor - 1)):
+        raise ConfigError(
+            f"key 'downscale_factor' in section [train] of config file {source} "
+            f"must be 0 (auto), 1 (native), or a power of two, got "
+            f"{downscale_factor}"
+        )
     use_scale_regularization = _get_bool(
         parser, "train", "use_scale_regularization", source, True
     )
@@ -563,6 +677,9 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         exports_dir=exports_dir,
         images_path=images_path,
         images_rel=images_rel,
+        image_extensions=image_extensions,
+        mask_extensions=mask_extensions,
+        use_masks=use_masks,
         run_id_prefix=run_id_prefix,
         run_date=run_date,
         run_count=run_count,
@@ -579,6 +696,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         colmap_model_path=colmap_model_path,
         train_method=train_method,
         max_num_iterations=max_num_iterations,
+        downscale_factor=downscale_factor,
         use_scale_regularization=use_scale_regularization,
         background_color=background_color,
         quit_on_train_completion=quit_on_train_completion,

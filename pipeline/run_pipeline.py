@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -66,6 +67,9 @@ __all__ = [
     "count_images",
     "read_ply_vertex_count",
     "verify_downscale_pyramid",
+    "sfm_input_path",
+    "stage_sfm_inputs",
+    "attach_masks",
     "main",
 ]
 
@@ -128,12 +132,25 @@ def render(command: Sequence[str]) -> str:
 # command construction, mirroring the notebook cell for cell
 # --------------------------------------------------------------------------
 
+def sfm_input_path(cfg: Dt4agConfig, workspace: Path) -> Path:
+    """The directory COLMAP and ns-process-data are pointed at.
+
+    The dataset directory itself unless the config filters files out of it, in
+    which case a staged tree holding only the photographs, built beside the
+    workspace so it is obvious which run it belongs to and is thrown away with
+    it.
+    """
+    if not cfg.filters_dataset_files:
+        return cfg.images_path
+    return workspace.parent / f"{workspace.name}_sfm-input"
+
+
 def colmap_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     command = [
         "colmap",
         "automatic_reconstructor",
         "--workspace_path", str(workspace),
-        "--image_path", str(cfg.images_path),
+        "--image_path", str(sfm_input_path(cfg, workspace)),
         "--data_type", cfg.resolve_colmap_data_type(),
         "--single_camera", str(cfg.colmap_single_camera),
         "--single_camera_per_folder", str(cfg.colmap_single_camera_per_folder),
@@ -154,7 +171,7 @@ def process_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         ]
     command = [
         "ns-process-data", "images",
-        "--data", str(cfg.images_path),
+        "--data", str(sfm_input_path(cfg, workspace)),
         "--output-dir", str(workspace),
     ]
     if cfg.skip_colmap:
@@ -164,7 +181,7 @@ def process_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
 
 
 def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
-    return [
+    command = [
         "ns-train", cfg.train_method,
         "--data", str(workspace),
         "--pipeline.model.use_scale_regularization", str(cfg.use_scale_regularization),
@@ -174,6 +191,14 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         "--max-num-iterations", str(cfg.max_num_iterations),
         "--logging.local-writer.max-log-size", str(cfg.max_log_size),
     ]
+    # Left off entirely when 0, so nerfstudio keeps choosing for itself and
+    # configs written before this key behave exactly as they did.
+    if cfg.downscale_factor:
+        command += [
+            "--pipeline.datamanager.dataparser.downscale-factor",
+            str(cfg.downscale_factor),
+        ]
+    return command
 
 
 def export_filename(cfg: Dt4agConfig, run_id: str) -> str:
@@ -225,6 +250,172 @@ def count_images(images_path: Path) -> List[Path]:
         p for p in images_path.rglob("*")
         if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
     )
+
+
+def _link_or_copy(source: Path, destination: Path) -> None:
+    """Materialise ``source`` at ``destination`` as cheaply as this OS allows.
+
+    Symlink, then hardlink, then copy. Windows only permits symlinks with
+    Developer Mode or elevation, and this pipeline is meant to run there too,
+    so a failure to link is expected rather than exceptional.
+    """
+    if destination.exists() or destination.is_symlink():
+        destination.unlink()
+    try:
+        destination.symlink_to(source)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    try:
+        os.link(source, destination)
+        return
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+def stage_sfm_inputs(cfg: Dt4agConfig, staged_root: Path) -> List[Path]:
+    """Mirror only the photographs into a clean tree for COLMAP and nerfstudio.
+
+    Neither ``colmap automatic_reconstructor`` nor ``ns-process-data images``
+    can be told to ignore some of the files under the directory it is given:
+    both take everything. A dataset that keeps per-image masks beside its
+    photographs, which is what every masking tool writes by default, therefore
+    feeds the masks to SfM as if they were photographs.
+
+    On 2026-08-17 that cost a run twice over. COLMAP wasted its time trying to
+    register 92 binary masks, and ns-process-data copied them into ``images/``
+    interleaved by extension, which broke its ffmpeg downscale sequence and
+    ultimately put 15 MP frames through a 6 GB card.
+
+    The relative directory layout is preserved because
+    ``single_camera_per_folder`` reads camera grouping from it.
+    """
+    photographs = [p for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+    if not photographs:
+        raise StageError(
+            f"no photographs under {cfg.images_path} after applying "
+            f"[dataset] image_extensions "
+            f"({', '.join(sorted(cfg.image_extensions)) or 'any'}) and "
+            f"mask_extensions "
+            f"({', '.join(sorted(cfg.mask_extensions)) or 'none'})."
+        )
+    if staged_root.exists():
+        shutil.rmtree(staged_root)
+    for photograph in photographs:
+        destination = staged_root / photograph.relative_to(cfg.images_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _link_or_copy(photograph, destination)
+    return photographs
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
+    """Wire the dataset's per-image masks into the processed workspace.
+
+    ns-process-data has no per-image mask support: its only ``--mask`` style
+    option is a synthetic crop mask. What nerfstudio's dataparser reads is a
+    ``mask_path`` on each frame pointing into ``masks/``, with downscaled
+    copies in ``masks_N/`` matching the image pyramid.
+
+    ns-process-data renames every photograph to ``frame_%05d``, and does not
+    persist the mapping back to the original filename. Rather than reproduce
+    its traversal order and hope, each copied frame is matched to its source by
+    content hash. That is exact, order-independent, and it fails loudly instead
+    of silently pairing a frame with the wrong mask, which would be invisible
+    in the output and fatal to the reconstruction.
+
+    Masks are downscaled one ffmpeg call per file with nearest-neighbour
+    sampling: one call per file because the image2 sequence is what broke the
+    image pyramid, and nearest-neighbour because interpolating a binary mask
+    invents partial coverage along every edge.
+    """
+    transforms_path = workspace / "transforms.json"
+    meta = json.loads(transforms_path.read_text())
+    frames = meta.get("frames") or []
+    if not frames:
+        raise StageError(f"{transforms_path} lists no frames; cannot attach masks.")
+
+    photographs = [p for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+    by_hash = {}
+    for photograph in photographs:
+        by_hash.setdefault(_hash_file(photograph), photograph)
+
+    masks_dir = workspace / "masks"
+    masks_dir.mkdir(parents=True, exist_ok=True)
+    levels = sorted(
+        int(p.name.split("_")[-1])
+        for p in workspace.glob("images_*")
+        if p.is_dir() and p.name.split("_")[-1].isdigit()
+    )
+    for level in levels:
+        (workspace / f"masks_{level}").mkdir(parents=True, exist_ok=True)
+
+    unmatched: List[str] = []
+    unmasked: List[str] = []
+    attached = 0
+    for frame in frames:
+        name = Path(frame["file_path"]).name
+        copied = workspace / "images" / name
+        if not copied.is_file():
+            unmatched.append(f"{name} (not in images/)")
+            continue
+        source = by_hash.get(_hash_file(copied))
+        if source is None:
+            unmatched.append(name)
+            continue
+        mask = cfg.mask_for(source)
+        if mask is None:
+            unmasked.append(f"{name} <- {source.name}")
+            continue
+        target = masks_dir / f"{Path(name).stem}{mask.suffix}"
+        shutil.copy2(mask, target)
+        for level in levels:
+            run_command(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error", "-noautorotate",
+                    "-i", str(target),
+                    "-vf", f"scale=iw/{level}:ih/{level}:flags=neighbor",
+                    str(workspace / f"masks_{level}" / target.name),
+                ],
+                "ffmpeg (mask downscale)",
+                dry_run=False,
+            )
+        frame["mask_path"] = f"masks/{target.name}"
+        attached += 1
+
+    if unmatched:
+        shown = ", ".join(unmatched[:3])
+        raise StageError(
+            f"{len(unmatched)} of {len(frames)} processed frames could not be "
+            f"matched back to a source photograph by content hash: {shown}.\n"
+            f"  ns-process-data re-encoded rather than copied them, which "
+            f"happens when the input images are not all the same size.\n"
+            f"  Masks cannot be attached safely: pairing them by position "
+            f"instead would silently mask the wrong frames."
+        )
+    if unmasked:
+        shown = ", ".join(unmasked[:3])
+        raise StageError(
+            f"{len(unmasked)} of {len(frames)} photographs have no paired mask "
+            f"({', '.join(sorted(cfg.mask_extensions))} with the same "
+            f"filename stem): {shown}.\n"
+            f"  A partially masked dataset trains against inconsistent "
+            f"supervision. Supply the missing masks, or set "
+            f"[dataset] use_masks = false to reconstruct the full scene."
+        )
+
+    transforms_path.write_text(json.dumps(meta, indent=2))
+    return [
+        f"masks             : {attached} attached, "
+        f"downscaled to {levels or ['none']}"
+    ]
 
 
 def verify_downscale_pyramid(
@@ -854,11 +1045,21 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             f"no image files under {cfg.images_path} (searched recursively). "
             f"Check [dataset] images_subpath in {cfg.source}."
         )
+    photographs = [p for p in images if cfg.is_photograph(p)]
     camera_dirs = sorted({
-        p.parent.relative_to(cfg.images_path).as_posix() for p in images
+        p.parent.relative_to(cfg.images_path).as_posix() for p in photographs
     })
-    log(f"images found      : {len(images)} in "
+    log(f"images found      : {len(photographs)} in "
         + (f"{len(camera_dirs)} subdirectories" if camera_dirs != ["."] else "one flat directory"))
+    if len(photographs) != len(images):
+        excluded = len(images) - len(photographs)
+        log(f"excluded from sfm : {excluded} file(s) "
+            + ("used as masks" if cfg.use_masks else "ignored"))
+    if not photographs:
+        raise StageError(
+            f"every image under {cfg.images_path} was excluded by [dataset] "
+            f"image_extensions / mask_extensions in {cfg.source}."
+        )
 
     if stages[0] != "colmap" and not workspace.is_dir() and not dry_run:
         raise StageError(
@@ -883,6 +1084,10 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         if stage == "colmap":
             if not dry_run:
                 workspace.mkdir(parents=True, exist_ok=True)
+                if cfg.filters_dataset_files:
+                    staged = sfm_input_path(cfg, workspace)
+                    staged_files = stage_sfm_inputs(cfg, staged)
+                    log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
             run_command(colmap_command(cfg, workspace), "colmap", dry_run)
             sparse = workspace / "sparse" / "0"
             if not dry_run and not (sparse / "cameras.bin").is_file():
@@ -892,6 +1097,12 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 )
 
         elif stage == "process":
+            # Rebuilt here too, so --from-stage process works on a workspace
+            # whose staged tree was cleaned up or never built.
+            if not dry_run and cfg.filters_dataset_files:
+                staged = sfm_input_path(cfg, workspace)
+                staged_files = stage_sfm_inputs(cfg, staged)
+                log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
             run_command(process_command(cfg, workspace), "ns-process-data", dry_run)
             transforms = workspace / "transforms.json"
             if not dry_run and not transforms.is_file():
@@ -905,9 +1116,29 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                     workspace, allow_full_resolution=args.allow_full_resolution
                 ):
                     log(line)
+                if cfg.use_masks:
+                    for line in attach_masks(cfg, workspace):
+                        log(line)
 
         elif stage == "train":
+            if not dry_run and cfg.downscale_factor > 1:
+                # nerfstudio does not generate a level that is missing: it just
+                # fails to open the images, several minutes in.
+                level = workspace / f"images_{cfg.downscale_factor}"
+                if not level.is_dir():
+                    raise StageError(
+                        f"[train] downscale_factor is "
+                        f"{cfg.downscale_factor} but {level} does not exist.\n"
+                        f"  nerfstudio reads a pinned level straight off disk "
+                        f"and does not build a missing one.\n"
+                        f"  Re-run the process stage, or set downscale_factor "
+                        f"to 0 to let nerfstudio pick from what is there."
+                    )
             train_started = time.time()
+            log(f"train resolution  : "
+                + (f"downscale {cfg.downscale_factor} (pinned)"
+                   if cfg.downscale_factor
+                   else "auto (nerfstudio picks from the pyramid on disk)"))
             run_command(train_command(cfg, workspace), "ns-train", dry_run)
 
         elif stage == "export":
