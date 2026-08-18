@@ -3,6 +3,19 @@
 The order of operations in `run_pipeline.py`, and every point at which it refuses
 to continue.
 
+**"The runner" is `run_pipeline.py`**, a program, not a person. Three layers are
+involved and it helps to keep them apart:
+
+| layer | what it is |
+|---|---|
+| tools | `colmap`, `ns-process-data`, `ns-train`, `ns-export`, `ffmpeg`. Third-party binaries that do the actual work |
+| the runner | `run_pipeline.py`. Decides what to invoke, in what order, with what arguments, and verifies that each one produced what it claimed |
+| the operator | whoever starts it: a person typing one command, or an agent running the same command |
+
+The runner exists because those tools do not check each other. Left to
+themselves, a stage can exit 0 having produced nothing usable, and the next stage
+then fails somewhere unrelated. See "The two rules behind all of it".
+
 **Scope, deliberately narrow.** The four stages are described for a reader in the
 wiki page *Running the 3D Reconstruction Pipeline*; installing and running is
 `QUICKSTART.md`; the flags are `README.md`. This file covers the thing none of
@@ -66,6 +79,64 @@ Making masking a pre-step rather than a stage is what removes the hardest part o
 the problem. Compositing happens before anything is renamed to `frame_NNNNN`, so
 nothing has to be re-paired afterwards, and the mask pyramid is simply the image
 pyramid. See `MASKING.md`.
+
+## Judging the result
+
+**Do not judge quality by gaussian count.** On data where the subject fills a
+small part of the frame, more gaussians means worse. COLMAP seeds tens of
+thousands of points across the background and correct training deletes them, so
+a good reconstruction of a small subject may hold a couple of thousand gaussians
+while a useless one holds ninety thousand. Measured 2026-08-18 on one capture,
+same images and settings: 2,385 gaussians with masking applied as alpha against
+96,938 with the background merely excluded from the loss. The larger file was
+the broken one.
+
+Judge with **held-out views** instead. `ns-eval` gives PSNR cheaply: on the
+development dataset a 30,000-step run scored 46.5 and a 500-step run of the same
+data scored 10.4. That is a sanity check, not an accuracy measurement; the
+intended evaluation methodology is a separate piece of work.
+
+**Cleaning a background by hand is not normally necessary.** With masked input,
+training drives background gaussians to zero opacity and the export drops them.
+If you do reconstruct unmasked photographs and want to clean the result, a web
+editor such as `superspl.at/editor` will load an exported `.ply`, let you select
+and invert the subject, delete the background and export a `.splat`.
+
+## Driving it: by hand or by agent
+
+There is one command, and everything that varies lives in the config file:
+
+```bash
+uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
+```
+
+No interactive prompts exist anywhere in the runner. Nothing waits on a keypress,
+nothing asks a question mid-run, and every decision comes from the INI file or a
+flag. That is what makes the same command work identically whether a person types
+it or a CLI agent does.
+
+Three properties make it safely automatable, and they are the same properties
+that make it pleasant by hand:
+
+- **Deterministic exit codes.** `0` success, `1` a stage failed, `2` a
+  configuration error, `130` interrupted. A caller can branch on the result
+  without parsing output.
+- **Verification gates.** A zero exit means the artefacts were checked, not just
+  that the tools said so, so "it succeeded" can be trusted by something that
+  cannot look at the pictures.
+- **Errors that name the fix.** Failures say which key in which file, or which
+  binary is missing, rather than surfacing a library traceback.
+
+**One setting is mandatory for any non-interactive run:**
+`[train] quit_on_train_completion = true`. With it false, `ns-train` keeps its
+viewer alive after training ends and never exits, which deadlocks an unattended
+run forever. The runner refuses to start the train stage otherwise, and
+`--allow-viewer-hang` is the deliberate override for interactive work.
+
+**What is not automated yet:** discovering multiple captures and running them as
+a batch, and refusing a second concurrent run that would contend for the GPU.
+Both are recorded in `SEQUENTIAL-RUNS.md`. Until then a batch is a shell loop
+over configs, which is sequential by construction but has no resume.
 
 ## Known reporting gap
 

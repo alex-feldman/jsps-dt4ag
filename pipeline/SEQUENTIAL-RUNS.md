@@ -20,6 +20,55 @@ done
 A loop is sequential by construction, which is the one property that genuinely
 matters here, so this works. Everything below is what it does not give you.
 
+## How it is actually done today
+
+A driver script, one config per capture, a plain loop. This is the whole
+mechanism; there is nothing else. Recorded here because it works and because
+whoever automates this properly should start from what is already true.
+
+```bash
+#!/usr/bin/env bash
+set -u
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"   # colmap + ffmpeg, not in the venv
+cd "$HOME/PycharmProjects/jsps-dt4ag" || exit 1
+
+declare -A STATUS ELAPSED GAUSS
+for c in <capture-ids>; do
+  start=$(date +%s)
+  uv run python pipeline/run_pipeline.py --config "pipeline/configs/<prefix>-$c.ini" \
+      > "logs/$c.log" 2>&1
+  rc=$?
+  ELAPSED[$c]=$(( ($(date +%s) - start) / 60 ))
+  STATUS[$c]=$([ $rc -eq 0 ] && echo OK || echo "FAILED($rc)")
+  GAUSS[$c]=$(grep -oE "vertices *: [0-9]+" "logs/$c.log" | tail -1 | grep -oE "[0-9]+$")
+done
+# then print a summary table from the three arrays
+```
+
+Four properties of this shape are deliberate:
+
+- **Sequential by construction.** No `&`, no job control. One GPU; two
+  concurrent `ns-train` processes contend for it and the symptom is a CUDA OOM
+  in whichever next crosses splatfacto's resolution jump, which reads like a
+  data problem rather than contention.
+- **A failing capture does not stop the others.** Captures are independent, and
+  aborting a batch on one bad input wastes the remaining runs. Status is
+  collected and reported at the end instead.
+- **Per-capture logs**, because interleaved output from a long batch is
+  unreadable and the failure you care about is always in the middle.
+- **The `PATH` export lives in the driver**, not in the operator's memory. It is
+  the single step whose omission caused the 2026-08-17 failure.
+
+What the driver captures per capture: exit status, wall-clock minutes, and the
+exported gaussian count, which is the cheapest signal that masking worked. On
+subject-only captures a count in the tens of thousands means the background was
+not removed (see `MASKING.md`).
+
+**The cost of this shape** is one config file per capture that differs from its
+siblings in about four lines, and no resume: re-running the loop re-runs
+everything, deriving new run ids, because nothing knows what already completed.
+Both are addressed in the gaps below.
+
 ## 1. Nothing enforces that only one run happens at a time
 
 **This is the important one.** The machine has a single GPU. Two concurrent

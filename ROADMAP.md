@@ -61,7 +61,53 @@ anything by hand.
 
 ---
 
-## v0.3.0 — beta: runs on Windows as well as Linux
+## v0.3.0 — run a whole collection, and know what every run did
+
+Not started. Two halves of one story: driving many captures without a hand-written
+loop, and being able to answer afterwards what each run did and how far it got.
+Today a batch is a shell loop over one config per capture, with no resume and no
+record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
+
+**Batching**
+
+- [ ] Point the pipeline at a collection and every capture beneath it
+      reconstructs, one at a time, discovered by the `images/` rule
+      (`pipeline/LAYOUT.md`)
+- [ ] One base config for a collection, instead of one near-identical config per
+      capture
+- [ ] Re-running a partly failed batch skips what already completed instead of
+      silently duplicating it under new run ids
+- [ ] Concurrent runs cannot silently contend for one GPU
+
+**Run records**
+
+- [ ] A per-run JSON record under `runs/`, written INCREMENTALLY so a crashed or
+      killed run still shows how far it got
+- [ ] An explicit milestone ladder (`config_ok` → `prereqs_ok` →
+      `masks_composited` → `colmap_done` → `transforms_ok` → `pyramid_ok` →
+      `trained` → `checkpoint_found` → `exported` → `verified`), with the
+      furthest milestone reached surfaced as one field
+- [ ] Failed runs get records too. A failure record is worth more than a success
+      one
+- [ ] The record embeds the RESOLVED config, not a path to a config file that may
+      since have been edited, plus tool versions, per-stage timings and the
+      artefacts produced
+- [ ] `runs/index.csv`, a queryable summary that is REBUILDABLE by scanning the
+      records, so a drifted index is never authoritative
+- [ ] Batch records under `runs/batches/`, since a batch spans captures and has
+      no home under any one of them
+
+**Acceptance:** point it at a collection, walk away, and afterwards be able to
+say for every capture whether it succeeded, how long it took, what it produced,
+and if it failed, at which milestone.
+
+**Superseded:** `run-log.csv` becomes a frozen beta log. It records intent only
+(the row is written before the stages run), carries no outcome, and is not
+back-filled, because the values it lacks were never captured.
+
+---
+
+## v0.4.0 — beta: runs on Windows as well as Linux
 
 Not started. Scope is deliberately platform support plus the rough edges the
 alpha deferred, and macOS is **out**: gsplat ships a CUDA backend and nothing
@@ -71,9 +117,6 @@ configuration.
 - [ ] Installs and runs on Windows from the repository alone
 - [ ] The install path is documented and verified by someone other than the
       author
-- [ ] Batch processing: point the pipeline at a collection and every capture
-      beneath it reconstructs, one at a time
-- [ ] Concurrent runs cannot silently contend for one GPU
 - [ ] LICENSE and CITATION.cff present
 
 **Acceptance:** a collaborator on either OS can install it, run it on their own
@@ -85,7 +128,7 @@ capture, and cite it.
 
 Not started.
 
-- [ ] Everything in 0.3.0, stable across at least two independent installs
+- [ ] Everything in 0.4.0, stable across at least two independent installs
 - [ ] The published documentation describes a pipeline someone has actually run
       from it, start to finish, without the author present
 - [ ] A dataset and its reconstruction are published together, each citable
