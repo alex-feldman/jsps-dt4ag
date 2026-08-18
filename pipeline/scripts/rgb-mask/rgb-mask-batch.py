@@ -163,6 +163,25 @@ def iter_candidates(images_dir: Path, excluded: list):
         yield path
 
 
+#: PNG deflate level for the composited output. PNG is lossless at EVERY level:
+#: measured 2026-08-18 on an 18 MP RGBA composite, levels 0/1/3/6/9 all decode to
+#: a bit-identical array (same SHA-256 of the pixel buffer, alpha included). Only
+#: encode time and file size change.
+#:
+#: Encoding is 96% of this script's runtime (4.86s of 5.04s per image; decode,
+#: putalpha and mask load are the remaining 4%), so this constant is the single
+#: biggest lever on how long compositing takes:
+#:
+#:   level 0: 71.7 MB          level 3: 23.4 MB, 1.72s
+#:   level 1: 24.7 MB, 1.20s   level 6: 20.9 MB, 4.86s  (Pillow default)
+#:   level 9: 20.0 MB                                    
+#:
+#: Default 1 rather than Pillow's 6: 4x faster for 18% more bytes, on output that
+#: is derived and rebuildable (LAYOUT.md, "Input versus derived"). Raise it if you
+#: are archiving these rather than feeding them to a reconstruction.
+DEFAULT_COMPRESS_LEVEL = 1
+
+
 def apply_masks(
     images_dir: Path,
     mask_root: Path,
@@ -170,6 +189,7 @@ def apply_masks(
     mask_ext: str,
     binarize: int = None,
     verbose: bool = True,
+    compress_level: int = DEFAULT_COMPRESS_LEVEL,
 ) -> Counters:
     """Mask every image under ``images_dir``; return the tally."""
     counters = Counters()
@@ -221,7 +241,7 @@ def apply_masks(
 
         save_path = (output_dir / relative_path).with_suffix(".png")
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(save_path)
+        img.save(save_path, compress_level=compress_level)
 
         counters.processed += 1
         if verbose:
@@ -327,6 +347,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--compress-level",
+        type=int,
+        choices=range(10),
+        metavar="0-9",
+        default=DEFAULT_COMPRESS_LEVEL,
+        help=(
+            "PNG deflate level for the output. Lossless at every level; only "
+            f"speed and size change. Default {DEFAULT_COMPRESS_LEVEL} "
+            "(~4x faster than Pillow's 6, ~18%% larger)."
+        ),
+    )
+    parser.add_argument(
         "--allow-partial",
         action="store_true",
         help=(
@@ -370,6 +402,7 @@ def main(argv=None) -> int:
         mask_ext=mask_ext,
         binarize=args.binarize,
         verbose=not args.quiet,
+        compress_level=args.compress_level,
     )
 
     print_summary(counters, images_dir, mask_root, args.output, layout)

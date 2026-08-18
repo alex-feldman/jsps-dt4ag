@@ -44,6 +44,8 @@ __all__ = [
     "Dt4agConfig",
     "load_config",
     "detect_colmap_version",
+    "read_capture_metadata",
+    "CAPTURE_METADATA_FILENAME",
 ]
 
 
@@ -116,6 +118,59 @@ def _parse_extensions(
             continue
         parsed.add(ext if ext.startswith(".") else f".{ext}")
     return frozenset(parsed)
+
+
+#: Filename of the optional per-capture provenance file. INI, not TOML: this
+#: environment is Python 3.10 and ``tomllib`` arrived in 3.11, which is the same
+#: reason the run config is INI. See ``LAYOUT.md``, "Capture metadata".
+CAPTURE_METADATA_FILENAME = "capture.ini"
+
+
+def read_capture_metadata(images_path: Path) -> Optional[dict]:
+    """Read the capture's provenance file, if it has one.
+
+    Describes the physical capture: what was imaged, when, by whom, with what.
+    It holds no file paths and affects no behaviour, so a run is identical
+    whether or not the file exists. See ``LAYOUT.md``.
+
+    Looked for in the capture directory, which is ``images_path`` itself under
+    the pre-2026-08-18 layout and its parent under the current one, where
+    photographs live in ``<capture>/images/``. The parent is only consulted when
+    ``images_path`` is actually named ``images``; otherwise a file one level up
+    describes the COLLECTION, not this capture, and picking it up would attach
+    one capture's provenance to all of its siblings.
+
+    Returns a flat dict of ``section.key`` entries plus a derived ``object_id``
+    (the capture directory's name when the file does not name one), or None when
+    there is no file.
+
+    A file that exists but cannot be parsed raises rather than being skipped: a
+    provenance record that silently fails to load is worse than no record, since
+    the run still looks fully documented.
+    """
+    candidates = [images_path / CAPTURE_METADATA_FILENAME]
+    if images_path.name == "images":
+        candidates.append(images_path.parent / CAPTURE_METADATA_FILENAME)
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        parser = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
+        try:
+            parser.read(candidate, encoding="utf-8")
+        except configparser.Error as exc:
+            raise ConfigError(
+                f"capture metadata {candidate} could not be parsed: {exc}"
+            ) from exc
+        meta = {
+            f"{section}.{key}": value.strip()
+            for section in parser.sections()
+            for key, value in parser.items(section)
+            if value.strip()
+        }
+        meta.setdefault("capture.object_id", candidate.parent.name)
+        meta["capture.source"] = str(candidate)
+        return meta
+    return None
 
 
 def _get_int(
@@ -224,6 +279,7 @@ class Dt4agConfig:
     image_extensions: frozenset
     mask_extensions: frozenset
     masks_path: Path
+    masked_images_path: Path
     use_masks: bool
 
     # [run]
@@ -424,6 +480,8 @@ class Dt4agConfig:
             "max_num_iterations",
             "downscale_factor",
             "masks",
+            "object_id",
+            "imaging_date",
             "config_file",
             "note",
         ]
@@ -437,6 +495,8 @@ class Dt4agConfig:
             "max_num_iterations": self.max_num_iterations,
             "downscale_factor": self.downscale_factor or "auto",
             "masks": "used" if self.use_masks else "none",
+            "object_id": "",
+            "imaging_date": "",
             "config_file": str(self.source),
             "note": "",
         }
@@ -494,6 +554,7 @@ class Dt4agConfig:
             f"masks_path         : "
             f"{self.masks_path if self.masks_path != self.images_path else '(beside the images)'}",
             f"use_masks          : {self.use_masks}",
+            f"masked_images      : {self.masked_images_path if self.use_masks else '(not used)'}",
             f"run_id_prefix      : {self.run_id_prefix}",
             f"run_date           : {self.run_date or '(auto: today)'}",
             f"run_count          : {self.run_count or '(auto: increment)'}",
@@ -597,6 +658,30 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"key 'use_masks' in section [dataset] of config file {source} is "
             f"true but 'mask_extensions' is empty, so no file would ever be "
             f"treated as a mask."
+        )
+
+    # Where composited masked images are written. Defaults to a `masked-images`
+    # sibling of the image directory, keyed by its name, which reproduces the
+    # layout the pipeline already consumed before it could composite anything:
+    #   images_subpath        = <group>/<session>
+    #   masked_images_subpath = <group>/masked-images/<session>
+    masked_images_raw = _get_str(
+        parser, "dataset", "masked_images_subpath", source, "", allow_empty=True
+    )
+    if masked_images_raw:
+        masked_rel = Path(masked_images_raw)
+        masked_images_path = (
+            masked_rel if masked_rel.is_absolute() else datasets_dir / masked_rel
+        )
+    else:
+        masked_images_path = (
+            images_path.parent / "masked-images" / images_path.name
+        )
+    if use_masks and masked_images_path == images_path:
+        raise ConfigError(
+            f"'masked_images_subpath' in section [dataset] of config file "
+            f"{source} resolves to the image directory itself. Compositing "
+            f"would overwrite the source photographs."
         )
 
     if validate_paths:
@@ -724,6 +809,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         image_extensions=image_extensions,
         mask_extensions=mask_extensions,
         masks_path=masks_path,
+        masked_images_path=masked_images_path,
         use_masks=use_masks,
         run_id_prefix=run_id_prefix,
         run_date=run_date,

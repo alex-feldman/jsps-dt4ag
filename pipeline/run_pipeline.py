@@ -34,7 +34,6 @@ import os
 import re
 import shlex
 import shutil
-import struct
 import subprocess
 import sys
 import time
@@ -50,6 +49,7 @@ from dt4ag_config import (  # noqa: E402
     Dt4agConfig,
     find_config,
     load_config,
+    read_capture_metadata,
 )
 
 __all__ = [
@@ -70,8 +70,7 @@ __all__ = [
     "verify_downscale_pyramid",
     "sfm_input_path",
     "stage_sfm_inputs",
-    "attach_masks",
-    "read_colmap_image_names",
+    "composite_masked_images",
     "main",
 ]
 
@@ -137,14 +136,119 @@ def render(command: Sequence[str]) -> str:
 def sfm_input_path(cfg: Dt4agConfig, workspace: Path) -> Path:
     """The directory COLMAP and ns-process-data are pointed at.
 
-    The dataset directory itself unless the config filters files out of it, in
-    which case a staged tree holding only the photographs, built beside the
-    workspace so it is obvious which run it belongs to and is thrown away with
-    it.
+    Three cases, in order:
+
+    - ``use_masks``: the composited masked-image directory. Masking is applied
+      BEFORE any stage runs, so from here the pipeline is the same one that
+      always required masked images to be supplied by hand. Nothing downstream
+      knows masking happened.
+    - the config filters files out of the dataset directory: a staged tree
+      holding only the photographs, built beside the workspace so it is obvious
+      which run it belongs to and is thrown away with it.
+    - otherwise: the dataset directory itself.
+
+    COLMAP and ns-process-data MUST receive the same directory. With
+    ``--skip-colmap``, nerfstudio converts the COLMAP model by looking each of
+    its image names up in the rename map built from the files it copied
+    (``colmap_utils.colmap_to_json``, a bare dict index), so a name COLMAP saw
+    and ns-process-data did not is a KeyError.
     """
+    if cfg.use_masks:
+        return cfg.masked_images_path
     if not cfg.filters_dataset_files:
         return cfg.images_path
     return workspace.parent / f"{workspace.name}_sfm-input"
+
+
+def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
+    """Composite each mask into its photograph's alpha channel, once, up front.
+
+    This is the whole of mask support. It is a PRE-STEP, not a pipeline stage:
+    it turns "raw photographs plus separate masks" into the masked-image
+    dataset the pipeline has always consumed, and every stage after it is
+    unchanged and unaware.
+
+    Why alpha and not nerfstudio's ``mask_path``: a mask file drops pixels from
+    the LOSS, so background gaussians get no gradient and survive as floaters.
+    An alpha channel makes splatfacto composite the ground truth against the
+    same background colour it renders behind the gaussians, so an EMPTY
+    background scores perfectly and, with ``background_color = random``, any
+    opaque gaussian there is penalised every iteration and culled. Measured on
+    one subject: 1,276 gaussians via alpha against 96,688 via mask file. Full
+    evidence in ``MASKING.md``.
+
+    Delegates to ``scripts/rgb-mask/rgb-mask-batch.py``, which already pairs by
+    relative path, applies the mask as alpha and writes PNG. It predates this
+    function by months and was previously run by hand.
+
+    Idempotent: an output directory already holding a composite for every
+    photograph is left alone, because recompositing is minutes of work and
+    gigabytes of writes for a byte-identical result.
+    """
+    photographs = [p for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+    if not photographs:
+        raise StageError(f"no photographs under {cfg.images_path} to composite.")
+
+    missing = [p for p in photographs if cfg.mask_for(p) is None]
+    if missing:
+        shown = ", ".join(p.name for p in missing[:3])
+        raise StageError(
+            f"{len(missing)} of {len(photographs)} photographs have no mask "
+            f"({', '.join(sorted(cfg.mask_extensions))} at the same relative "
+            f"path under {cfg.masks_path}): {shown}.\n"
+            f"  A partially masked dataset trains against inconsistent "
+            f"supervision. Supply the missing masks, or set [dataset] "
+            f"use_masks = false to reconstruct the full scene."
+        )
+
+    expected = {
+        (p.relative_to(cfg.images_path).with_suffix(".png"))
+        for p in photographs
+    }
+    present = set()
+    if cfg.masked_images_path.is_dir():
+        present = {
+            q.relative_to(cfg.masked_images_path)
+            for q in cfg.masked_images_path.rglob("*.png")
+            if q.is_file()
+        }
+    if expected <= present:
+        return [
+            f"masked images     : {len(expected)} already composited at "
+            f"{cfg.masked_images_path}, reused"
+        ]
+
+    script = PIPELINE_DIR / "scripts" / "rgb-mask" / "rgb-mask-batch.py"
+    if not script.is_file():
+        raise StageError(f"{script} does not exist; cannot composite masks.")
+    cfg.masked_images_path.mkdir(parents=True, exist_ok=True)
+    run_command(
+        [
+            sys.executable, str(script),
+            "--images", str(cfg.images_path),
+            "--masks", str(cfg.masks_path),
+            "--output", str(cfg.masked_images_path),
+        ],
+        "rgb-mask-batch",
+        dry_run=False,
+    )
+
+    produced = {
+        q.relative_to(cfg.masked_images_path)
+        for q in cfg.masked_images_path.rglob("*.png")
+        if q.is_file()
+    }
+    short = expected - produced
+    if short:
+        raise StageError(
+            f"compositing produced {len(produced)} of {len(expected)} expected "
+            f"masked images; {len(short)} missing, e.g. "
+            f"{', '.join(str(s) for s in sorted(short)[:3])}."
+        )
+    return [
+        f"masked images     : {len(expected)} composited to "
+        f"{cfg.masked_images_path}"
+    ]
 
 
 def colmap_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
@@ -388,171 +492,6 @@ def stage_sfm_inputs(cfg: Dt4agConfig, staged_root: Path) -> List[Path]:
         log(f"sfm input tree    : copied ({megabytes:.0f} MiB); "
             f"{staged_root.parent} supports no links")
     return photographs
-
-
-def read_colmap_image_names(model_dir: Path) -> dict:
-    """Map COLMAP image id -> the image's original name, from ``images.bin``.
-
-    ``images.bin`` is a length-prefixed binary record per registered image:
-    uint32 image_id, 4+3 doubles of pose, uint32 camera_id, a NUL-terminated
-    name, then uint64 num_points2D followed by that many (double, double,
-    uint64) observations.
-
-    Parsed here with ``struct`` rather than imported from nerfstudio, because
-    this runner deliberately depends on nerfstudio being on PATH, not on being
-    importable from the same interpreter. The parse is self-checking: it must
-    consume the file exactly, which is what catches a format change instead of
-    returning plausible garbage.
-    """
-    path = model_dir / "images.bin"
-    if not path.is_file():
-        raise StageError(
-            f"{path} does not exist, so processed frames cannot be mapped back "
-            f"to their source photographs.\n"
-            f"  A text-format COLMAP model is not supported here; re-run the "
-            f"colmap stage, or set [dataset] use_masks = false."
-        )
-    blob = path.read_bytes()
-    offset = 0
-    (count,) = struct.unpack_from("<Q", blob, offset)
-    offset += 8
-    names = {}
-    try:
-        for _ in range(count):
-            (image_id,) = struct.unpack_from("<I", blob, offset)
-            offset += 4 + 8 * 7 + 4          # pose (7 doubles) and camera_id
-            end = blob.index(b"\x00", offset)
-            names[image_id] = blob[offset:end].decode("utf-8")
-            offset = end + 1
-            (num_points,) = struct.unpack_from("<Q", blob, offset)
-            offset += 8 + num_points * 24
-    except (struct.error, ValueError, UnicodeDecodeError) as exc:
-        raise StageError(f"{path} could not be parsed: {exc}") from exc
-    if offset != len(blob) or len(names) != count:
-        raise StageError(
-            f"{path} did not parse cleanly: read {len(names)} of {count} "
-            f"images and consumed {offset} of {len(blob)} bytes.\n"
-            f"  This COLMAP writes a format this runner does not understand, "
-            f"so frames cannot be mapped back to source photographs safely."
-        )
-    return names
-
-
-def attach_masks(cfg: Dt4agConfig, workspace: Path) -> List[str]:
-    """Wire the dataset's per-image masks into the processed workspace.
-
-    ns-process-data has no per-image mask support: its only ``--mask`` style
-    option is a synthetic crop mask. What nerfstudio's dataparser reads is a
-    ``mask_path`` on each frame pointing into ``masks/``, with downscaled
-    copies in ``masks_N/`` matching the image pyramid.
-
-    ns-process-data renames every photograph to ``frame_%05d`` and does not
-    persist the rename map, so the pairing has to be recovered. It is recovered
-    from ``colmap_im_id``, which nerfstudio stamps on every frame it writes
-    (``colmap_utils.colmap_to_json``), resolved against the names in the COLMAP
-    model. That is nerfstudio's own identifier for the image, so it is exact.
-
-    Comparing file contents does NOT work here, which is worth recording
-    because it looks like it should. ``copy_images_list`` copies each file into
-    place and then re-encodes it: its ffmpeg downscale chain writes level 0
-    back over ``images/`` at ``-q:v 2``, so every processed frame is a lossy
-    re-encode of its source and never byte-identical to it.
-
-    Pairing by sort position would work today and fail silently the day
-    nerfstudio changes its traversal, attaching the wrong mask to every frame
-    with nothing visibly wrong in the output.
-
-    Masks are downscaled one ffmpeg call per file with nearest-neighbour
-    sampling: one call per file because the image2 sequence is what broke the
-    image pyramid, and nearest-neighbour because interpolating a binary mask
-    invents partial coverage along every edge.
-    """
-    transforms_path = workspace / "transforms.json"
-    meta = json.loads(transforms_path.read_text())
-    frames = meta.get("frames") or []
-    if not frames:
-        raise StageError(f"{transforms_path} lists no frames; cannot attach masks.")
-
-    model_dir = workspace / cfg.colmap_model_path
-    if not model_dir.is_dir():
-        # skip_colmap = false puts nerfstudio's own reconstruction one level
-        # deeper, under colmap/.
-        model_dir = workspace / "colmap" / cfg.colmap_model_path
-    colmap_names = read_colmap_image_names(model_dir)
-
-    masks_dir = workspace / "masks"
-    masks_dir.mkdir(parents=True, exist_ok=True)
-    levels = sorted(
-        int(p.name.split("_")[-1])
-        for p in workspace.glob("images_*")
-        if p.is_dir() and p.name.split("_")[-1].isdigit()
-    )
-    for level in levels:
-        (workspace / f"masks_{level}").mkdir(parents=True, exist_ok=True)
-
-    unmatched: List[str] = []
-    unmasked: List[str] = []
-    attached = 0
-    for frame in frames:
-        name = Path(frame["file_path"]).name
-        image_id = frame.get("colmap_im_id")
-        if image_id is None:
-            unmatched.append(f"{name} (no colmap_im_id)")
-            continue
-        original = colmap_names.get(image_id)
-        if original is None:
-            unmatched.append(f"{name} (colmap_im_id {image_id} not in the model)")
-            continue
-        source = cfg.images_path / original
-        if not source.is_file():
-            unmatched.append(f"{name} -> {original} (not under the dataset)")
-            continue
-        mask = cfg.mask_for(source)
-        if mask is None:
-            unmasked.append(f"{name} <- {source.name}")
-            continue
-        target = masks_dir / f"{Path(name).stem}{mask.suffix}"
-        shutil.copy2(mask, target)
-        for level in levels:
-            run_command(
-                [
-                    "ffmpeg", "-y", "-loglevel", "error", "-noautorotate",
-                    "-i", str(target),
-                    "-vf", f"scale=iw/{level}:ih/{level}:flags=neighbor",
-                    str(workspace / f"masks_{level}" / target.name),
-                ],
-                "ffmpeg (mask downscale)",
-                dry_run=False,
-            )
-        frame["mask_path"] = f"masks/{target.name}"
-        attached += 1
-
-    if unmatched:
-        shown = ", ".join(unmatched[:3])
-        raise StageError(
-            f"{len(unmatched)} of {len(frames)} processed frames could not be "
-            f"mapped back to a source photograph: {shown}.\n"
-            f"  The mapping comes from each frame's colmap_im_id resolved "
-            f"against {model_dir}/images.bin.\n"
-            f"  Masks cannot be attached safely: pairing them by position "
-            f"instead would silently mask the wrong frames."
-        )
-    if unmasked:
-        shown = ", ".join(unmasked[:3])
-        raise StageError(
-            f"{len(unmasked)} of {len(frames)} photographs have no paired mask "
-            f"({', '.join(sorted(cfg.mask_extensions))} with the same "
-            f"filename stem): {shown}.\n"
-            f"  A partially masked dataset trains against inconsistent "
-            f"supervision. Supply the missing masks, or set "
-            f"[dataset] use_masks = false to reconstruct the full scene."
-        )
-
-    transforms_path.write_text(json.dumps(meta, indent=2))
-    return [
-        f"masks             : {attached} attached, "
-        f"downscaled to {levels or ['none']}"
-    ]
 
 
 def verify_downscale_pyramid(
@@ -1191,7 +1130,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
     if len(photographs) != len(images):
         excluded = len(images) - len(photographs)
         log(f"excluded from sfm : {excluded} file(s) "
-            + ("used as masks" if cfg.use_masks else "ignored"))
+            + ("composited into masked images" if cfg.use_masks else "ignored"))
     if not photographs:
         raise StageError(
             f"every image under {cfg.images_path} was excluded by [dataset] "
@@ -1208,8 +1147,31 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             "  Pass --run-id <existing id>, or pin [run] date and run_count."
         )
 
+    # Masking pre-step. Deliberately BEFORE the stage loop and outside it: it
+    # is not a stage, it is what turns this dataset into the masked-image
+    # dataset every stage already knows how to consume. Runs whenever masking
+    # is on and any stage that reads images is selected, so `--from-stage
+    # process` on a workspace whose composites were deleted still works.
+    if cfg.use_masks and not dry_run and {"colmap", "process"} & set(stages):
+        for line in composite_masked_images(cfg):
+            log(line)
+
+    # Provenance only: it names what was imaged, never where anything is, and
+    # a run is identical with or without it (LAYOUT.md, "Capture metadata").
+    capture_meta = read_capture_metadata(cfg.images_path)
+    log_extra = {}
+    if capture_meta:
+        log(f"capture           : {capture_meta.get('capture.object_id', '?')}"
+            + (f", imaged {capture_meta['capture.imaging_date']}"
+               if capture_meta.get('capture.imaging_date') else "")
+            + f"  ({Path(capture_meta['capture.source']).name})")
+        log_extra = {
+            "object_id": capture_meta.get("capture.object_id", ""),
+            "imaging_date": capture_meta.get("capture.imaging_date", ""),
+        }
+
     if not dry_run:
-        log(f"run log           : {cfg.append_run_log(run_id)}")
+        log(f"run log           : {cfg.append_run_log(run_id, **log_extra)}")
 
     overall_start = time.time()
     train_started: Optional[float] = None
@@ -1222,7 +1184,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         if stage == "colmap":
             if not dry_run:
                 workspace.mkdir(parents=True, exist_ok=True)
-                if cfg.filters_dataset_files:
+                if cfg.filters_dataset_files and not cfg.use_masks:
                     staged = sfm_input_path(cfg, workspace)
                     staged_files = stage_sfm_inputs(cfg, staged)
                     log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
@@ -1237,7 +1199,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         elif stage == "process":
             # Rebuilt here too, so --from-stage process works on a workspace
             # whose staged tree was cleaned up or never built.
-            if not dry_run and cfg.filters_dataset_files:
+            if not dry_run and cfg.filters_dataset_files and not cfg.use_masks:
                 staged = sfm_input_path(cfg, workspace)
                 staged_files = stage_sfm_inputs(cfg, staged)
                 log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
@@ -1254,9 +1216,6 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                     workspace, allow_full_resolution=args.allow_full_resolution
                 ):
                     log(line)
-                if cfg.use_masks:
-                    for line in attach_masks(cfg, workspace):
-                        log(line)
                 # ns-process-data has copied the photographs into images/ and
                 # nothing downstream reads the staged tree, so drop it. On a
                 # filesystem that supports neither symlinks nor hardlinks it is
@@ -1265,7 +1224,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 # fast. --from-stage process rebuilds it, so this is not a
                 # one-way door.
                 staged = sfm_input_path(cfg, workspace)
-                if cfg.filters_dataset_files and staged.is_dir():
+                if cfg.filters_dataset_files and not cfg.use_masks and staged.is_dir():
                     shutil.rmtree(staged)
                     log(f"sfm input tree    : removed {staged.name} (no longer needed)")
 

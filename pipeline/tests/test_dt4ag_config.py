@@ -838,7 +838,14 @@ class TestPublicSurface(unittest.TestCase):
     def test_all_lists_the_documented_names(self):
         self.assertEqual(
             sorted(dt4ag_config.__all__),
-            ["ConfigError", "Dt4agConfig", "detect_colmap_version", "load_config"])
+            [
+                "CAPTURE_METADATA_FILENAME",
+                "ConfigError",
+                "Dt4agConfig",
+                "detect_colmap_version",
+                "load_config",
+                "read_capture_metadata",
+            ])
 
     def test_find_config_is_public_but_currently_missing_from_all(self):
         self.assertTrue(callable(dt4ag_config.find_config))
@@ -855,3 +862,63 @@ class TestPublicSurface(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCaptureMetadata(unittest.TestCase):
+    """capture.ini is optional provenance: read if present, never load-bearing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_absent_file_is_not_an_error(self):
+        capture = self.root / "OBJ1"
+        capture.mkdir()
+        self.assertIsNone(dt4ag_config.read_capture_metadata(capture))
+
+    def test_values_are_flattened_by_section_and_key(self):
+        capture = self.root / "OBJ1"
+        capture.mkdir()
+        (capture / "capture.ini").write_text(
+            "[capture]\nobject_id = OBJ1\nimaging_date = 2024-10-01\n"
+            "[equipment]\ncamera = a-camera\n",
+            encoding="utf-8")
+        meta = dt4ag_config.read_capture_metadata(capture)
+        self.assertEqual(meta["capture.object_id"], "OBJ1")
+        self.assertEqual(meta["capture.imaging_date"], "2024-10-01")
+        self.assertEqual(meta["equipment.camera"], "a-camera")
+
+    def test_object_id_defaults_to_the_capture_directory_name(self):
+        capture = self.root / "OBJ2"
+        capture.mkdir()
+        (capture / "capture.ini").write_text("[capture]\noperator = someone\n",
+                                             encoding="utf-8")
+        self.assertEqual(
+            dt4ag_config.read_capture_metadata(capture)["capture.object_id"], "OBJ2")
+
+    def test_found_beside_images_under_the_current_layout(self):
+        capture = self.root / "OBJ3"
+        images = capture / "images"
+        images.mkdir(parents=True)
+        (capture / "capture.ini").write_text("[capture]\nobject_id = OBJ3\n",
+                                             encoding="utf-8")
+        meta = dt4ag_config.read_capture_metadata(images)
+        self.assertEqual(meta["capture.object_id"], "OBJ3")
+
+    def test_a_collection_level_file_is_not_claimed_by_a_capture(self):
+        """Otherwise one file would silently describe every sibling capture."""
+        collection = self.root / "collection"
+        capture = collection / "OBJ4"
+        capture.mkdir(parents=True)
+        (collection / "capture.ini").write_text("[capture]\nobject_id = WRONG\n",
+                                                encoding="utf-8")
+        self.assertIsNone(dt4ag_config.read_capture_metadata(capture))
+
+    def test_an_unparseable_file_raises_rather_than_being_skipped(self):
+        capture = self.root / "OBJ5"
+        capture.mkdir()
+        (capture / "capture.ini").write_text("not ini at all\n= = =\n",
+                                             encoding="utf-8")
+        with self.assertRaises(dt4ag_config.ConfigError):
+            dt4ag_config.read_capture_metadata(capture)

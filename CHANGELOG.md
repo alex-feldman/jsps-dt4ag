@@ -1,5 +1,12 @@
 # Changelog
 
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/): one section per
+release, newest first, with changes grouped under **Added**, **Changed**,
+**Deprecated**, **Removed**, **Fixed** and **Security** (only the groups that
+apply appear). What each version *promises* is in `ROADMAP.md`; this file records
+what actually changed.
+
 Versioning is [SemVer](https://semver.org/) while pre-1.0: MINOR for new
 capability, PATCH for fixes. Milestones are marked by annotated git tags, not by
 long-lived branches, because this repository has one committer working across two
@@ -17,17 +24,39 @@ Work toward **0.2.0 — supports separate raw images + mask images**.
   beside its photographs no longer feeds them to SfM as if they were photographs.
 - `[dataset] mask_subpath`, for masks kept in a parallel tree of identical shape
   rather than next to each image.
-- `[dataset] use_masks`, wiring masks into `transforms.json` as nerfstudio
-  `mask_path` entries. **Known defect:** this suppresses background *supervision*,
-  not background *geometry*, so masked runs still carry large amounts of background.
-  Not equivalent to the pre-made alpha route. See `pipeline/MASKING.md`; the fix is
-  to composite masks as an alpha channel instead.
+- `[dataset] use_masks`, turning raw photographs plus separate masks into the
+  masked-image dataset the pipeline already consumed, by compositing each mask
+  into its photograph's alpha channel as a pre-step. Delegates to
+  `scripts/rgb-mask/rgb-mask-batch.py` rather than reimplementing it.
+- `[dataset] masked_images_subpath`, and optional per-capture provenance in
+  `capture.ini`, read and recorded but never affecting behaviour.
+- `pipeline/LAYOUT.md` and `ROADMAP.md`.
+- `--compress-level` on `rgb-mask-batch.py`, defaulting to 1. PNG is lossless at
+  every level (verified: bit-identical pixels and alpha at levels 0 through 9);
+  only speed and size change. Encoding is 96% of that script's runtime, so this
+  is roughly 4x faster for 18% more bytes on rebuildable output.
 - `[train] downscale_factor`, pinning the training resolution instead of leaving it
   to nerfstudio's on-disk probe.
 - The effective downscale factor is now resolved before training, logged, written
   to the run log, and carried in the export filename as `dsN`, so two resolutions of
   one dataset can no longer overwrite each other.
 - `pipeline/MASKING.md` and `pipeline/SEQUENTIAL-RUNS.md`.
+
+### Changed
+
+- Masking is now alpha compositing only. An earlier implementation in this same
+  unreleased cycle wired masks in as nerfstudio `mask_path` entries, which
+  suppresses background *supervision* but not background *geometry*: measured
+  2,385 gaussians via alpha against 96,938 via mask file on one capture. Evidence
+  and reasoning in `pipeline/MASKING.md`.
+
+### Removed
+
+- The `mask_path` route and everything that served it: the COLMAP `images.bin`
+  parser, the `colmap_im_id` frame-to-source mapping, and the per-file ffmpeg
+  mask downscaling. Compositing happens before ns-process-data renames anything,
+  so nothing needs re-pairing afterwards and the mask pyramid is just the image
+  pyramid.
 
 ### Fixed
 

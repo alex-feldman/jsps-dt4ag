@@ -27,6 +27,8 @@ unversioned on a removable drive.
 | `run_pipeline.py` | The same pipeline as a command-line runner, no Jupyter. See "The runner's options" below. |
 | `dt4ag_config.py` | The INI config loader both of the above read, so they cannot drift. |
 | `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel. **Run by hand: the pipeline does NOT call it.** The pipeline starts at masked images; see QUICKSTART section 7. This is the route that actually removes background geometry, and `[dataset] use_masks` is NOT a substitute for it: see [`MASKING.md`](MASKING.md). |
+| `RUN-FLOW.md` | The runner's control flow and every point at which it refuses to continue. For debugging a failed run or extending the runner. |
+| `LAYOUT.md` | The directory structure the pipeline expects: what a capture is, the `images/` discovery rule, and the input-versus-derived split. |
 | `MASKING.md` | Why a separate mask file and a premade alpha image produce very different reconstructions (76x difference in gaussian count), which mode to use when, and the fix. |
 | `SEQUENTIAL-RUNS.md` | What running several reconstructions in sequence does and does not do for you. No batch mode exists; the gaps are listed. |
 | `scripts/sam/` | SAM helper scripts used while producing masks. |
@@ -118,6 +120,34 @@ earlier one.
 **Commit the notebook with its cell outputs cleared.** Executed cells store
 real dataset paths inside the `.ipynb`; `tests/test_dt4ag_config.py` fails the
 build if subject-specific terms reach the committed copy.
+
+## Settings for a test run
+
+**When you are testing the pipeline rather than producing a result, use
+`downscale_factor = 4` and `max_num_iterations = 10000`** (Alex, 2026-08-18).
+
+```ini
+[train]
+max_num_iterations = 10000
+downscale_factor = 4
+```
+
+Measured on a 120-image session at 5184x3456 on a 6 GB card: downscale 4 with
+30000 iterations takes ~22 minutes end to end, downscale 2 with 30000 takes ~45.
+Dropping to 10000 iterations cuts that again. A test is asking "did the pipeline
+do the right thing", and that question is answered at 10000 iterations and
+quarter resolution just as well as at 30000 and half, for a third of the wall
+clock.
+
+Two caveats worth knowing rather than rediscovering:
+
+- **Pin `downscale_factor` explicitly for tests.** Left at `0`, nerfstudio picks
+  by probing the pyramid on disk, so a test's resolution depends on what happens
+  to be there and is not reproducible between datasets.
+- **Do not compare a test run against a production run.** Resolution and step
+  count both change gaussian counts, so a comparison is only meaningful between
+  runs that share them. This is what the `dsN` segment in the export filename is
+  for.
 
 ## Known gaps
 
