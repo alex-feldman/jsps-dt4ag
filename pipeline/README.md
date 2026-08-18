@@ -26,7 +26,9 @@ unversioned on a removable drive.
 | `notebooks/nerfstudio-pipeline-06.ipynb` | The same four stages, interactively. Kernel `dt4ag-uv`, the SAME uv environment the CLI uses. Kept for exploration; `run_pipeline.py` is the supported path. |
 | `run_pipeline.py` | The same pipeline as a command-line runner, no Jupyter. See "The runner's options" below. |
 | `dt4ag_config.py` | The INI config loader both of the above read, so they cannot drift. |
-| `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel. **Run by hand: the pipeline does NOT call it.** The pipeline starts at masked images; see QUICKSTART section 7. |
+| `scripts/rgb-mask/` | Applies pre-made masks to RGB images as an alpha channel. **Run by hand: the pipeline does NOT call it.** The pipeline starts at masked images; see QUICKSTART section 7. This is the route that actually removes background geometry, and `[dataset] use_masks` is NOT a substitute for it: see [`MASKING.md`](MASKING.md). |
+| `MASKING.md` | Why a separate mask file and a premade alpha image produce very different reconstructions (76x difference in gaussian count), which mode to use when, and the fix. |
+| `SEQUENTIAL-RUNS.md` | What running several reconstructions in sequence does and does not do for you. No batch mode exists; the gaps are listed. |
 | `scripts/sam/` | SAM helper scripts used while producing masks. |
 | `scripts/mask-analysis/` | The UT-vs-KU mask agreement study: per-image IoU comparison and CSV analysis. |
 
