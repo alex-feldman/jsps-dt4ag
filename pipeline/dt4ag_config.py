@@ -272,6 +272,7 @@ class Dt4agConfig:
     colmap_dir: Path
     outputs_dir: Path
     exports_dir: Path
+    derived_dir: Path
 
     # [dataset]
     images_path: Path
@@ -323,14 +324,33 @@ class Dt4agConfig:
     # -- derived paths -----------------------------------------------------
 
     @property
+    def capture_rel(self) -> Path:
+        """The capture's path relative to the datasets directory.
+
+        Under the canonical layout the photographs live in ``<capture>/images/``
+        (``LAYOUT.md``, "The discovery rule"), so ``images_rel`` carries a
+        trailing ``images`` component that names a directory INSIDE the capture
+        rather than the capture itself. Every other tree is keyed by the
+        capture, so that component is dropped here once instead of at each use
+        site. ``LAYOUT.md`` calls this ``<collection path…>/<capture>``.
+
+        A non-canonical layout has no such component and ``capture_rel`` is
+        ``images_rel`` unchanged, which is what every pre-2026-08-18 collection
+        and every explicitly configured ``images_subpath`` gets.
+        """
+        if self.images_rel.name == "images":
+            return self.images_rel.parent
+        return self.images_rel
+
+    @property
     def colmap_workspace_parent(self) -> Path:
-        """``<colmap_dir>/<images_rel>``, the per-dataset COLMAP workspace root."""
-        return self.colmap_dir / self.images_rel
+        """``<colmap_dir>/<capture_rel>``, the per-capture COLMAP workspace root."""
+        return self.colmap_dir / self.capture_rel
 
     @property
     def output_parent(self) -> Path:
-        """``<outputs_dir>/<images_rel>``, the per-dataset nerfstudio output root."""
-        return self.outputs_dir / self.images_rel
+        """``<outputs_dir>/<capture_rel>``, the per-capture nerfstudio output root."""
+        return self.outputs_dir / self.capture_rel
 
     def colmap_workspace(self, run_id: str) -> Path:
         return self.colmap_workspace_parent / run_id
@@ -364,11 +384,12 @@ class Dt4agConfig:
         """The mask paired with a photograph, or None.
 
         Pairing is by filename stem at the same position under ``masks_path``.
-        Both real layouts fall out of that one rule: with ``mask_subpath``
-        unset, ``masks_path`` IS the image directory and the mask is the file
+        Both real layouts fall out of that one rule. In the canonical layout
+        ``masks_path`` is the capture's ``masks`` directory, a parallel tree of
+        identical shape, which is what a batch segmentation run produces.
+        Otherwise ``masks_path`` IS the image directory and the mask is the file
         beside the photograph, which is what a tool writing next to its input
-        produces. With it set, the masks live in a parallel tree of identical
-        shape, which is what a batch segmentation run produces.
+        produces. Which one applies is decided in ``load_config``, not here.
 
         Anything looser would need a mapping file kept by hand.
         """
@@ -387,7 +408,22 @@ class Dt4agConfig:
 
         ``auto`` reproduces the notebook's original heuristic: a directory whose
         name mentions "frames" came from a video, anything else is treated as
-        individual images.
+        individual images. Unlike the canonical-layout checks elsewhere in this
+        module, which are exact equality against ``images``, this one is a
+        SUBSTRING test, and it inspects ONLY the last component of
+        ``images_subpath``.
+
+        **Under the canonical layout this can never return "video"**, because
+        that last component is always the literal ``images``, which cannot
+        contain "frames". That is not an oversight to route around: video input
+        is not a supported path in v0.2.0 (``LAYOUT.md`` describes a capture as
+        photographs, and ``[nerfstudio] scene_type = video`` is unexercised).
+        Set ``[colmap] data_type = video`` explicitly if you are experimenting.
+        Real support is a v1.0 item; see ``ROADMAP.md``.
+
+        The heuristic still fires for a non-canonical ``images_subpath`` ending
+        in something like ``capture-a-frames``, which is how the pre-2026-08-18
+        collections were named, so it is kept rather than deleted.
         """
         configured = self.colmap_data_type.lower()
         if configured != "auto":
@@ -545,8 +581,10 @@ class Dt4agConfig:
             f"colmap_dir         : {self.colmap_dir}",
             f"outputs_dir        : {self.outputs_dir}",
             f"exports_dir        : {self.exports_dir}",
+            f"derived_dir        : {self.derived_dir}",
             f"images_path        : {self.images_path}",
             f"images_rel         : {self.images_rel}",
+            f"capture_rel        : {self.capture_rel}",
             f"image_extensions   : "
             f"{', '.join(sorted(self.image_extensions)) or '(any)'}",
             f"mask_extensions    : "
@@ -577,6 +615,19 @@ class Dt4agConfig:
 
 def _expand(raw: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(raw)))
+
+
+def _is_within(candidate: Path, parent: Path) -> bool:
+    """Is ``candidate`` at or beneath ``parent``?
+
+    Purely lexical, on purpose: neither path is required to exist yet, which is
+    the case that matters here since the destination is created later.
+    """
+    try:
+        candidate.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
@@ -615,6 +666,8 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     colmap_dir = data_root / _get_str(parser, "paths", "colmap_dirname", source, "colmap")
     outputs_dir = data_root / _get_str(parser, "paths", "outputs_dirname", source, "outputs")
     exports_dir = data_root / _get_str(parser, "paths", "exports_dirname", source, "exports")
+    derived_dirname = _get_str(parser, "paths", "derived_dirname", source, "derived")
+    derived_dir = data_root / derived_dirname
 
     # [dataset]
     images_rel_raw = _get_str(parser, "dataset", "images_subpath", source)
@@ -626,6 +679,10 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"{images_rel}"
         )
     images_path = datasets_dir / images_rel
+    # Mirrors Dt4agConfig.capture_rel, which cannot be used yet because the
+    # config object is not built until the end of this function. Read its
+    # docstring for why the trailing 'images' component is dropped.
+    capture_rel = images_rel.parent if images_rel.name == "images" else images_rel
 
     image_extensions = _parse_extensions(
         parser, "dataset", "image_extensions", source
@@ -641,18 +698,51 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"{', '.join(sorted(overlap))}. A file cannot be both a "
             f"photograph and a mask."
         )
-    mask_subpath_raw = _get_str(
-        parser, "dataset", "mask_subpath", source, "", allow_empty=True
-    )
-    if mask_subpath_raw:
-        mask_subpath = Path(mask_subpath_raw)
-        masks_path = (
-            mask_subpath if mask_subpath.is_absolute() else datasets_dir / mask_subpath
+    # Where the masks are. Derived from the layout, never configured: the two
+    # real arrangements are both expressible as a rule about the capture
+    # directory, and a config key that can contradict the filesystem is a second
+    # source of truth (LAYOUT.md, "Capture metadata" makes the same argument
+    # about paths in provenance files).
+    #
+    #   canonical : <capture>/images/ beside <capture>/masks/, the parallel tree
+    #               a batch segmentation run produces
+    #   beside    : masks alongside the photographs, which is what a tool writing
+    #               next to its input produces
+    #
+    # 'masks' is only ever consulted as a sibling of a directory actually named
+    # 'images'. Otherwise a directory one level up would belong to the
+    # COLLECTION, and one capture's masks would be attached to all its siblings,
+    # the same trap read_capture_metadata guards against.
+    if _get_str(parser, "dataset", "mask_subpath", source, "", allow_empty=True):
+        raise ConfigError(
+            f"key 'mask_subpath' in section [dataset] of config file {source} "
+            f"was retired in v0.2.0 and is no longer read. Masks are found by "
+            f"layout: put them in '<capture>/masks/' beside '<capture>/images/' "
+            f"(see pipeline/LAYOUT.md), or leave them alongside the "
+            f"photographs. Delete the key once the capture is migrated.\n"
+            f"  (this refuses rather than ignoring the key, because a mask "
+            f"directory silently not read is a run that trains against the "
+            f"wrong supervision and still exits 0)"
         )
+    canonical_masks = images_path.parent / "masks"
+    if images_path.name == "images" and canonical_masks.is_dir():
+        masks_path = canonical_masks
     else:
         masks_path = images_path
 
     use_masks = _get_bool(parser, "dataset", "use_masks", source, False)
+    if use_masks and validate_paths and masks_path == images_path and images_path.name == "images":
+        # A canonical capture with no masks/ sibling. Without this the run falls
+        # back to looking for masks beside the photographs, finds none, and dies
+        # one photograph at a time in the compositing pre-step instead of here.
+        raise ConfigError(
+            f"[dataset] use_masks is true in config file {source}, but the "
+            f"capture {images_path.parent} has no 'masks' directory beside its "
+            f"'images' directory.\n"
+            f"  Under the canonical layout masks live in '<capture>/masks/', "
+            f"mirroring '<capture>/images/' (see pipeline/LAYOUT.md). Create "
+            f"it, or set use_masks = false to reconstruct the full scene."
+        )
     if use_masks and not mask_extensions:
         raise ConfigError(
             f"key 'use_masks' in section [dataset] of config file {source} is "
@@ -660,28 +750,47 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"treated as a mask."
         )
 
-    # Where composited masked images are written. Defaults to a `masked-images`
-    # sibling of the image directory, keyed by its name, which reproduces the
-    # layout the pipeline already consumed before it could composite anything:
-    #   images_subpath        = <group>/<session>
-    #   masked_images_subpath = <group>/masked-images/<session>
+    # Where composited masked images are written: under `derived/`, which is
+    # the pipeline's own tree, NOT under `datasets/`, which is input the
+    # pipeline never writes to (LAYOUT.md, "Input versus derived"). Composites
+    # are rebuildable and run to gigabytes per capture, so putting them inside
+    # the one tree you most want to back up was wrong; they were briefly
+    # written there in 2026-08-17 and moved out in v0.2.0.
+    #
+    #   images_subpath = <collection>/<capture>/images
+    #   composites  -> <data_root>/derived/masked/<collection>/<capture>/
+    #
+    # A relative override is resolved against data_root, not datasets_dir, for
+    # the same reason: every default destination it could reasonably name is a
+    # sibling of `datasets/`, not a child of it.
     masked_images_raw = _get_str(
         parser, "dataset", "masked_images_subpath", source, "", allow_empty=True
     )
     if masked_images_raw:
         masked_rel = Path(masked_images_raw)
         masked_images_path = (
-            masked_rel if masked_rel.is_absolute() else datasets_dir / masked_rel
+            masked_rel if masked_rel.is_absolute() else data_root / masked_rel
         )
     else:
-        masked_images_path = (
-            images_path.parent / "masked-images" / images_path.name
-        )
+        masked_images_path = data_root / derived_dirname / "masked" / capture_rel
     if use_masks and masked_images_path == images_path:
         raise ConfigError(
             f"'masked_images_subpath' in section [dataset] of config file "
             f"{source} resolves to the image directory itself. Compositing "
             f"would overwrite the source photographs."
+        )
+    if use_masks and _is_within(masked_images_path, datasets_dir):
+        raise ConfigError(
+            f"'masked_images_subpath' in section [dataset] of config file "
+            f"{source} resolves to {masked_images_path}, which is inside the "
+            f"datasets directory {datasets_dir}.\n"
+            f"  datasets/ is INPUT and the pipeline never writes to it. "
+            f"Composited masked images are rebuildable and run to gigabytes "
+            f"per capture; they belong under '{derived_dirname}/'. Leave the "
+            f"key empty for the default, or name a path outside datasets/. "
+            f"See pipeline/LAYOUT.md, 'Input versus derived'.\n"
+            f"  (pre-v0.2.0 configs wrote composites into datasets/. Deleting "
+            f"this key is the migration)"
         )
 
     if validate_paths:
@@ -689,11 +798,9 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             ("data root", data_root, "[paths] data_root"),
             ("datasets directory", datasets_dir, "[paths] datasets_dirname"),
             ("dataset image directory", images_path, "[dataset] images_subpath"),
-            *(
-                [("mask directory", masks_path, "[dataset] mask_subpath")]
-                if mask_subpath_raw
-                else []
-            ),
+            # masks_path needs no entry: it is derived, and both branches
+            # resolve to a directory already checked above or one whose
+            # existence chose the branch.
         ):
             if not candidate.is_dir():
                 raise ConfigError(
@@ -804,6 +911,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         colmap_dir=colmap_dir,
         outputs_dir=outputs_dir,
         exports_dir=exports_dir,
+        derived_dir=derived_dir,
         images_path=images_path,
         images_rel=images_rel,
         image_extensions=image_extensions,

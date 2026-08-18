@@ -14,22 +14,33 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
-## Unreleased
+## [0.2.0] — 2026-08-18
 
-Work toward **0.2.0 — supports separate raw images + mask images**.
+**Supports separate raw images and mask images.** The pipeline accepts raw
+photographs plus separate mask files and does the masking itself, so the
+manual pre-processing step v0.1.0 required is gone.
+
+Verified on eleven captures across two collections, all reconstructing from
+the migrated canonical layout, with the five carrying recorded reference
+gaussian counts landing within 6% of them.
 
 ### Added
 
 - `[dataset] image_extensions` / `mask_extensions`, so a dataset that stores masks
   beside its photographs no longer feeds them to SfM as if they were photographs.
-- `[dataset] mask_subpath`, for masks kept in a parallel tree of identical shape
-  rather than next to each image.
 - `[dataset] use_masks`, turning raw photographs plus separate masks into the
   masked-image dataset the pipeline already consumed, by compositing each mask
   into its photograph's alpha channel as a pre-step. Delegates to
   `scripts/rgb-mask/rgb-mask-batch.py` rather than reimplementing it.
 - `[dataset] masked_images_subpath`, and optional per-capture provenance in
   `capture.ini`, read and recorded but never affecting behaviour.
+- `[paths] derived_dirname`, naming the tree that holds the pipeline's
+  rebuildable intermediates. Defaults to `derived`.
+- `Dt4agConfig.capture_rel`, the capture's path relative to the datasets
+  directory. It is `images_subpath` with the canonical trailing `images`
+  component dropped, and it is what the `colmap/`, `outputs/` and `derived/`
+  trees are keyed by, since all three describe the capture rather than the
+  directory of photographs inside it.
 - `pipeline/LAYOUT.md` and `ROADMAP.md`.
 - `--compress-level` on `rgb-mask-batch.py`, defaulting to 1. PNG is lossless at
   every level (verified: bit-identical pixels and alpha at levels 0 through 9);
@@ -37,9 +48,13 @@ Work toward **0.2.0 — supports separate raw images + mask images**.
   is roughly 4x faster for 18% more bytes on rebuildable output.
 - `[train] downscale_factor`, pinning the training resolution instead of leaving it
   to nerfstudio's on-disk probe.
-- The effective downscale factor is now resolved before training, logged, written
-  to the run log, and carried in the export filename as `dsN`, so two resolutions of
-  one dataset can no longer overwrite each other.
+- The effective downscale factor is now resolved before training, logged to the
+  console, and carried in the export filename as `dsN`, so two resolutions of
+  one dataset can no longer overwrite each other. The run log's
+  `downscale_factor` column holds the CONFIGURED value, not the effective one:
+  its row is appended before the stages run, so an unpinned run records the
+  literal `auto`. Capturing the resolved value belongs to v0.3.0's per-run
+  records.
 - `pipeline/MASKING.md` and `pipeline/SEQUENTIAL-RUNS.md`.
 
 ### Changed
@@ -48,10 +63,35 @@ Work toward **0.2.0 — supports separate raw images + mask images**.
   unreleased cycle wired masks in as nerfstudio `mask_path` entries, which
   suppresses background *supervision* but not background *geometry*: measured
   2,385 gaussians via alpha against 96,938 via mask file on one capture. Evidence
-  and reasoning in `pipeline/MASKING.md`.
+  and reasoning in `pipeline/MASKING.md`, which also records that keeping a loss
+  masking mode was considered and deliberately rejected.
+- **Composited masked images are written under `derived/`, not into
+  `datasets/`.** The default is now
+  `<data_root>/derived/masked/<collection>/<capture>/`. They were briefly written
+  into the input tree earlier in this same unreleased cycle, which put
+  rebuildable multi-gigabyte data (roughly 2.3 GB per capture measured) inside
+  the one tree that most needs backing up. A `masked_images_subpath` override is
+  now resolved against `data_root` rather than the datasets directory, and one
+  that resolves inside `datasets/` is refused.
+- **Masks are located by layout instead of by configuration.** `<capture>/masks/`
+  when `images_subpath` ends in `images`, mirroring it; beside each photograph
+  otherwise. Both real arrangements follow from the one rule, so the key that
+  used to state it could only ever agree with the filesystem or be wrong.
+- The `colmap/`, `outputs/` and `derived/` trees are keyed by `capture_rel`
+  rather than `images_subpath`, so a canonical capture's workspace is
+  `colmap/<collection>/<capture>/<run-id>/` and not
+  `colmap/<collection>/<capture>/images/<run-id>/`.
+- The export filename now leads with the capture, via `capture_rel.name`. It
+  used to use `images_path.parent.name`, which names the capture only under the
+  canonical layout; under a legacy one it named the collection, so every capture
+  in a collection shared a filename prefix.
 
 ### Removed
 
+- **`[dataset] mask_subpath`.** Superseded by the layout rule above. A config
+  still carrying the key is REFUSED with a message naming the replacement,
+  rather than ignored: a mask directory silently not read is a run that trains
+  against the wrong supervision and still exits 0.
 - The `mask_path` route and everything that served it: the COLMAP `images.bin`
   parser, the `colmap_im_id` frame-to-source mapping, and the per-file ffmpeg
   mask downscaling. Compositing happens before ns-process-data renames anything,

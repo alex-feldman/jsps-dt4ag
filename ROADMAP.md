@@ -36,7 +36,7 @@ producing them was a manual step outside it.
 
 ## v0.2.0 — supports separate raw images and mask images
 
-**In progress.** The pipeline accepts raw photographs plus separate mask files
+**Released 2026-08-18.** The pipeline accepts raw photographs plus separate mask files
 and does the masking itself.
 
 - [x] Masks are composited into the photograph's alpha channel as a pre-step,
@@ -45,15 +45,21 @@ and does the masking itself.
 - [x] Alpha compositing verified to remove background geometry: 2,385 gaussians
       against 96,938 for the same capture via the rejected mask-file route
 - [x] Masks may sit beside the photographs or in a parallel tree
-- [x] The effective training resolution is recorded in the run log and the export
-      filename, so two resolutions of one capture cannot collide
+- [x] The training resolution is carried in the export filename, so two
+      resolutions of one capture cannot collide. The run log records the
+      *configured* value, which is the resolved one whenever it is pinned and
+      the literal `auto` when it is not: the row is written before the stages
+      run, so it states intent, and a per-run outcome record is v0.3.0's job
 - [x] The process stage verifies the downscale pyramid it depends on
 - [x] Optional per-capture provenance (`capture.ini`), read and recorded, never
       load-bearing
-- [ ] Composited output written to `derived/`, not into the input tree
-- [ ] Canonical layout implemented: a capture is a directory containing
+- [x] Composited output written to `derived/`, not into the input tree
+- [x] Canonical layout implemented: a capture is a directory containing
       `images/` (see `pipeline/LAYOUT.md`)
-- [ ] Verified end to end on a multi-capture collection
+- [x] Verified end to end on a multi-capture collection: eleven captures across
+      two collections reconstructed from the migrated layout on 2026-08-18, all
+      succeeding, and the five with recorded reference counts landed within 6%
+      of them. No composite was written under `datasets/` by any of the eleven
 
 **Acceptance:** someone with photographs and masks, and no knowledge of this
 pipeline's history, can reconstruct a masked subject without pre-processing
@@ -132,6 +138,16 @@ Not started.
 - [ ] The published documentation describes a pipeline someone has actually run
       from it, start to finish, without the author present
 - [ ] A dataset and its reconstruction are published together, each citable
+- [ ] **Video input is supported end to end.** A capture can be a video rather
+      than a directory of photographs: frames extracted, the canonical layout
+      populated from them, and masks applied to the extracted frames. Today the
+      plumbing exists but is unexercised and half-blind: `[nerfstudio]
+      scene_type = video` and `[colmap] data_type = video` are settable and
+      never tested, and the `auto` heuristic that infers video from a directory
+      named `frames` cannot fire under the canonical layout, where that
+      component is always `images` (`pipeline/LAYOUT.md`). Either make it work
+      or delete the half-support, because a settable option that is neither
+      tested nor reachable is worse than an absent one
 
 **Acceptance:** the repository stands on its own as a research artefact.
 

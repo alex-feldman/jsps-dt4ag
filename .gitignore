@@ -5,6 +5,7 @@
 # archived runs. These patterns exist so a stray copy inside the repo cannot be
 # staged by accident.
 datasets/
+derived/
 colmap/
 outputs/
 archive-*/

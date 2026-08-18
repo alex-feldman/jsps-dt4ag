@@ -123,18 +123,23 @@ Fix: a `series` or `batch_id` column, and a documented way to start a fresh log
 when the columns change (rename the old file; the runner creates a new one with
 current columns).
 
-## 4. The training resolution is not recorded anywhere
+## 4. The training resolution is recorded in the artefact, not in the run log
 
-Separate from the CSV problem above, and worth its own line because it bites
-even for a single run. With `[train] downscale_factor = 0`, nerfstudio picks the
-factor itself by probing the image pyramid on disk, and the value it picked is
-written to no artefact: `config.yml` records the *request* (`downscale_factor:
-null`), not the decision. Recovering it after the fact means re-deriving the
-probe by hand.
+**Mostly closed since this was written.** The effective factor is now resolved
+before training, logged to the console, and carried in the export filename as
+`dsN`, so the resolution is a property of the artefact and two resolutions of
+one capture can no longer overwrite each other.
 
-So the resolution a reconstruction was trained at, which changes the result more
-than most settings, is currently a property of what happened to be on disk that
-day and is recorded nowhere. See "What to change next".
+What remains: the run log's `downscale_factor` column holds the CONFIGURED
+value, because the row is appended before any stage runs and therefore states
+intent rather than outcome. With `[train] downscale_factor = 0` it records the
+literal `auto`, and nerfstudio's own choice, made by probing the pyramid on
+disk, still reaches no CSV column. `config.yml` records the *request*
+(`downscale_factor: null`), not the decision.
+
+That gap belongs to v0.3.0's per-run records rather than to this file's batch
+concerns: the fix is a record written incrementally as a run progresses, which
+is exactly what a row written up front cannot be.
 
 ## 5. The `PATH` export is operator memory
 

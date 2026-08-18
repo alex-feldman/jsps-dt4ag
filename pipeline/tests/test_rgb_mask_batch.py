@@ -262,6 +262,41 @@ class TestNestedLayoutRun(FixtureCase):
         self.assertIn("failed (total)    : 0", out)
         self.assertFalse((self.fixture.output / "masks").exists())
 
+    def test_beside_layout_does_not_composite_masks_over_the_photographs(self):
+        """The mask root IS the image root, so the masks must not be inputs.
+
+        Regression, found 2026-08-18 by an independent audit. The exclusion
+        that keeps a nested mask directory out of the walk cannot fire here,
+        because excluding the mask root would exclude every photograph too. So
+        each mask was walked as an input, paired with itself, and written with
+        a .png suffix onto the SAME output path as its photograph's composite.
+        Sorted order put the mask second, so it overwrote the real composite,
+        the tally read "processed: 2", and the run exited 0. The pipeline then
+        reconstructed the masks.
+
+        This layout is reachable from a supported configuration: masks beside
+        the photographs plus use_masks = true.
+        """
+        from PIL import Image
+
+        self.fixture.masks = self.fixture.images
+        self.fixture.add_pair("a")
+        code, out = self.fixture.run("--masks", str(self.fixture.images))
+        self.assertEqual(code, 0)
+        # One photograph in, one composite out. Two would mean the mask was
+        # treated as an input.
+        self.assertIn("processed         : 1", out)
+        self.assertIn("failed (total)    : 0", out)
+        # The colour must be the photograph's, not the mask's. This is the
+        # assertion that actually fails on the old code, where the pixel came
+        # back as the mask's flat white. Compared with a tolerance because the
+        # photograph is written as JPEG and comes back a shade off.
+        composite = Image.open(self.fixture.output / "a.png").convert("RGBA")
+        for channel, expected in zip(composite.getpixel((0, 0))[:3], (10, 120, 200)):
+            self.assertAlmostEqual(channel, expected, delta=4)
+        # And the mask still has to reach the alpha channel.
+        self.assertEqual(self.fixture.alpha_values("a.png"), [0, 255])
+
     def test_output_inside_the_image_root_is_not_reprocessed(self):
         self.fixture.add_pair("a")
         self.fixture.output = self.fixture.images / "masked-images"

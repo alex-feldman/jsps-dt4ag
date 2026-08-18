@@ -43,12 +43,21 @@ data_root/
 
   colmap/<collection path…>/<capture>/<run-id>/
   outputs/<collection path…>/<capture>/<run-id>/
-  exports/<collection path…>/<capture>/<run-id>_*.ply
+  exports/<capture>_<run-id>_*.ply        FLAT, see below
   run-log.csv
 ```
 
-`<collection path…>` is the same relative path in every tree, so a capture's
-inputs, intermediates and outputs are all findable from any one of them.
+`<collection path…>` is the same relative path in the `datasets/`, `derived/`,
+`colmap/` and `outputs/` trees, so a capture's inputs, intermediates and
+training outputs are all findable from any one of them.
+
+**`exports/` is deliberately flat** and is the one exception. The export
+filename already carries the capture, the run id, the iteration count and the
+resolution, so it cannot collide, and a single directory gives one place to find
+every export rather than a tree to walk. That decision predates this spec
+(2026-08-07) and the reasoning is at the `export_dir` assignment in
+`run_pipeline.py`. An earlier draft of this file specified a nested exports tree
+that the code has never written.
 
 ## Capture metadata
 
@@ -116,6 +125,24 @@ It has to be strict to be useful. "A directory containing image files, possibly
 nested" would make every ancestor of a capture also look like a capture, and
 discovery would be ambiguous at every level.
 
+**A capture must not itself be named `images`.** A directory named `images` is
+read as the photographs directory INSIDE a capture, so a capture called that
+would be mistaken for its own contents: the tree above it would be keyed as the
+capture in `colmap/`, `outputs/` and `derived/`, and a `masks/` directory
+belonging to the collection would attach to every capture beneath it.
+
+**Containing the word is fine.** The rule is exact equality, not a substring
+test, so `raw-images`, `images-2024` and `plant_images` are all legal capture
+names. They simply are not canonical, and are treated as the pre-2026-08-18
+layout.
+
+One nearby rule IS a substring test and is easy to confuse with this one: the
+`[colmap] data_type = auto` heuristic treats a directory whose name contains
+`frames` as video. It inspects only the last component of `images_subpath`,
+which under this layout is always `images`, so **`auto` can never infer video
+for a canonical capture**. Video input is not supported in v0.2.0; it is a v1.0
+item (`ROADMAP.md`). Set `data_type` explicitly to experiment.
+
 **An explicitly configured `images_subpath` bypasses discovery entirely** and
 works against any layout, with or without an `images/` level. So the convention is
 required only for automatic multi-capture processing, never for running one
@@ -140,16 +167,41 @@ preserve and back up. `derived/masked/` exists to correct it.
 ## Migrating existing data
 
 No collection predating this spec has an `images/` level; camera directories sit
-directly under the capture. Masks, where they exist, sit in a parallel tree rather
-than inside the capture. Both are one `mv` per capture:
+directly under the capture. **There are two source shapes and they are not the
+same migration**, which is the thing to establish before writing any `mv`:
+
+**Masks in a parallel tree.** One `mv` per camera directory, plus one for the
+masks:
 
 ```bash
 # inside a capture directory
 mkdir images && mv <camera-dirs> images/
-# and, if masks live in a parallel tree
 mv <mask-tree>/<capture> masks
 ```
 
+**Masks beside the photographs**, the `.jpg` and its `.png` in one directory.
+This is a per-file split by extension, and no directory move expresses it:
+
+```bash
+# inside a capture directory, per camera directory
+mkdir -p images/<camera> masks/<camera>
+mv <camera>/*.jpg images/<camera>/ && mv <camera>/*.png masks/<camera>/
+rmdir <camera>
+```
+
+Both were migrated on 2026-08-18: five captures of the first shape and six of
+the second, 1,160 photographs and 1,160 masks, counts verified per capture
+before and after. The second shape is also the one that caused the 2026-08-17
+downscale-pyramid failure, since ns-process-data interleaves a mixed-extension
+directory into one ffmpeg sequence, so migrating it is worth more than tidiness.
+
+**Count the files before and after, per capture, and refuse to continue on a
+mismatch.** A migration that half-succeeds leaves a capture whose masks no
+longer pair with its photographs, and the pipeline cannot tell that from a
+capture that legitimately has fewer masks.
+
 Until a collection is migrated, run it by naming `images_subpath` explicitly.
 Discovery will not see it, which is the intended failure: silent partial discovery
-would be worse than none.
+would be worse than none. A non-canonical `images_subpath` also keeps masks
+looked for beside the photographs, since the `masks/` sibling is only consulted
+when the configured directory is actually named `images`.

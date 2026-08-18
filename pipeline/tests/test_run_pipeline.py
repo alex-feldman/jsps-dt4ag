@@ -65,7 +65,7 @@ outputs_dirname = outputs
 exports_dirname = exports
 
 [dataset]
-images_subpath = scene-01/capture-a/session-001
+images_subpath = {images_subpath}
 {dataset_extra}
 
 [run]
@@ -107,17 +107,24 @@ gauss_to_pc_script =
 
 
 def make_config(root: Path, **overrides):
-    """Build a data tree and a config file inside ``root``, and load it."""
-    images = root / "datasets" / "scene-01" / "capture-a" / "session-001"
-    images.mkdir(parents=True, exist_ok=True)
+    """Build a data tree and a config file inside ``root``, and load it.
+
+    Defaults to the pre-2026-08-18 layout (camera directories directly under
+    the capture, masks beside the photographs), which is still supported and is
+    what most of these tests exercise. Pass ``images_subpath`` ending in
+    ``images`` for the canonical layout.
+    """
     values = {
         "data_root": root,
         "extra_args": "",
         "skip_colmap": "true",
         "dataset_extra": "",
         "train_extra": "",
+        "images_subpath": "scene-01/capture-a/session-001",
     }
     values.update(overrides)
+    images = root / "datasets" / values["images_subpath"]
+    images.mkdir(parents=True, exist_ok=True)
     config_path = root / "run.ini"
     config_path.write_text(CONFIG_TEMPLATE.format(**values), encoding="utf-8")
     return load_config(config_path)
@@ -340,10 +347,11 @@ class TestCommands(TempTreeTestCase):
         )
 
     def test_export_filename_records_the_run_provenance(self):
+        """The leading component is the CAPTURE, not the collection above it."""
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120"),
-            "capture-a_run_260101-03-3120_splat_ubuntu_my-env_500steps_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_individual.ply",
         )
 
     def test_export_filename_carries_the_resolution_when_known(self):
@@ -351,7 +359,7 @@ class TestCommands(TempTreeTestCase):
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120", 2),
-            "capture-a_run_260101-03-3120_splat_ubuntu_my-env_500steps_ds2_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_ds2_individual.ply",
         )
         self.assertNotEqual(
             export_filename(cfg, "run_260101-03-3120", 2),
@@ -622,33 +630,55 @@ class MaskSupportTests(TempTreeTestCase):
             cfg.images_path / "shot_1.png",
         )
 
-    def test_masks_can_live_in_a_parallel_tree(self):
-        """A batch segmentation run writes masks/<session>/<camera>/, not inline."""
-        masks = self.root / "datasets" / "scene-01" / "capture-a" / "masks"
-        (masks / "session-001" / "cam-002").mkdir(parents=True)
-        (masks / "session-001" / "cam-002" / "shot_1.png").write_bytes(b"mask")
-        cfg = make_config(
+    def _canonical(self, use_masks="false", with_masks=True):
+        """A capture in the canonical layout: <capture>/images/ and masks/."""
+        capture = self.root / "datasets" / "scene-01" / "capture-a"
+        (capture / "images" / "cam-002").mkdir(parents=True)
+        (capture / "images" / "cam-002" / "shot_1.jpg").write_bytes(b"rgb")
+        if with_masks:
+            (capture / "masks" / "cam-002").mkdir(parents=True)
+            (capture / "masks" / "cam-002" / "shot_1.png").write_bytes(b"mask")
+        return capture, make_config(
             self.root,
-            dataset_extra=(
-                "image_extensions = .jpg\nmask_extensions = .png\n"
-                "use_masks = false\n"
-                "mask_subpath = scene-01/capture-a/masks/session-001"
-            ),
-        )
-        photograph = cfg.images_path / "cam-002" / "shot_1.jpg"
-        photograph.parent.mkdir(parents=True)
-        photograph.write_bytes(b"rgb")
-        self.assertNotEqual(cfg.masks_path, cfg.images_path)
-        self.assertEqual(
-            cfg.mask_for(photograph),
-            masks / "session-001" / "cam-002" / "shot_1.png",
+            images_subpath="scene-01/capture-a/images",
+            dataset_extra=self.DATASET.format(use=use_masks),
         )
 
-    def test_a_parallel_tree_that_does_not_exist_is_rejected_at_load(self):
+    def test_masks_are_found_in_the_canonical_sibling_tree(self):
+        """<capture>/masks/ mirrors <capture>/images/, with no config key."""
+        capture, cfg = self._canonical()
+        self.assertEqual(cfg.masks_path, capture / "masks")
+        self.assertNotEqual(cfg.masks_path, cfg.images_path)
+        self.assertEqual(
+            cfg.mask_for(cfg.images_path / "cam-002" / "shot_1.jpg"),
+            capture / "masks" / "cam-002" / "shot_1.png",
+        )
+
+    def test_a_masks_sibling_is_only_read_beside_a_directory_named_images(self):
+        """Otherwise it would belong to the collection, not to this capture.
+
+        The sibling has to be created beside the CONFIGURED image directory,
+        which is what the guard inspects. An earlier version of this test made
+        one two levels up and passed with the guard deleted.
+        """
+        cfg = self._dataset()
+        sibling = cfg.images_path.parent / "masks"
+        sibling.mkdir(parents=True, exist_ok=True)
+        # images_path is 'session-001', not 'images', so the sibling is not a
+        # capture's mask tree and must be ignored.
+        self.assertNotEqual(cfg.images_path.name, "images")
+        self.assertEqual(load_config(self.root / "run.ini").masks_path, cfg.images_path)
+
+    def test_use_masks_on_a_canonical_capture_without_masks_is_refused(self):
+        with self.assertRaises(Exception):
+            self._canonical(use_masks="true", with_masks=False)
+
+    def test_the_retired_mask_subpath_key_is_refused_rather_than_ignored(self):
+        """Silently not reading it would train against the wrong supervision."""
         with self.assertRaises(Exception):
             make_config(
                 self.root,
-                dataset_extra="mask_extensions = .png\nmask_subpath = nope/missing",
+                dataset_extra="mask_extensions = .png\nmask_subpath = anything",
             )
 
     def test_extensions_classify_photographs_and_masks(self):
@@ -688,25 +718,53 @@ class MaskSupportTests(TempTreeTestCase):
         workspace = cfg.colmap_workspace("run_260101-03-3120")
         self.assertIn(str(cfg.images_path), colmap_command(cfg, workspace))
 
-    def test_masked_images_default_to_a_sibling_directory(self):
-        """The layout the pipeline consumed before it could composite anything."""
-        cfg = self._dataset(use_masks="true")
-        self.assertEqual(cfg.masked_images_path.name, cfg.images_path.name)
-        self.assertEqual(cfg.masked_images_path.parent.name, "masked-images")
+    def test_composites_default_under_derived_and_never_into_datasets(self):
+        """datasets/ is input; composites are rebuildable and gigabytes big."""
+        _, cfg = self._canonical(use_masks="true")
         self.assertEqual(
-            cfg.masked_images_path.parent.parent, cfg.images_path.parent
+            cfg.masked_images_path,
+            cfg.derived_dir / "masked" / "scene-01" / "capture-a",
+        )
+        self.assertFalse(
+            str(cfg.masked_images_path).startswith(str(cfg.datasets_dir))
         )
 
-    def test_compositing_into_the_source_directory_is_refused(self):
+    def test_an_override_pointing_into_datasets_is_refused(self):
+        """Which is exactly what every pre-v0.2.0 config did."""
         with self.assertRaises(Exception):
             make_config(
                 self.root,
                 dataset_extra=(
                     "image_extensions = .jpg\nmask_extensions = .png\n"
                     "use_masks = true\n"
-                    "masked_images_subpath = scene-01/capture-a/session-001"
+                    "masked_images_subpath = datasets/scene-01/masked-images"
                 ),
             )
+
+    def test_a_stale_extra_composite_is_refused_not_silently_reused(self):
+        """A subset test cannot see files that should not be there.
+
+        The reuse check asks whether the set MATCHES, not whether it contains
+        what is needed, because anything extra in the composited directory is
+        handed to COLMAP and ns-process-data as part of the capture.
+        """
+        cfg = self._dataset(use_masks="true")
+        cfg.masked_images_path.mkdir(parents=True)
+        for index in (1, 2):
+            (cfg.masked_images_path / f"shot_{index}.png").write_bytes(b"ok")
+        (cfg.masked_images_path / "left_over.png").write_bytes(b"stale")
+        with self.assertRaises(Exception) as ctx:
+            run_pipeline.composite_masked_images(cfg)
+        self.assertIn("left_over.png", str(ctx.exception))
+
+    def test_an_exactly_matching_set_is_still_reused(self):
+        """The whole point of the check is to avoid recompositing needlessly."""
+        cfg = self._dataset(use_masks="true")
+        cfg.masked_images_path.mkdir(parents=True)
+        for index in (1, 2):
+            (cfg.masked_images_path / f"shot_{index}.png").write_bytes(b"ok")
+        lines = run_pipeline.composite_masked_images(cfg)   # would shell out
+        self.assertIn("reused", lines[0])
 
     def test_sfm_input_is_the_masked_directory_when_masking(self):
         """Every stage downstream sees masked images and nothing else."""
@@ -875,7 +933,12 @@ class DownscalePyramidTests(unittest.TestCase):
         self.assertEqual(len(run_pipeline.verify_downscale_pyramid(root)), 1)
 
     def test_mask_directories_do_not_confuse_the_image_check(self):
-        """masks_N/ is built per-file by attach_masks, not by ns-process-data."""
+        """A masks_N/ directory beside images_N/ must not count as a pyramid level.
+
+        Such a directory is left behind by older nerfstudio mask handling; the
+        pipeline itself no longer writes one, since masks are composited into
+        the alpha channel before any stage runs.
+        """
         frames = ["frame_00001.jpg"]
         root = self._workspace(frames, {4: frames})
         (root / "masks_4").mkdir()

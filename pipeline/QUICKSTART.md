@@ -729,35 +729,40 @@ Growing means alive.
 
 ## 7. Where this pipeline starts, and what it does NOT do
 
-**The pipeline begins at MASKED images. It does not create masks.**
+**The pipeline begins at photographs plus masks. It does not create masks.**
 
-Its four stages are `colmap`, `process`, `train`, `export`. There is no masking
-stage, and neither the runner nor the notebook invokes any masking script. If you
-point it at raw photos it will happily reconstruct them, background and all.
+Its four stages are `colmap`, `process`, `train`, `export`. Masking is not a
+stage: it is a pre-step that runs before them, compositing each mask into its
+photograph's alpha channel, after which every stage is unchanged and unaware. If
+you point it at raw photos with `use_masks = false` it will happily reconstruct
+them, background and all.
 
 The full capture-to-splat workflow is six steps. This repository automates the
-last four:
+last five:
 
 ```
   1. capture photos                         you
   2. generate masks (SAM3)                  samask, a SEPARATE repository
-  3. apply masks as an alpha channel        pipeline/scripts/rgb-mask/   MANUAL
   ----------------------------------------- the pipeline starts here ---
+  3. composite masks as an alpha channel    run_pipeline.py, pre-step
   4. COLMAP structure-from-motion           run_pipeline.py
   5. ns-process-data                        run_pipeline.py
   6. ns-train splatfacto + ns-export        run_pipeline.py
 ```
 
-Steps 2 and 3 are run by hand. `pipeline/scripts/rgb-mask/rgb-mask-batch.py`
-applies existing masks; read its README first. Mask *generation* needs the
-`samask` repository, which at the time of writing is **not self-contained**: a
-fresh clone cannot run it.
+Step 3 was manual until v0.2.0 and is now automatic. Set `[dataset] use_masks =
+true`, put the masks in `<capture>/masks/` mirroring `<capture>/images/`, and the
+runner composites them, reusing an existing complete set rather than rebuilding
+it. See `LAYOUT.md` for the directory rule and `MASKING.md` for why alpha
+compositing rather than a mask file.
 
-If you already have masked images, point `[dataset] images_subpath` at them and
-ignore all of the above.
+Only mask *generation* is still by hand. It needs the `samask` repository, which
+at the time of writing is **not self-contained**: a fresh clone cannot run it.
+Closing that last gap is tracked and is blocked on samask becoming installable.
 
-Closing this gap so the pipeline covers photos to splat is tracked, and it is
-blocked on samask becoming installable.
+If you already have premade masked images, point `[dataset] images_subpath` at
+them, leave `use_masks = false`, and ignore all of the above. That is what
+v0.1.0 required of everyone and it still works.
 
 ### A note on background removal
 

@@ -46,21 +46,30 @@ remove.
 
 ```
 <data_root>/
-  datasets/   raw and masked input images     <- [dataset] images_subpath lives here
+  datasets/   INPUT photographs and masks     <- [dataset] images_subpath lives here
+  derived/    composited masked images        <- written per capture, disposable
   colmap/     COLMAP workspaces               <- written per run
   outputs/    nerfstudio training outputs     <- written per run
   exports/    exported splats
   run-log.csv appended to on every run
 ```
 
+`datasets/` is input and the pipeline never writes to it. The other four trees
+are the pipeline's own and can all be rebuilt from `datasets/` plus a config
+file. `pipeline/LAYOUT.md` is the specification, including the rule that makes a
+directory a capture; this file only covers the keys.
+
 The COLMAP workspace and the nerfstudio output directory for a run are both
 
 ```
-<colmap_dir | outputs_dir>/<images_subpath>/<run_id>
+<colmap_dir | outputs_dir>/<capture_rel>/<run_id>
 ```
 
-so the dataset path is mirrored across all three trees and each run gets its own
-leaf. Nothing is overwritten between runs.
+so the capture's path is mirrored across all three trees and each run gets its
+own leaf. Nothing is overwritten between runs. `capture_rel` is `images_subpath`
+with a trailing `images` component dropped, since that component names a
+directory inside the capture rather than the capture itself
+(`Dt4agConfig.capture_rel`).
 
 ## Keys
 
@@ -73,12 +82,24 @@ leaf. Nothing is overwritten between runs.
 | `colmap_dirname` | no | `colmap` | Name of the COLMAP workspace directory. Created on demand. |
 | `outputs_dirname` | no | `outputs` | Name of the nerfstudio output directory. Created on demand. |
 | `exports_dirname` | no | `exports` | Name of the top-level exports directory. |
+| `derived_dirname` | no | `derived` | Name of the directory holding the pipeline's rebuildable intermediates, currently the composited masked images. Created on demand, and safe to delete at any time. |
 
 ### `[dataset]`
 
 | Key | Required | Default | Controls |
 |---|---|---|---|
-| `images_subpath` | yes | none | Path of the image directory, relative to `<data_root>/<datasets_dirname>`. Must exist. Must be relative; an absolute path is an error. |
+| `images_subpath` | yes | none | Path of the image directory, relative to `<data_root>/<datasets_dirname>`. Must exist. Must be relative; an absolute path is an error. Ends in `images` under the canonical layout. |
+| `image_extensions` | no | empty | Which files under `images_subpath` are photographs, comma separated. Empty means every supported image type. |
+| `mask_extensions` | no | empty | Which files are masks. Always kept out of SfM. |
+| `use_masks` | no | `false` | Composite each mask into its photograph's alpha channel as a pre-step. Every photograph must have a mask; a partial set is an error. |
+| `masked_images_subpath` | no | `<derived_dirname>/masked/<capture_rel>` | Where composites are written. Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. |
+
+**There is no key for where the masks are.** It is derived from the layout:
+`<capture>/masks/` when `images_subpath` ends in `images`, mirroring it, and
+beside each photograph otherwise. Both real arrangements follow from that one
+rule, so a key stating it could only ever agree with the filesystem or be wrong.
+The `mask_subpath` key that used to set it was retired in v0.2.0, and a config
+still carrying it is refused rather than ignored.
 
 This one key replaces the notebook's `subdir_a_id` through `subdir_d_id` and the
 four substring-matching loops that resolved them, along with both escape
@@ -147,11 +168,15 @@ Feeds `ns-export` and the optional point-cloud conversion.
 | `export_3dgs` | no | `false` | Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x. |
 | `gauss_to_pc_script` | conditional | empty | Path to `gauss_to_pc.py`. Required when `export_3dgs = true`. |
 
-Export filenames are built as
+Export filenames are built as (`export_filename` in `run_pipeline.py`)
 
 ```
-<image dir's parent name>_<run_id>_splat_<platform_label>_<env_label>_<iterations>steps_<colmap data_type>.ply
+<capture>_<run_id>_splat_<platform_label>_<env_label>_<iterations>steps[_dsN]_<colmap data_type>.ply
 ```
+
+`<capture>` is `capture_rel`'s last component, so it names the capture under
+both layouts. `dsN` appears whenever the effective downscale factor is known,
+which is what stops two resolutions of one capture overwriting each other.
 
 ## Validation behaviour
 

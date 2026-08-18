@@ -212,7 +212,26 @@ def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
             for q in cfg.masked_images_path.rglob("*.png")
             if q.is_file()
         }
-    if expected <= present:
+    # Reuse requires the set to match EXACTLY, not merely to contain what is
+    # needed. A subset test answers "is everything I need here?" and never "is
+    # anything here that should not be?", so a directory holding the right 120
+    # composites plus 30 stale ones from an earlier version of the capture was
+    # reused and handed whole to SfM, which reconstructed all 150. Nothing about
+    # that is visible in the run.
+    unexpected = present - expected
+    if unexpected:
+        shown = ", ".join(str(s) for s in sorted(unexpected)[:3])
+        raise StageError(
+            f"{cfg.masked_images_path} holds {len(unexpected)} composited "
+            f"file(s) that do not correspond to any photograph under "
+            f"{cfg.images_path}: {shown}.\n"
+            f"  These would be fed to COLMAP and ns-process-data as if they "
+            f"were part of the capture. This directory is derived and "
+            f"rebuildable, so the fix is to delete it and let the run "
+            f"recomposite:\n"
+            f"    rm -rf {cfg.masked_images_path}"
+        )
+    if expected == present:
         return [
             f"masked images     : {len(expected)} already composited at "
             f"{cfg.masked_images_path}, reused"
@@ -221,6 +240,20 @@ def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
     script = PIPELINE_DIR / "scripts" / "rgb-mask" / "rgb-mask-batch.py"
     if not script.is_file():
         raise StageError(f"{script} does not exist; cannot composite masks.")
+    # The compositor pairs on ONE extension, so a config listing several has to
+    # resolve to one here. Without this the script fell back to its own .png
+    # default and a .bmp-mask capture passed every check in this function and
+    # then failed on every file with a "missing mask" message naming the wrong
+    # extension.
+    mask_suffixes = sorted(cfg.mask_extensions)
+    if len(mask_suffixes) != 1:
+        raise StageError(
+            f"compositing needs exactly one mask extension, but [dataset] "
+            f"mask_extensions in {cfg.source} lists "
+            f"{', '.join(mask_suffixes) or '(none)'}.\n"
+            f"  The compositor pairs a photograph with one mask by suffix. "
+            f"Name the one your masks actually use."
+        )
     cfg.masked_images_path.mkdir(parents=True, exist_ok=True)
     run_command(
         [
@@ -228,6 +261,7 @@ def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
             "--images", str(cfg.images_path),
             "--masks", str(cfg.masks_path),
             "--output", str(cfg.masked_images_path),
+            "--mask-ext", mask_suffixes[0],
         ],
         "rgb-mask-batch",
         dry_run=False,
@@ -244,6 +278,15 @@ def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
             f"compositing produced {len(produced)} of {len(expected)} expected "
             f"masked images; {len(short)} missing, e.g. "
             f"{', '.join(str(s) for s in sorted(short)[:3])}."
+        )
+    surplus = produced - expected
+    if surplus:
+        raise StageError(
+            f"compositing left {len(surplus)} file(s) under "
+            f"{cfg.masked_images_path} with no matching photograph, e.g. "
+            f"{', '.join(str(s) for s in sorted(surplus)[:3])}.\n"
+            f"  SfM would consume them. Delete the directory and re-run; it is "
+            f"derived and rebuildable."
         )
     return [
         f"masked images     : {len(expected)} composited to "
@@ -376,9 +419,14 @@ def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) ->
     dataset reconstructed at two resolutions produces the same filename twice
     and the second export silently overwrites the first, which is exactly the
     comparison anyone changing the resolution is trying to make.
+
+    The leading component is the CAPTURE, via ``capture_rel``. It used to be
+    ``images_path.parent.name``, which names the capture only by coincidence of
+    layout: under the canonical one it is right, and under a legacy one it
+    names the collection, so every capture in a collection shared a prefix.
     """
     parts = [
-        cfg.images_path.parent.name,
+        cfg.capture_rel.name,
         run_id,
         "splat",
         cfg.platform_label,

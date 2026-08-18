@@ -1,9 +1,15 @@
 # Masking: why a mask file and a premade alpha image are not the same thing
 
-Status: **known defect in the `use_masks` implementation**, recorded 2026-08-18.
-The current mask support suppresses background *supervision*; it does not suppress
-background *geometry*. The earlier premade-alpha route did. This file records the
-evidence and the fix, because the two look interchangeable and are not.
+Status: **resolved in v0.2.0.** `use_masks` is alpha compositing, applied as a
+pre-step. What this file documents is why that is the only mode, since the
+alternative it replaced looks interchangeable with it and is not.
+
+The defect this file was opened for, recorded earlier on 2026-08-18: mask support
+was first built on nerfstudio `mask_path` entries, which suppress background
+*supervision* but not background *geometry*. The evidence below is why that route
+was removed the same day rather than kept as an option. Read it before proposing
+any masking change; the two mechanisms are easy to conflate and the difference is
+two orders of magnitude in the result.
 
 ## Symptom
 
@@ -20,6 +26,21 @@ Measured on one session, same subject, same camera rig:
 | separate mask file | 96,688 | 47.5% | 9.14 |
 
 A 76x difference in count. This is not a tuning difference.
+
+**Confirmed a second time against the pipeline's own compositing**, once it
+existed, which is the comparison that actually justifies the design rather than
+comparing against a hand-made artefact. Same capture, same settings, downscale 2,
+30,000 iterations:
+
+| route | gaussians |
+|---|---|
+| pipeline alpha compositing | 2,385 |
+| separate mask file (`mask_path`) | 96,938 |
+
+A 41x reduction, into the range the manual route produced. Cite this pair, not
+the first, when the claim being supported is about what the pipeline does today;
+the first pair compares the *manual* route against `mask_path` and predates the
+implementation.
 
 ## Cause
 
@@ -67,25 +88,41 @@ They are not two ways of doing one thing. They answer different questions:
   region is genuinely not part of the reconstruction target.
 
 For subject-only phenotyping the second is what is wanted, and it is what the
-pipeline currently cannot do from a separate mask file.
+pipeline does.
 
-## Fix
+## What was built
 
-Composite each mask into its photograph as an alpha channel while staging the SfM
-inputs, writing RGBA PNGs, so nerfstudio receives premade alpha images and takes the
-supervised path. The mask files stay the input format; the compositing becomes the
-pipeline's job rather than a manual pre-step.
+Each mask is composited into its photograph's alpha channel as a **pre-step**,
+before any stage runs, turning raw photographs plus separate masks into the
+masked-image dataset the pipeline has always consumed. Every stage afterwards is
+unchanged and unaware. It delegates to `scripts/rgb-mask/rgb-mask-batch.py`,
+which had already done exactly this by hand for months.
 
-Notes for whoever implements it:
+Two things about the shape are worth recording, because an earlier draft of this
+section proposed otherwise and was wrong:
 
-- The staged tree already exists (`stage_sfm_inputs`) and is already the only thing
-  COLMAP and ns-process-data see, so this is the natural place.
-- RGBA requires PNG output, so `transforms.json` will carry `.png` paths. Confirm
-  ffmpeg's downscale chain preserves the alpha channel, since the image pyramid is
-  built by ffmpeg and a silently flattened alpha reproduces the current defect while
-  looking correct.
-- COLMAP can keep running on plain RGB. It ignores alpha anyway, and the premade
-  route proved a full-background feature set still yields usable poses.
-- Keep loss masking available; do not replace one mode with the other. Suggested
-  config shape: `use_masks = false | loss | alpha`, with `alpha` recommended for
-  subject-only work and `loss` for unreliable-region work.
+- **A pre-step, not part of SfM staging.** Compositing before `ns-process-data`
+  renames anything means nothing has to be re-paired afterwards, and the mask
+  pyramid is simply the image pyramid. Building it into `stage_sfm_inputs`
+  instead would have kept the frame-to-source mapping problem: a `struct` parser
+  for COLMAP's `images.bin`, a `colmap_im_id` lookup, and per-file ffmpeg mask
+  downscaling. Choosing the pre-step deleted about 165 lines net.
+- **COLMAP still sees plain RGB.** It ignores alpha, and the premade route proved
+  a full-background feature set still yields usable poses.
+
+## Loss masking was deliberately NOT kept
+
+An earlier draft of this file recommended keeping both modes, with a config shape
+of `use_masks = false | loss | alpha`. **That recommendation was considered and
+overridden on 2026-08-18 (Alex).** The `mask_path` route was removed outright and
+`use_masks` stayed a boolean.
+
+The reasoning: the route does not do what a reader would assume it does, the
+assumption is expensive to discover (a 41x wrong answer that looks like a
+successful run), and no current work needs the unreliable-region case that would
+justify carrying it. A mode nobody uses, which silently produces a plausible
+wrong result when misunderstood, is worse than an absent one.
+
+**Do not reintroduce a loss-masking mode without a concrete use case**, and if
+one arrives, name it `loss` explicitly rather than folding it back under
+`use_masks`, so no one can select it by accident.

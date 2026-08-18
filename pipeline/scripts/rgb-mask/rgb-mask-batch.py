@@ -201,8 +201,23 @@ def apply_masks(
     resolved_images = images_dir.resolve()
     excluded = [ex for ex in excluded if ex != resolved_images and is_within(ex, resolved_images)]
 
+    # The masks-beside-the-photographs layout: the mask root IS the image root,
+    # so the exclusion above cannot fire (excluding it would exclude everything)
+    # and the masks would otherwise be walked as INPUTS. Each would then pair
+    # with itself and, since every output is written with a .png suffix, land on
+    # the same output path as its photograph's composite. Sorted order puts the
+    # mask second, so it overwrote the real composite and the script exited 0.
+    # Verified 2026-08-18: a red photograph plus a white mask produced a pure
+    # white output and reported "processed: 2".
+    skip_suffix = mask_ext.lower() if mask_root.resolve() == resolved_images else None
+
     for img_path in iter_candidates(images_dir, excluded):
         relative_path = img_path.relative_to(images_dir)
+
+        if skip_suffix and img_path.suffix.lower() == skip_suffix:
+            # This file is a mask, not a photograph. Not counted as a problem:
+            # in this layout its presence is the expected arrangement.
+            continue
 
         if img_path.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
             counters.unsupported_ext += 1

@@ -42,7 +42,7 @@ Three kinds of work happen, and they are not the same kind:
 
 | # | What | Refuses when |
 |---|---|---|
-| 1 | Load and validate config (`load_config`) | any path missing, any key mistyped, masked output would overwrite the source |
+| 1 | Load and validate config (`load_config`) | any path missing, any key mistyped, masked output would overwrite the source or land inside `datasets/`, a retired key is still present, `use_masks` is set on a canonical capture with no `masks/` sibling |
 | 2 | Derive the run id, or take `--run-id` | a non-`colmap` first stage names a workspace that does not exist |
 | 3 | Prerequisites for the SELECTED stages only (`check_prerequisites`) | `colmap`, `ffmpeg` or an `ns-*` command missing; no CUDA device; GPU architecture absent from the installed gsplat binary |
 | 4 | Image census (`count_images`, filtered by `is_photograph`) | no photographs survive the extension filter |
@@ -68,9 +68,12 @@ seconds rather than being discovered forty minutes into a reconstruction.
 
 ## Where masking sits, and why it is not a stage
 
-Masking is applied to the *inputs*, before COLMAP. Both COLMAP and
-`ns-process-data` are then pointed at the composited directory
-(`sfm_input_path`), which they must share: with `--skip-colmap`, nerfstudio
+Masking is applied to the *inputs*, before COLMAP. The composites go under
+`derived/`, never into `datasets/`, which is input the pipeline does not write
+to; they are rebuildable and run to gigabytes per capture (`LAYOUT.md`, "Input
+versus derived"). Both COLMAP and `ns-process-data` are then pointed at that
+composited directory (`sfm_input_path`), which they must share: with
+`--skip-colmap`, nerfstudio
 converts the COLMAP model by looking each of its image names up in the rename map
 built from the files it copied, so a name COLMAP saw and `ns-process-data` did not
 is a `KeyError`.
@@ -89,7 +92,8 @@ a good reconstruction of a small subject may hold a couple of thousand gaussians
 while a useless one holds ninety thousand. Measured 2026-08-18 on one capture,
 same images and settings: 2,385 gaussians with masking applied as alpha against
 96,938 with the background merely excluded from the loss. The larger file was
-the broken one.
+the broken one. Both measurements, and the earlier manual-route pair, are in
+`MASKING.md` under "Symptom".
 
 Judge with **held-out views** instead. `ns-eval` gives PSNR cheaply: on the
 development dataset a 30,000-step run scored 46.5 and a 500-step run of the same

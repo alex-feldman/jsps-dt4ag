@@ -242,25 +242,47 @@ class TestDerivedPaths(TempDirTestCase):
         fixture = ConfigFixture(self.tmp, images_subpath="scene-01/capture-a/images")
         cfg = fixture.load()
         run_id = "run_260807-01-312"
+        # Keyed by the CAPTURE, so the trailing 'images' component of
+        # images_subpath is dropped. LAYOUT.md: colmap/<collection>/<capture>/.
         self.assertEqual(
             cfg.colmap_workspace(run_id),
-            fixture.data_root / "colmap" / "scene-01/capture-a/images" / run_id,
+            fixture.data_root / "colmap" / "scene-01/capture-a" / run_id,
         )
         self.assertEqual(
             cfg.output_dir(run_id),
-            fixture.data_root / "outputs" / "scene-01/capture-a/images" / run_id,
+            fixture.data_root / "outputs" / "scene-01/capture-a" / run_id,
         )
-        self.assertEqual(cfg.colmap_workspace_parent, cfg.colmap_dir / cfg.images_rel)
-        self.assertEqual(cfg.output_parent, cfg.outputs_dir / cfg.images_rel)
+        self.assertEqual(cfg.colmap_workspace_parent, cfg.colmap_dir / cfg.capture_rel)
+        self.assertEqual(cfg.output_parent, cfg.outputs_dir / cfg.capture_rel)
+
+    def test_only_a_directory_named_exactly_images_is_canonical(self):
+        """Containing the word is fine; the checks are equality, not substring.
+
+        A capture called 'raw-images' is legacy layout, not a broken canonical
+        one, so nothing about it is special-cased.
+        """
+        cfg = ConfigFixture(
+            self.tmp, images_subpath="scene-01/raw-images").load()
+        self.assertEqual(cfg.capture_rel, Path("scene-01/raw-images"))
+        self.assertEqual(cfg.masks_path, cfg.images_path)
+
+    def test_capture_rel_drops_only_a_canonical_images_component(self):
+        canonical = ConfigFixture(
+            self.tmp / "a", images_subpath="scene-01/capture-a/images").load()
+        self.assertEqual(canonical.capture_rel, Path("scene-01/capture-a"))
+        # A non-canonical layout has no such component and keeps every level.
+        legacy = ConfigFixture(
+            self.tmp / "b", images_subpath="scene-01/capture-a").load()
+        self.assertEqual(legacy.capture_rel, legacy.images_rel)
 
     def test_derived_paths_follow_renamed_directories(self):
         fixture = ConfigFixture(self.tmp, extra={
             "paths": {"colmap_dirname": "sfm", "outputs_dirname": "runs"}})
         cfg = fixture.load()
         self.assertEqual(
-            cfg.colmap_workspace("r"), fixture.data_root / "sfm" / "scene-01/images" / "r")
+            cfg.colmap_workspace("r"), fixture.data_root / "sfm" / "scene-01" / "r")
         self.assertEqual(
-            cfg.output_dir("r"), fixture.data_root / "runs" / "scene-01/images" / "r")
+            cfg.output_dir("r"), fixture.data_root / "runs" / "scene-01" / "r")
 
 
 # --------------------------------------------------------------------------
@@ -588,6 +610,18 @@ class TestDataTypeInference(TempDirTestCase):
 
     def test_only_the_last_path_component_is_inspected(self):
         self.assertEqual(self._resolved("frames-project/images"), "individual")
+
+    def test_a_canonical_capture_never_auto_infers_video(self):
+        """Documented limitation, not an oversight. Video input is a v1.0 item.
+
+        The last component of a canonical images_subpath is always 'images', so
+        the substring test cannot fire however the capture is named. Anyone
+        experimenting sets [colmap] data_type explicitly.
+        """
+        self.assertEqual(self._resolved("scene-01/capture-a-frames/images"),
+                         "individual")
+        self.assertEqual(self._resolved("scene-01/capture-a-frames/images",
+                                        "video"), "video")
 
 
 # --------------------------------------------------------------------------
