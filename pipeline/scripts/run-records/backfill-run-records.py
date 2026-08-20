@@ -212,10 +212,10 @@ def build_record(run_id: str, configs: List[Path], log_row: Optional[dict],
             "everything training-side: no readable config.yml under this run")
 
     record["training_configs"] = ", ".join(str(p) for p in configs) or "(none)"
-    sources["training_configs"] = "filesystem"
+    sources["training_configs"] = "filesystem (the run's own output directory)"
     if len(configs) > 1:
         record["training_attempts"] = str(len(configs))
-        sources["training_attempts"] = "filesystem"
+        sources["training_attempts"] = "filesystem (the run's own output directory)"
 
     # 2. The run log: intent at start, and the only place masking and the
     #    config file's path are recorded.
@@ -244,8 +244,15 @@ def build_record(run_id: str, configs: List[Path], log_row: Optional[dict],
             "config file path, capture provenance): this run predates the run "
             "log or was driven outside the pipeline")
 
+    # The weakest category, and labelled as such. These are the only fields not
+    # read out of something the run itself wrote: they are ASSOCIATIONS, made by
+    # matching the run id against a filename or a directory name. Strong ones,
+    # and anchored rather than substring-matched, but an association a reader
+    # should be able to re-check rather than take on trust.
     for key, value in artefacts.items():
-        put(key, value, "filesystem")
+        put(key, value,
+            "filesystem (associated by run id in the name, not a link the "
+            "run recorded; re-checkable by inspection)")
 
     unrecoverable.append(
         "the pipeline git commit: nothing recorded one until the config "
