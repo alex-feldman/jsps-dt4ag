@@ -14,6 +14,7 @@ real COLMAP binary is simulated by monkeypatching ``shutil.which`` and
 
 from __future__ import annotations
 
+import configparser
 import csv
 import os
 import subprocess
@@ -734,6 +735,121 @@ class TestRunLog(TempDirTestCase):
     def test_relative_log_file_resolves_under_data_root(self):
         cfg = self._cfg()
         self.assertEqual(cfg.run_log, cfg.data_root / "logs" / "run-log.csv")
+
+
+# --------------------------------------------------------------------------
+# per-run config archive
+# --------------------------------------------------------------------------
+
+class TestArchiveRunConfig(TempDirTestCase):
+    """`archive_run_config` freezes the config a run started with.
+
+    Run configs are gitignored, so nothing else versions them and editing one
+    rewrites the record of every earlier run using it. The two properties that
+    matter: the copy is VERBATIM (so it is the config, not a summary of it),
+    and it stays loadable (so an archived run can be reproduced from it).
+    """
+
+    RUN_ID = "run_260807-01-312"
+
+    def _cfg(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "run": {"date": "260807", "run_count": "01", "colmap_version": "312"}})
+        return fixture.load()
+
+    def test_writes_under_data_root_configs_runs_named_for_the_run(self):
+        cfg = self._cfg()
+        written = cfg.archive_run_config(self.RUN_ID)
+        self.assertEqual(written, cfg.data_root / "configs" / "runs" / f"{self.RUN_ID}.ini")
+        self.assertTrue(written.is_file())
+
+    def test_creates_the_directory_lazily(self):
+        cfg = self._cfg()
+        self.assertFalse(cfg.config_archive_dir.exists())
+        cfg.archive_run_config(self.RUN_ID)
+        self.assertTrue(cfg.config_archive_dir.is_dir())
+
+    def test_the_source_config_is_copied_verbatim(self):
+        cfg = self._cfg()
+        written = cfg.archive_run_config(self.RUN_ID)
+        original = cfg.source.read_text(encoding="utf-8")
+        self.assertTrue(written.read_text(encoding="utf-8").startswith(original))
+
+    def test_the_archived_file_is_still_a_loadable_config(self):
+        """[run-record] is an unknown section, so the loader must ignore it.
+
+        This is what makes an archived run reproducible: point the pipeline at
+        the archive and it runs the same configuration.
+        """
+        cfg = self._cfg()
+        written = cfg.archive_run_config(self.RUN_ID)
+        reloaded = load_config(written)
+        self.assertEqual(reloaded.images_path, cfg.images_path)
+        self.assertEqual(reloaded.max_num_iterations, cfg.max_num_iterations)
+
+    def test_records_the_run_id_and_the_resolved_paths(self):
+        cfg = self._cfg()
+        written = cfg.archive_run_config(self.RUN_ID)
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        record = parser["run-record"]
+        self.assertEqual(record["run_id"], self.RUN_ID)
+        self.assertEqual(record["config_source"], str(cfg.source))
+        self.assertEqual(record["images_path"], str(cfg.images_path))
+        self.assertEqual(record["colmap_workspace"], str(cfg.colmap_workspace(self.RUN_ID)))
+        self.assertEqual(record["outputs_root"], str(cfg.output_dir(self.RUN_ID)))
+        self.assertEqual(record["colmap_version"], "312")
+
+    def test_records_a_pipeline_commit(self):
+        """The gap this closes: a run otherwise identifies its code by nothing."""
+        cfg = self._cfg()
+        self.patch_module("_pipeline_commit", lambda: "abc1234+dirty")
+        written = cfg.archive_run_config(self.RUN_ID)
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        self.assertEqual(parser["run-record"]["pipeline_commit"], "abc1234+dirty")
+
+    def test_extra_fields_are_recorded_and_empty_ones_dropped(self):
+        cfg = self._cfg()
+        written = cfg.archive_run_config(
+            self.RUN_ID, object_id="tomato-7", imaging_date="")
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        record = parser["run-record"]
+        self.assertEqual(record["object_id"], "tomato-7")
+        self.assertNotIn("imaging_date", record)
+
+    def test_two_runs_of_one_config_produce_two_independent_files(self):
+        """The whole point: an edited config must not erase the earlier run."""
+        fixture = ConfigFixture(self.tmp, extra={
+            "run": {"date": "260807", "run_count": "01", "colmap_version": "312"},
+            "train": {"max_num_iterations": "30000"}})
+        cfg = fixture.load()
+        first = cfg.archive_run_config("run_260807-01-312")
+        cfg.source.write_text(
+            cfg.source.read_text(encoding="utf-8").replace(
+                "max_num_iterations = 30000", "max_num_iterations = 10000"),
+            encoding="utf-8")
+        second = load_config(cfg.source).archive_run_config("run_260807-02-312")
+        self.assertNotEqual(first, second)
+        self.assertIn("max_num_iterations = 30000", first.read_text(encoding="utf-8"))
+        self.assertIn("max_num_iterations = 10000", second.read_text(encoding="utf-8"))
+
+
+class TestPipelineCommit(unittest.TestCase):
+
+    def test_reports_unknown_rather_than_raising_when_git_is_unavailable(self):
+        """Provenance that cannot be collected must not fail a reconstruction."""
+        original = dt4ag_config.subprocess.run
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("no git here")
+
+        dt4ag_config.subprocess.run = _boom
+        try:
+            self.assertEqual(dt4ag_config._pipeline_commit(), "unknown")
+        finally:
+            dt4ag_config.subprocess.run = original
 
 
 # --------------------------------------------------------------------------

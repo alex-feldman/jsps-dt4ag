@@ -1220,6 +1220,15 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
 
     if not dry_run:
         log(f"run log           : {cfg.append_run_log(run_id, **log_extra)}")
+        # Freeze the config beside the log row, for the same reason the row is
+        # written here: both state what this run STARTED with. The log names
+        # the config file, this preserves what was in it, and gitignored
+        # configs have no other record. Never fatal: a reconstruction that
+        # cannot be archived is still a reconstruction.
+        try:
+            log(f"config archive    : {cfg.archive_run_config(run_id, **log_extra)}")
+        except OSError as exc:
+            log(f"config archive    : FAILED ({exc}); the run continues")
 
     overall_start = time.time()
     train_started: Optional[float] = None

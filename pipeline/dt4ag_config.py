@@ -260,6 +260,35 @@ def detect_colmap_version() -> Optional[str]:
 # the config object
 # --------------------------------------------------------------------------
 
+def _pipeline_commit() -> str:
+    """The pipeline's git commit, with ``+dirty`` when the tree has edits.
+
+    Recorded per run because a run otherwise identifies its own code by nothing
+    at all. The five 2026-08-18 tomato reconstructions were produced by a
+    working tree committed 83 minutes later, so the code behind them is
+    identifiable only by timestamp and behaviour, which is not a record.
+
+    ``unknown`` on any failure: no git, no repository, a detached or broken
+    checkout. Provenance that refuses to be collected is not a reason to refuse
+    a reconstruction.
+    """
+    repo = Path(__file__).resolve().parent
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        if not head:
+            return "unknown"
+        dirty = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        return f"{head}+dirty" if dirty else head
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 @dataclass
 class Dt4agConfig:
     """Resolved, validated pipeline configuration."""
@@ -497,6 +526,90 @@ class Dt4agConfig:
         version = self.resolve_colmap_version()
         self._resolved_run_id = f"{self.run_id_prefix}_{date}-{count}-{version}"
         return self._resolved_run_id
+
+    # -- config archive ----------------------------------------------------
+
+    @property
+    def config_archive_dir(self) -> Path:
+        """``<data_root>/configs/runs``, the per-run config archive.
+
+        A sibling of the working-config archive at ``<data_root>/configs/``,
+        which holds the current copy of every config; this holds one frozen
+        copy per run. Neither is ever read by the pipeline.
+        """
+        return self.data_root / "configs" / "runs"
+
+    def archive_run_config(self, run_id: str, **extra: object) -> Path:
+        """Freeze this run's config at ``<data_root>/configs/runs/<run-id>.ini``.
+
+        The config file VERBATIM, plus a ``[run-record]`` section holding what
+        resolved only at run time: the run id, the pipeline commit, and the
+        paths the config's relative keys expanded to.
+
+        Why this exists. Run configs are gitignored (this repository is public
+        and a real config carries absolute paths and dataset names), so nothing
+        versions them, and editing one silently rewrites the only account of how
+        every earlier run using it was configured. ``run-log.csv`` names the
+        config file per run but not its contents. Measured cost is a few KB per
+        run against multi-gigabyte outputs.
+
+        **This states INTENT, not outcome.** It is written before the stages
+        run, exactly like the run log's row, so a file here means a run started
+        with these settings and never that it finished. The incremental,
+        milestone-bearing per-run record is v0.3.0's job (``ROADMAP.md``); do
+        not grow this into it.
+
+        The archived file stays a runnable config: ``[run-record]`` is an
+        unknown section and the loader ignores it. Re-running it derives a NEW
+        run id unless ``[run] date`` and ``run_count`` are pinned to the values
+        recorded below.
+
+        Never raises. A failure to archive must not kill a reconstruction, so
+        the exception is returned as a path-shaped nothing and reported by the
+        caller.
+        """
+        record = {
+            "run_id": run_id,
+            "archived": _dt.datetime.now().isoformat(timespec="seconds"),
+            "config_source": str(self.source),
+            "pipeline_commit": _pipeline_commit(),
+            "images_path": str(self.images_path),
+            "masks_path": str(self.masks_path) if self.use_masks else "",
+            "masked_images_path": (
+                str(self.masked_images_path) if self.use_masks else ""
+            ),
+            "colmap_workspace": str(self.colmap_workspace(run_id)),
+            "outputs_root": str(self.output_dir(run_id)),
+            "exports_dir": str(self.exports_dir),
+            "colmap_version": run_id.rsplit("-", 1)[-1],
+            "train_method": self.train_method,
+            "max_num_iterations": str(self.max_num_iterations),
+            "downscale_factor": str(self.downscale_factor or "auto"),
+            "use_masks": str(self.use_masks).lower(),
+        }
+        record.update({k: str(v) for k, v in extra.items() if v not in (None, "")})
+
+        lines = [
+            "",
+            "",
+            "# ----------------------------------------------------------------",
+            "# Appended by the pipeline when this run STARTED. Everything above",
+            "# this line is the config file verbatim. See archive_run_config()",
+            "# in dt4ag_config.py for why, and <data_root>/configs/ABOUT.md.",
+            "# A record here means a run began, never that it finished.",
+            "# ----------------------------------------------------------------",
+            "[run-record]",
+        ]
+        width = max(len(k) for k in record)
+        lines += [f"{k.ljust(width)} = {v}" for k, v in record.items()]
+
+        destination = self.config_archive_dir / f"{run_id}.ini"
+        self.config_archive_dir.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            self.source.read_text(encoding="utf-8") + "\n".join(lines) + "\n",
+            encoding="utf-8",
+        )
+        return destination
 
     # -- run log -----------------------------------------------------------
 
