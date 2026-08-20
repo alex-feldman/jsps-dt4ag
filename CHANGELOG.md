@@ -14,6 +14,46 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [Unreleased]
+
+### Added
+
+- **Every run freezes its config** at `<data_root>/configs/runs/<run-id>.ini`:
+  the config file verbatim, plus a `[run-record]` section holding what resolves
+  only at run time (run id, resolved input/workspace/output paths, and the
+  pipeline git commit with a `+dirty` marker). `[run-record]` is an unknown
+  section to the loader, so an archived file is still a runnable config and an
+  archived run can be reproduced from it.
+
+  Run configs are gitignored on purpose, since this repository is public and a
+  real config carries absolute paths and dataset names, so nothing versioned
+  them and editing one silently rewrote the record of every earlier run using
+  it. `run-log.csv` names the config file per run but never its contents. Found
+  by doing it on 2026-08-21: the five tomato configs went from 10,000 to 30,000
+  iterations and the previous settings survived only in the per-run `config.yml`
+  nerfstudio writes.
+
+  The `pipeline_commit` field closes a second gap. The five 2026-08-18 tomato
+  reconstructions were produced by a working tree committed 83 minutes later, so
+  the code behind them was identifiable only by timestamp and behaviour.
+
+  Like the run log's row, this states INTENT and not outcome: it is written
+  before the stages run, so a file here means a run started, never that it
+  finished. The incremental, milestone-bearing per-run record remains v0.3.0's
+  job. Archiving never fails a reconstruction; an `OSError` is logged and the
+  run continues.
+
+- `Dt4agConfig.config_archive_dir` and `Dt4agConfig.archive_run_config()`, plus
+  `_pipeline_commit()`, which reports `unknown` rather than raising when git is
+  unavailable.
+
+### Fixed
+
+- `pipeline/configs/README.md` told you to add your own config to `.gitignore`.
+  That had been unnecessary since the blanket `pipeline/configs/*.ini` rule with
+  its `!example.ini` exception was written, so the file documented a step the
+  repository already took.
+
 ## [0.2.0] — 2026-08-18
 
 **Supports separate raw images and mask images.** The pipeline accepts raw

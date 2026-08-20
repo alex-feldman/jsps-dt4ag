@@ -95,9 +95,16 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
       furthest milestone reached surfaced as one field
 - [ ] Failed runs get records too. A failure record is worth more than a success
       one
-- [ ] The record embeds the RESOLVED config, not a path to a config file that may
+- [~] The record embeds the RESOLVED config, not a path to a config file that may
       since have been edited, plus tool versions, per-stage timings and the
-      artefacts produced
+      artefacts produced. **Half done, 2026-08-21, ahead of the rest of this
+      section**, because the loss was live rather than theoretical: editing a
+      gitignored config destroys the record of every earlier run using it, and
+      that happened the day it was found. Each run now freezes its config
+      verbatim at `<data_root>/configs/runs/<run-id>.ini` with a `[run-record]`
+      section carrying the run id, resolved paths and the pipeline git commit.
+      What is still owed here is the rest: tool versions, per-stage timings and
+      the artefacts produced, none of which are known before the stages run
 - [ ] `runs/index.csv`, a queryable summary that is REBUILDABLE by scanning the
       records, so a drifted index is never authoritative
 - [ ] Batch records under `runs/batches/`, since a batch spans captures and has

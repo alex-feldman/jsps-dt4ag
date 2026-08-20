@@ -38,20 +38,38 @@ That is not hypothetical. On 2026-08-21 the five `tomato-2512*.ini` configs went
 from `max_num_iterations = 10000` to `30000`, and the settings behind the
 2026-08-18 runs survive now only in the per-run `config.yml` nerfstudio wrote.
 
-So keep an archive on the data root, beside the run log:
+**The pipeline now handles this for every run it executes.** Each run writes
+`<data_root>/configs/runs/<run-id>.ini`: this config file verbatim, plus a
+`[run-record]` section holding what only resolves at run time, including the
+pipeline's git commit. `[run-record]` is an unknown section, so the loader
+ignores it and the archived file is still a runnable config:
+
+```bash
+uv run python pipeline/run_pipeline.py --config <data_root>/configs/runs/<run-id>.ini
+```
+
+That reproduces the configuration, though it derives a NEW run id unless you
+pin `[run] date` and `run_count` to the values the record carries.
+
+Like the run log's row, the frozen config states INTENT: it is written before
+the stages run, so a file there means a run started with those settings and
+never that it finished.
+
+For configs you have edited but not yet run, nothing captures them, so keep a
+hand-refreshed copy beside the run log as well:
 
 ```bash
 cp -p pipeline/configs/*.ini pipeline/configs/README.md <data_root>/configs/
 ```
 
-Refresh it whenever you change a config. `<data_root>/configs/ABOUT.md`
-describes the archive; `LAYOUT.md` lists it in the data root structure.
+`<data_root>/configs/ABOUT.md` describes the archive; `LAYOUT.md` lists it in
+the data root structure.
 
-**For a run that completed, the stronger record is
+**For a run that completed, the stronger record of TRAINING is
 `outputs/<collection>/<capture>/<run-id>/splatfacto/<timestamp>/config.yml`**,
-which the run itself wrote and which therefore cannot drift. The archive covers
-the pipeline-level keys that file does not carry: input paths, masking, COLMAP
-flags and export labels.
+which the run itself wrote and which therefore cannot drift or overstate. The
+frozen config covers the pipeline-level keys that file does not carry: input
+paths, masking, COLMAP flags and export labels.
 
 ## Why INI
 

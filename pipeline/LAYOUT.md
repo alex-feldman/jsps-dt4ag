@@ -45,6 +45,8 @@ data_root/
   outputs/<collection path…>/<capture>/<run-id>/
   exports/<capture>_<run-id>_*.ply        FLAT, see below
   configs/                       ARCHIVE of the run configs. Never read.
+    *.ini                        the current working copies, refreshed by hand
+    runs/<run-id>.ini            frozen per run, written by the pipeline
   run-log.csv
 ```
 
@@ -175,8 +177,14 @@ and real configs carry absolute paths and dataset names), so nothing else
 versions them and editing one rewrites the only account of how earlier runs
 using it were configured. Added 2026-08-21, the day that happened: five tomato
 configs went from 10,000 to 30,000 iterations and the previous values survived
-only in per-run `config.yml` files. Keeping it current is a manual copy, spelled
-out in `pipeline/configs/README.md` and in the archive's own `ABOUT.md`.
+only in per-run `config.yml` files.
+
+**Its two halves are maintained differently.** `configs/runs/<run-id>.ini` is
+written by the pipeline on every run and needs no upkeep; it is the record that
+matters. `configs/*.ini` is a hand-refreshed copy of the current working set,
+useful for reading configs that have not been run yet, and it drifts unless you
+copy again after editing. Both are described in `pipeline/configs/README.md` and
+in the archive's own `ABOUT.md`.
 
 ## Migrating existing data
 
