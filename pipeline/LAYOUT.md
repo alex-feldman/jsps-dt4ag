@@ -44,6 +44,7 @@ data_root/
   colmap/<collection path…>/<capture>/<run-id>/
   outputs/<collection path…>/<capture>/<run-id>/
   exports/<capture>_<run-id>_*.ply        FLAT, see below
+  configs/                       ARCHIVE of the run configs. Never read.
   run-log.csv
 ```
 
@@ -163,6 +164,19 @@ Composited masked images were briefly written into `datasets/` (2026-08-17,
 during the first implementation of mask compositing). That was wrong: it put
 derived, rebuildable, multi-gigabyte data inside the one tree you most want to
 preserve and back up. `derived/masked/` exists to correct it.
+
+**`configs/` and `run-log.csv` are neither.** They are the record of what was
+run: the log says which config produced each run, and `configs/` archives what
+those configs contained. Nothing rebuilds them, the pipeline never reads them,
+and they are tiny, so **back them up with `datasets/`**.
+
+The archive exists because run configs are gitignored (the repository is public
+and real configs carry absolute paths and dataset names), so nothing else
+versions them and editing one rewrites the only account of how earlier runs
+using it were configured. Added 2026-08-21, the day that happened: five tomato
+configs went from 10,000 to 30,000 iterations and the previous values survived
+only in per-run `config.yml` files. Keeping it current is a manual copy, spelled
+out in `pipeline/configs/README.md` and in the archive's own `ABOUT.md`.
 
 ## Migrating existing data
 

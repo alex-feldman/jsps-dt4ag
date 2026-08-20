@@ -18,9 +18,40 @@ The last command prints every resolved path and setting, or exits non-zero with
 a `CONFIG ERROR:` line naming the offending key and file. Run it before you
 start a reconstruction; it is much cheaper than finding out at cell 39.
 
-Your own configs are yours. Only `example.ini` is committed; if you want to keep
-a personal one out of git, name it and add it to `.gitignore`, because real
-configs contain absolute paths and dataset names.
+Your own configs are yours, and **git already ignores them**. `.gitignore`
+carries `pipeline/configs/*.ini` with `!pipeline/configs/example.ini` as the
+single exception, so a new config is untracked the moment you create it and
+there is nothing to add by hand. That is deliberate: this repository is public
+and real configs contain absolute paths and dataset names.
+
+(Until 2026-08-21 this paragraph told you to add your config to `.gitignore`
+yourself, which had been unnecessary since the blanket rule was written.)
+
+## Archive your configs, because editing one destroys a record
+
+The consequence of keeping configs out of git is that **nothing versions them**.
+`run-log.csv` records which config file produced each run, in its `config_file`
+column, but not what that file contained, so editing a config silently rewrites
+the only account of how every earlier run using it was set up.
+
+That is not hypothetical. On 2026-08-21 the five `tomato-2512*.ini` configs went
+from `max_num_iterations = 10000` to `30000`, and the settings behind the
+2026-08-18 runs survive now only in the per-run `config.yml` nerfstudio wrote.
+
+So keep an archive on the data root, beside the run log:
+
+```bash
+cp -p pipeline/configs/*.ini pipeline/configs/README.md <data_root>/configs/
+```
+
+Refresh it whenever you change a config. `<data_root>/configs/ABOUT.md`
+describes the archive; `LAYOUT.md` lists it in the data root structure.
+
+**For a run that completed, the stronger record is
+`outputs/<collection>/<capture>/<run-id>/splatfacto/<timestamp>/config.yml`**,
+which the run itself wrote and which therefore cannot drift. The archive covers
+the pipeline-level keys that file does not carry: input paths, masking, COLMAP
+flags and export labels.
 
 ## Why INI
 
