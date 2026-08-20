@@ -1,62 +1,68 @@
 # Run records
 
-Tools for the per-run record under `<data_root>/configs/runs/`.
+Tools for the per-run config archive under `<data_root>/configs/runs/`.
 
-## The two kinds of file, and why they must not be confused
+Every run since 2026-08-21 freezes its own config there, written by the pipeline
+(`archive_run_config` in `dt4ag_config.py`). Runs before that froze nothing,
+because nothing did. These tools put the real config of an already-executed run
+into the same place, where it can be proved to be the real one.
 
-| File | Written by | Trust |
+## The rule that governs all of this
+
+**Archive a config only when it can be shown to be the config that run used.**
+The archive sits under real run ids and its files are runnable, so a plausible
+but wrong entry is worse than an absent one: it would silently reproduce
+something other than the run it names. Nothing here infers a config, and a run
+whose config cannot be established is reported, not filled in.
+
+| `record_type` | Written by | Claim |
 |---|---|---|
-| `<run-id>.ini` | the pipeline, on every run since 2026-08-21 | the config, verbatim. Runnable |
-| `<run-id>.reconstructed.ini` | `backfill-run-records.py`, after the fact | evidence about a run. **Not** runnable, and not the config |
+| (absent) | the pipeline, at run time | the config, frozen as the run started |
+| `recovered-verified` | `recover-run-configs.py` | the file on disk, proved unedited against the run log |
+| `recovered-exact` | a person, by hand | the original, reconstructed from a known edit, with the derivation recorded |
 
-A genuine record is the config file byte for byte, plus a `[run-record]`
-section carrying what resolved at run time. A reconstructed record is an
-inference from what a historical run left on disk, because the config it used
-was gitignored, never versioned, and has since been edited or deleted.
-
-Reconstructed records carry no `[paths]` or `[dataset]` section, so
-`load_config` refuses them. That is deliberate and it is the safety property
-that matters here: the pipeline-level settings of an old run (COLMAP flags,
-masking route, file extensions, export labels) are often unknown, so a file
-that *looked* runnable would invite someone to re-run it believing they had
-reproduced the original.
-
-## backfill-run-records.py
+## recover-run-configs.py
 
 ```bash
-python pipeline/scripts/run-records/backfill-run-records.py --data-root <path> [--dry-run]
+python pipeline/scripts/run-records/recover-run-configs.py --data-root <path> [--dry-run]
 ```
 
-Walks `outputs/**/<run-id>/splatfacto/<timestamp>/config.yml`, joins each run
-against `run-log.csv` where a row exists, and writes one reconstructed record
-per run. Every field carries its source in a `[sources]` section, and each
-record ends with an `[unrecoverable]` section naming what no surviving evidence
-can establish.
+Archives the REAL config of every already-executed run whose file still matches.
 
-Evidence, in descending order of authority:
+A config is only lost if it was EDITED since the run, and many were not: the six
+arabidopsis configs have not been touched since the runs that used them, so the
+real file is still on disk and is simply copied, verbatim.
 
-1. **`config.yml`** — written BY the run, so it cannot drift or overstate.
-   Authoritative for iteration count, downscale factor, seed, method and the
-   data path. A run with several timestamped attempts has all of them recorded
-   and the newest read.
-2. **`run-log.csv`** — written at run START, so it states intent. The only
-   source for the masking route, the COLMAP version and the config file's path.
-   Not every run appears: the log postdates the oldest runs.
-3. **The filesystem** — exports and COLMAP workspaces, which corroborate that a
-   run produced something.
+**It only claims a config it can prove.** For each run it compares the file
+against what `run-log.csv` recorded at run time: images subpath, iteration
+count, downscale factor, masking route and training method. Every checkable
+field must agree; one mismatch means the file has been edited and the run is
+reported rather than archived. The record names the fields it verified, so the
+strength of the claim is visible rather than implied.
 
-Idempotent, and read-only against everything except `configs/runs/`. **It never
-overwrites a genuine `<run-id>.ini`**, it skips and says so, so re-running it
-after new reconstructions is safe.
+The check is necessarily partial, since it can only compare what the run log
+carries: a change confined to a COLMAP flag would pass unnoticed. It is worth
+having anyway, because every config edit seen on this project has moved one of
+those five fields, which are the ones anybody has reason to change.
 
-Zero dependencies, stdlib only, matching the rest of the config tooling. It
-reads nerfstudio's `config.yml` line-wise rather than with a YAML loader,
-because that file is a python-tagged dump and parsing it properly would mean
-importing nerfstudio.
+Runs whose config HAS changed are listed with the differing field, never
+guessed at. On the 2026-08-21 run these were 19 runs, and all 19 differ for one
+reason: the canonical-layout migration on 2026-08-18 rewrote `images_subpath`
+in every config. Their originals also predate the masking rework, which removed
+a config key outright, so reverting the path alone would not reproduce them.
 
-### What it will never tell you
+Idempotent, never overwrites an existing `<run-id>.ini`, and read-only against
+everything except `configs/runs/`.
 
-The contents of the config a historical run used. That is gone. What the record
-gives you instead is every fact that survived, and an explicit account of what
-did not, which is the honest maximum. The 2026-08-21 backfill covered 62 runs,
-of which only 32 appeared in `run-log.csv` at all.
+## Recovering a config by hand
+
+When the tool refuses, and you know exactly what changed, write the file
+yourself and say how you derived it. The five 2026-08-18 tomato runs were
+recovered this way: the only edit since was `max_num_iterations` 10000 to
+30000, applied by a targeted `sed`, so reverting that one line reproduces the
+original exactly. Each of those records carries a `derivation` field stating
+that, and the claim is corroborated by `run-log.csv` and by the run's own
+`config.yml`.
+
+Record `record_type = recovered-exact` for a hand recovery,
+`recovered-verified` for one the tool made.
