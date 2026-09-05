@@ -50,7 +50,7 @@ configuration.
 
 | | |
 |---|---|
-| **Linux x86-64 only** | Deliberate scope for this release. Windows and macOS are later work; WSL2 is untested and expected to work. |
+| **Linux x86-64 only** | Deliberate scope for this release. Native Windows and macOS are later work. **WSL2 works, tested 2026-08-28**: `install.sh` ran unaided and the pipeline reproduced the reference reconstruction. Two host-side settings are needed first and neither is visible from inside Linux, see "WSL2, on Windows" in `pipeline/QUICKSTART.md`. |
 | **NVIDIA GPU, Volta through Hopper** | **RTX 50 series (Blackwell) and Pascal do not work.** The prebuilt gsplat wheel contains no code for them and no PTX to JIT from. The runner checks at startup and refuses to begin. |
 | **A GPU is required, not preferred** | Training and export have no CPU path: the rasteriser is CUDA-only. The first two stages do run on CPU. |
 | **Disk and time** | About 7.4 GB for the environment and 6 GB for the COLMAP prefix. The first install is dominated by downloads and has taken anywhere from minutes to several hours depending on the PyPI CDN. |

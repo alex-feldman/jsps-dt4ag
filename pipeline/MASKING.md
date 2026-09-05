@@ -126,3 +126,28 @@ wrong result when misunderstood, is worse than an absent one.
 **Do not reintroduce a loss-masking mode without a concrete use case**, and if
 one arrives, name it `loss` explicitly rather than folding it back under
 `use_masks`, so no one can select it by accident.
+
+## Where the masks come from, and why that stays a subprocess
+
+This pipeline **consumes** masks. It does not make them. Generation lives in a
+separate repository, `samask`, which drives SAM3 with a text prompt for the
+subject and refines the box with SAM2-HQ. Today that is a manual step you run
+before the pipeline; making it a pipeline stage is open work.
+
+**When it does become a stage, it must invoke samask as a subprocess, never as an
+import.** This is a hard constraint, not a style preference, and it is worth
+writing down because "just import it" is the obvious first instinct:
+
+- samask is Python 3.12 on torch 2.7.0.
+- This pipeline is Python 3.10 on torch 2.4.1+cu121, and **the torch version is
+  forced**: 2.4 is the newest torch with a prebuilt `sm_75` gsplat wheel, which is
+  what removes the `nvcc` requirement and the ten-minute gsplat JIT.
+
+Two torch versions cannot share one interpreter, so the two tools cannot share an
+environment. A subprocess in its own `uv` environment is the only shape that
+works, and it is the shape this pipeline already uses for `colmap`, `ffmpeg` and
+every `ns-*` command.
+
+That boundary has a second benefit worth preserving deliberately: **no samask
+code enters this repository**, so this repository's licence and authorship story
+stay independent of samask's, which is unsettled.

@@ -104,21 +104,51 @@ Then check `nvidia-smi` again. Two things to look for in its output:
 
 ### WSL2, on Windows
 
-**Untested as of 2026-08-12.** WSL2 is Linux x86-64, so everything in this
-document should apply unchanged once the GPU is visible, but nobody has run this
-pipeline there yet. Please report the result either way.
+**Tested 2026-08-28 and it works**, on Ubuntu 24.04 under WSL2 with an RTX 4050
+Laptop. The pipeline itself needed no change. What follows is everything the run
+turned out to need that a plain Linux install does not.
 
 The driver rule is the **opposite** of the one above, and getting it wrong is
 the classic WSL mistake:
 
 1. **On Windows**, install the normal NVIDIA Windows driver. That is what gives
    WSL the GPU.
-2. In PowerShell: `wsl --install -d Ubuntu-24.04`, then reboot.
-3. **Inside WSL, do NOT install any Linux NVIDIA driver.** No
+2. In PowerShell, install the WSL feature itself if you never have:
+   `wsl --install --no-distribution`, **then reboot**. The reboot belongs to this
+   step, which enables the optional Windows components. Installing a distro onto
+   a WSL2 that already works needs no reboot.
+3. **Choose the drive now, because you cannot choose it later.**
+   `wsl --install -d Ubuntu-24.04` puts the distro on **C:**, and the install
+   plus the COLMAP prefix is about 14 GB before any data. If C: is tight, place
+   it elsewhere (WSL 2.4.4 and later):
+
+   ```powershell
+   wsl --install Ubuntu-24.04 --location D:\wsl\ubuntu-24.04 --name Ubuntu-24.04 --no-launch
+   ```
+
+4. **Raise the guest memory cap before the first run.** This is the one thing
+   that actually failed, and it is nasty to diagnose. **WSL2 gives the guest only
+   50 percent of host RAM by default**, and COLMAP peaks near 13 GB on 120 images
+   at 18 MP, so on a 32 GB host the Linux OOM killer takes it mid
+   `automatic_reconstructor`. The pipeline prints nothing, the process simply
+   disappears, and the only evidence is in `dmesg`. It is invisible from inside
+   Linux, where `free -h` just reports a small machine. Create
+   `%USERPROFILE%\.wslconfig`:
+
+   ```ini
+   [wsl2]
+   memory=22GB
+   swap=32GB
+   swapfile=D:\\wsl\\swap.vhdx
+   ```
+
+   Then `wsl --shutdown` and start the distro again.
+
+5. **Inside WSL, do NOT install any Linux NVIDIA driver.** No
    `apt install nvidia-driver-*`, no `ubuntu-drivers install`. The GPU arrives
    through `/usr/lib/wsl/lib` from the Windows side, and installing a Linux
    driver over it is how people break a working setup.
-4. Inside WSL, check:
+6. Inside WSL, check:
 
 ```bash
 nvidia-smi
@@ -126,10 +156,50 @@ nvidia-smi
 
 If that prints your GPU, continue with this document from section 0 exactly as
 written. A WSL Ubuntu is minimal in the same way a container is, so it will need
-the `apt` packages in section 0 rather than already having them.
+the `apt` packages in section 0 rather than already having them, and the `apt`
+step **will** prompt for a sudo password. That matters only if you are scripting
+an unattended install.
 
-Budget disk space on the **Windows** drive: the environment alone is about 7.4 GB
-and the COLMAP prefix another 4 GB, before any data.
+**Keep your images on the WSL filesystem, not on `/mnt/c` or `/mnt/d`.** Those
+cross a 9p bridge slow enough to distort every timing in this document.
+
+### COLMAP's GPU matcher on WSL2
+
+**Set `[colmap] extra_args = --gpu_index 0` in your run config.** Without it,
+COLMAP's feature *extraction* succeeds and its *matcher* then refuses:
+
+```
+E sift.cc:1217] Not enough GPU memory to match 14327 features. Reduce the maximum number of matches.
+E feature_matching_utils.cc:82] Failed to create feature matcher.
+W incremental_pipeline.cc:276] No images with matches found in the database
+```
+
+**And `automatic_reconstructor` still exits 0.** It writes an empty database and
+reports success, so anything that trusts the exit code proceeds into nothing.
+`run_pipeline.py` catches it, because it verifies the sparse model exists rather
+than trusting the return code, and stops with "colmap reported success but
+produced no sparse model". Driving `colmap` by hand gets you silence.
+
+The message is misleading: this is not a machine that is short of VRAM. It was
+refused on an RTX 4050 Laptop with **5,920 MiB free and 0 MiB in use**, and then
+succeeded on the same images at the same free VRAM with nothing else changed but
+the flag. COLMAP's default is `--gpu_index -1`, meaning "use every GPU", and
+under WSL2's paravirtualised GPU that enumeration makes its available-memory
+check misread the device. Naming the index explicitly makes it query the real
+one.
+
+Measured 2026-09-05 on Ubuntu 24.04 under WSL2: the failure reproduced twice on
+fresh databases, and the fix reproduced. It does not depend on login versus
+non-login shells, which was an earlier and wrong diagnosis of the same symptom.
+If you have more than one CUDA GPU, name the one you want rather than assuming 0.
+
+**One cosmetic wart.** `ns-export` prints roughly twenty multi-line Qt plugin
+errors, because `pymeshlab` cannot load `libOpenGL.so.0`. The export succeeds
+anyway. `sudo apt install libopengl0` silences it.
+
+Budget disk space on whichever drive holds the distro: the environment alone is
+about 7.4 GB and the COLMAP prefix another 4 GB, before any data. A finished
+install plus one 120-image capture measured 23 GB of `ext4.vhdx`.
 
 ## 0. What you need
 
@@ -172,16 +242,19 @@ macOS and Windows are tracked as beta work rather than abandoned. Expect macOS
 to be the hard one: no CUDA at all, so it may end up supporting viewing and
 analysis rather than training.
 
-**WSL2 has not been tested, and is expected to work.** It is stated as a
-hypothesis so nobody mistakes it for a supported route. WSL2 *is* Linux x86-64,
-so the wheel platform tag, the conda-forge COLMAP and the whole uv path should
-apply unchanged. The part that is genuinely unproven is the GPU, which WSL2
-reaches through a passthrough driver stack rather than a native one. Setup steps
-and the do-not-install-a-Linux-driver rule are under "Pre-steps" above. If
-`nvidia-smi` works inside WSL and
-`uv run python -c "import torch; print(torch.cuda.is_available())"` prints
-`True`, the rest of this document should apply verbatim. Report the result
-either way.
+**WSL2 works, tested 2026-08-28.** Ubuntu 24.04 under WSL2 on Windows 11, with an
+RTX 4050 Laptop: `scripts/install.sh` completed unaided and the pipeline
+reproduced the reference reconstruction at 1,360 gaussians and PSNR 46.532, in
+22m37s. WSL2 *is* Linux x86-64, so the wheel platform tag, the conda-forge COLMAP
+and the whole uv path applied unchanged. The GPU arrives through the Windows
+driver and needed no configuration at all.
+
+**Two things are host-side, and neither is visible from inside Linux.** First,
+**WSL2 caps guest RAM at 50 percent of host RAM**, and COLMAP peaks near 13 GB on
+120 images at 18 MP, so on a 32 GB machine the default cap kills it with no
+message. Second, `wsl --install -d <distro>` puts the distro on C:. Both are
+covered in "WSL2, on Windows" under "Pre-steps" above, and you want to read that
+section **before** the first run rather than after diagnosing an OOM.
 
 ### You do need a host compiler
 
@@ -635,6 +708,21 @@ uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini
 The `PATH` export is needed in **every new shell**, because it is what puts
 `colmap` and `ffmpeg` where `ns-process-data` looks for them. Nothing else has
 to be activated: `uv run` supplies the whole Python environment.
+
+**Running this unattended, from a script or an agent, needs two more things.**
+Both were found on WSL2 and both apply to any non-interactive shell.
+
+First, `uv` itself is not on `PATH`. The installer puts it in `~/.local/bin` and
+relies on your shell rc, which a non-interactive shell does not read, so the
+command dies with `uv: command not found`. Export both directories:
+
+```bash
+export PATH="$HOME/opt/colmap-prefix/bin:$HOME/.local/bin:$PATH"
+```
+
+Second, on WSL2 set `[colmap] extra_args = --gpu_index 0` in your config. See
+"COLMAP's GPU matcher on WSL2" below; it is not specific to unattended runs, but
+this is where scripted runs hit it.
 
 That runs four stages in order: COLMAP structure-from-motion, `ns-process-data`,
 `ns-train splatfacto`, and `ns-export gaussian-splat`. It exits non-zero if any
