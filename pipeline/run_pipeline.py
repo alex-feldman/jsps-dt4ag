@@ -333,7 +333,24 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
     command = [
         "ns-train", cfg.train_method,
         "--data", str(workspace),
-        "--pipeline.model.use_scale_regularization", str(cfg.use_scale_regularization),
+    ]
+    # `use_scale_regularization` is a GAUSSIAN-SPLATTING model field: it
+    # penalises anisotropic gaussians and no NeRF model has it. tyro rejects an
+    # unrecognised option outright, so passing it unconditionally made
+    # `[train] method` a lie: every non-splatfacto method died at startup even
+    # though configs/README.md documents the key as "the nerfstudio method
+    # name". Found 2026-09-05 while trying `method = nerfacto` to compare how
+    # the two families degrade on a sparse-view capture.
+    #
+    # Checked against nerfstudio 1.1.5 rather than assumed: `ns-train splatfacto
+    # --help` lists the flag, `ns-train nerfacto --help` does not.
+    # `background_color` is NOT in the same class; both families accept it.
+    if cfg.train_method.startswith("splatfacto"):
+        command += [
+            "--pipeline.model.use_scale_regularization",
+            str(cfg.use_scale_regularization),
+        ]
+    command += [
         "--pipeline.model.background_color", cfg.background_color,
         "--output-dir", str(cfg.output_parent),
         "--viewer.quit-on-train-completion", str(cfg.quit_on_train_completion),
