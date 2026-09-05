@@ -42,12 +42,12 @@ Three kinds of work happen, and they are not the same kind:
 
 | # | What | Refuses when |
 |---|---|---|
-| 1 | Load and validate config (`load_config`) | any path missing, any key mistyped, masked output would overwrite the source or land inside `datasets/`, a retired key is still present, `use_masks` is set on a canonical capture with no `masks/` sibling |
+| 1 | Load and validate config (`load_config`) | any path missing, any key mistyped, masked output would overwrite the source or land inside `datasets/`, a retired key is still present (`mask_subpath`, or `masked_images_subpath` with a value), `use_masks` is set on a canonical capture with no `masks/` (or `masks_<variant>/`) sibling, `use_masks` is set with no `mask_variant` and several `masks*` sets present, `mask_variant` is not a single directory name, `mask_variant` is set on a capture that is not in the canonical layout. Accepted with a note in the run log: `mask_variant` set while `use_masks` is false |
 | 2 | Derive the run id, or take `--run-id` | a non-`colmap` first stage names a workspace that does not exist |
 | 3 | Prerequisites for the SELECTED stages only (`check_prerequisites`) | `colmap`, `ffmpeg` or an `ns-*` command missing; no CUDA device; GPU architecture absent from the installed gsplat binary |
 | 4 | Image census (`count_images`, filtered by `is_photograph`) | no photographs survive the extension filter |
 | 5 | Capture provenance (`read_capture_metadata`) | file present but unparseable. Absent is normal and silent |
-| 6 | **Pre-step:** composite masks (`composite_masked_images`) | any photograph has no paired mask; the output count does not match afterwards. Skipped entirely when a complete set already exists |
+| 6 | **Pre-step:** composite masks (`composite_masked_images`) | any photograph has no paired mask; the output count does not match afterwards. Skipped entirely when a complete set already exists in the composite directory for THIS variant, `derived/masked/<variant>/<capture_rel>/`; another variant's composites are a sibling tree and are neither reused nor seen |
 | 7 | Append the run-log row | — |
 | 8 | **Stage colmap** | no `sparse/cameras.bin` afterwards |
 | 9 | **Stage process** | no `transforms.json`; the downscale pyramid is incomplete (`verify_downscale_pyramid`) |

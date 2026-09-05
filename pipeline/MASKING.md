@@ -134,6 +134,15 @@ separate repository, `samask`, which drives SAM3 with a text prompt for the
 subject and refines the box with SAM2-HQ. Today that is a manual step you run
 before the pipeline; making it a pipeline stage is open work.
 
+A capture can hold several mask sets at once, `masks/` plus any number of
+`masks_<variant>/` siblings, and `[dataset] mask_variant` names the one a run
+reads (`LAYOUT.md`, "Several mask sets on one capture"). That is how two
+prompts, or two tools, are compared on the same photographs without one set
+destroying the other. samask knows nothing of variants and defaults to writing
+`masks/` beside `images/`, so a variant is produced by running it with `--masks
+<capture>/masks_<variant>` explicitly; run it with defaults and the pipeline
+will look in a directory samask never wrote, and refuse.
+
 **When it does become a stage, it must invoke samask as a subprocess, never as an
 import.** This is a hard constraint, not a style preference, and it is worth
 writing down because "just import it" is the obvious first instinct:

@@ -18,6 +18,56 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- **`[dataset] mask_variant`, so one capture can carry several mask sets.**
+  `masks_<variant>/` siblings beside `masks/`, each the same parallel tree,
+  selected by name: empty reads `masks/` exactly as before, `X` reads
+  `masks_X/`. A single directory name and never a path (`/` and `..` are
+  refused), so unlike the retired `mask_subpath` it cannot contradict the
+  layout or leave the capture. Motivated by mask-set comparison on captures
+  that already hold two sets for the same photographs, and by prompt families
+  (whole plant, leaf, fruit) wanted simultaneously on one capture.
+
+  Composites are keyed by the variant at the `masked/` level,
+  `derived/masked/<variant>/<capture_rel>/`, and deliberately NOT under the
+  capture: `composite_masked_images` reuses an existing set only when the
+  capture's composite directory, globbed recursively, holds exactly this run's
+  files, and a variant nested beneath would make every default run refuse with
+  an instruction to delete the whole directory, every variant included. As a
+  sibling tree, no variant can see or reuse another's composites, which is the
+  failure that mattered: two variants silently sharing composites reconstruct
+  identically and "the prompt made no difference" is a believable wrong answer.
+
+  Three refusals and one note come with it. `use_masks = true` with no variant
+  named and more than one `masks*` directory present is refused with the sets
+  listed, so which masks a run used is never a guess. A variant on a capture
+  outside the canonical layout is refused, since it would be read, validated
+  and never consulted. A variant that is not one directory name is refused. A
+  variant set while `use_masks = false` is accepted, with the fact written to
+  the console and to the run log's `note` column, since nothing else in the
+  pipeline is a warning surface.
+
+  Recorded in a new `mask_variant` column of `run-log.csv` (an existing log is
+  widened in place with a `.bak`, as the header migration already did) and in
+  the archived per-run config's `[run-record]`. The `masks` column keeps its
+  `used`/`none` vocabulary, which `recover-run-configs.py` compares against;
+  that tool now also verifies `mask_variant` for rows that carry it.
+
+  samask has no variant concept and defaults to writing `masks/`, so generating
+  a variant means passing its `--masks` explicitly. Stated in every place the
+  key is introduced, because it is cheap to say and expensive to discover.
+
+- `Dt4agConfig.mask_variant` and `Dt4agConfig.notes`, the latter the loader's
+  accepted-with-reservations lines, logged by the runner and written to the run
+  log's `note` column.
+
+- **`[dataset] masked_images_parent_subpath`**, replacing
+  `masked_images_subpath` with changed semantics: it names a PARENT that the
+  pipeline appends `<mask_variant>/<capture_rel>` to, rather than the composite
+  directory itself. One resolution rule now serves the default and the override
+  alike, which is what lets a variant apply to both; under the old key the
+  override replaced the default path outright and a variant added to the
+  default branch would have been silently bypassed.
+
 - **Every run freezes its config** at `<data_root>/configs/runs/<run-id>.ini`:
   the config file verbatim, plus a `[run-record]` section holding what resolves
   only at run time (run id, resolved input/workspace/output paths, and the
@@ -53,6 +103,17 @@ Dates are the tag date, not the commit date, where they differ.
   That had been unnecessary since the blanket `pipeline/configs/*.ini` rule with
   its `!example.ini` exception was written, so the file documented a step the
   repository already took.
+
+### Removed
+
+- **`[dataset] masked_images_subpath`.** Superseded by
+  `masked_images_parent_subpath` above. A config carrying the old key with a
+  VALUE is refused with a message that says the meaning changed, not just the
+  name: renamed mechanically, the same value would put composites one or two
+  directories below where it said. An empty leftover `masked_images_subpath =`
+  is accepted, because every working config and every archived per-run config
+  written before the rename carries it empty, and archived configs are promised
+  to stay runnable.
 
 ## [0.2.0] — 2026-08-18
 

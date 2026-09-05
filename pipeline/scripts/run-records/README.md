@@ -35,7 +35,9 @@ real file is still on disk and is simply copied, verbatim.
 
 **It only claims a config it can prove.** For each run it compares the file
 against what `run-log.csv` recorded at run time: images subpath, iteration
-count, downscale factor, masking route and training method. Every checkable
+count, downscale factor, masking route, mask variant (only for rows logged
+since that column was added; older rows are blank there and a blank is never
+checked) and training method. Every checkable
 field must agree; one mismatch means the file has been edited and the run is
 reported rather than archived. The record names the fields it verified, so the
 strength of the claim is visible rather than implied.
@@ -43,7 +45,7 @@ strength of the claim is visible rather than implied.
 The check is necessarily partial, since it can only compare what the run log
 carries: a change confined to a COLMAP flag would pass unnoticed. It is worth
 having anyway, because every config edit seen on this project has moved one of
-those five fields, which are the ones anybody has reason to change.
+those fields, which are the ones anybody has reason to change.
 
 Runs whose config HAS changed are listed with the differing field, never
 guessed at. On the 2026-08-21 run these were 19 runs, and all 19 differ for one

@@ -885,6 +885,15 @@ runner composites them, reusing an existing complete set rather than rebuilding
 it. See `LAYOUT.md` for the directory rule and `MASKING.md` for why alpha
 compositing rather than a mask file.
 
+To keep more than one mask set for a capture (another prompt, another tool,
+leaf against whole plant), put each further set in `<capture>/masks_<variant>/`
+with the same shape as `masks/` and select it with `[dataset] mask_variant =
+<variant>`. Empty keeps reading `masks/`. Each variant composites into its own
+`derived/masked/<variant>/...` tree, so switching variants never reuses the
+other one's composites. samask has no variant concept and writes `masks/` by
+default, so generate a variant by passing its `--masks <capture>/masks_<variant>`
+explicitly, or the pipeline will refuse with "no masks_<variant> directory".
+
 Only mask *generation* is still by hand. It needs the `samask` repository, which
 at the time of writing is **not self-contained**: a fresh clone cannot run it.
 Closing that last gap is tracked and is blocked on samask becoming installable.
