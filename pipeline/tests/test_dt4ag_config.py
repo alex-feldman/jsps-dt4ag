@@ -738,6 +738,322 @@ class TestRunLog(TempDirTestCase):
 
 
 # --------------------------------------------------------------------------
+# mask variants
+# --------------------------------------------------------------------------
+
+class TestMaskVariant(TempDirTestCase):
+    """``[dataset] mask_variant``: several mask sets on one capture, by name.
+
+    Nearly every edit for that feature lands in ``load_config``, which before
+    it had exactly one mask assertion in this file. Each case below pins one
+    line of the settled design (section 11 of the 2026-09-05 proposal): the
+    resolution table, the two refused shapes of the name, the retirement of
+    ``masked_images_subpath``, and the five behavioural decisions.
+    """
+
+    DATASET = {"image_extensions": ".jpg", "mask_extensions": ".png"}
+
+    def _capture(self, mask_sets=("masks",), use_masks="true", variant=None,
+                 parent=None, images_subpath="scene-01/capture-a/images",
+                 extra=None):
+        """A capture with one photograph and the named mask set(s) beside it.
+
+        ``variant=None`` omits the key entirely; ``""`` writes it empty.
+        """
+        dataset = dict(self.DATASET, use_masks=use_masks)
+        if variant is not None:
+            dataset["mask_variant"] = variant
+        if parent is not None:
+            dataset["masked_images_parent_subpath"] = parent
+        dataset.update(extra or {})
+        fixture = ConfigFixture(
+            self.tmp, images_subpath=images_subpath, make_images=False,
+            extra={"dataset": dataset},
+        )
+        fixture.images_path.mkdir(parents=True, exist_ok=True)
+        (fixture.images_path / "0001.jpg").write_bytes(b"rgb")
+        capture = fixture.images_path.parent
+        for name in mask_sets:
+            (capture / name).mkdir(parents=True, exist_ok=True)
+            (capture / name / "0001.png").write_bytes(b"mask")
+        return fixture
+
+    @staticmethod
+    def _rows(cfg):
+        with cfg.run_log.open(encoding="utf-8", newline="") as handle:
+            return list(csv.DictReader(handle))
+
+    # -- empty means today ---------------------------------------------------
+
+    def test_an_empty_variant_reproduces_todays_behaviour_exactly(self):
+        fixture = self._capture(variant="")
+        cfg = fixture.load()
+        capture = fixture.images_path.parent
+        self.assertEqual(cfg.mask_variant, "")
+        self.assertEqual(cfg.masks_path, capture / "masks")
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.derived_dir / "masked" / "scene-01" / "capture-a",
+        )
+        self.assertEqual(cfg.notes, [])
+
+    def test_an_absent_key_is_the_same_as_an_empty_one(self):
+        """Every existing config lacks the key and must not change at all."""
+        with_key = self._capture(variant="").load()
+        without = self._capture().load()
+        self.assertEqual(without.mask_variant, with_key.mask_variant)
+        self.assertEqual(without.masks_path, with_key.masks_path)
+        self.assertEqual(without.masked_images_path, with_key.masked_images_path)
+
+    # -- the masks it reads --------------------------------------------------
+
+    def test_a_variant_reads_its_own_masks_directory(self):
+        fixture = self._capture(
+            mask_sets=("masks", "masks_silver-car"), variant="silver-car"
+        )
+        cfg = fixture.load()
+        capture = fixture.images_path.parent
+        self.assertEqual(cfg.mask_variant, "silver-car")
+        self.assertEqual(cfg.masks_path, capture / "masks_silver-car")
+        self.assertEqual(
+            cfg.mask_for(fixture.images_path / "0001.jpg"),
+            capture / "masks_silver-car" / "0001.png",
+        )
+
+    def test_a_missing_variant_directory_is_named_and_the_others_listed(self):
+        """The error must send the reader to the directory it looked for."""
+        fixture = self._capture(mask_sets=("masks", "masks_plant"), variant="leaf")
+        self.assertConfigError(
+            fixture.path, "masks_leaf", "masks_plant", "--masks"
+        )
+
+    # -- section 11b: one resolution rule, four rows -------------------------
+
+    def test_row_1_no_variant_no_parent(self):
+        cfg = self._capture().load()
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.data_root / "derived" / "masked" / "scene-01" / "capture-a",
+        )
+
+    def test_row_2_a_variant_goes_in_at_the_masked_level(self):
+        cfg = self._capture(
+            mask_sets=("masks", "masks_silver-car"), variant="silver-car"
+        ).load()
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.data_root / "derived" / "masked" / "silver-car" / "scene-01" / "capture-a",
+        )
+
+    def test_row_3_a_parent_override_gets_the_capture_appended(self):
+        comps = self.tmp / "fast" / "comps"
+        cfg = self._capture(parent=str(comps)).load()
+        self.assertEqual(cfg.masked_images_path, comps / "scene-01" / "capture-a")
+
+    def test_row_4_a_parent_override_and_a_variant_compose(self):
+        """Decision 4: append, do not refuse."""
+        comps = self.tmp / "fast" / "comps"
+        cfg = self._capture(
+            mask_sets=("masks", "masks_silver-car"), variant="silver-car",
+            parent=str(comps),
+        ).load()
+        self.assertEqual(
+            cfg.masked_images_path,
+            comps / "silver-car" / "scene-01" / "capture-a",
+        )
+
+    def test_a_relative_parent_resolves_against_data_root(self):
+        cfg = self._capture(parent="fast/comps").load()
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.data_root / "fast" / "comps" / "scene-01" / "capture-a",
+        )
+
+    def test_a_parent_inside_datasets_is_still_refused(self):
+        """The guard runs on the FINAL resolved path."""
+        fixture = self._capture(parent="datasets/comps")
+        self.assertConfigError(
+            fixture.path, "masked_images_parent_subpath", "inside the"
+        )
+
+    # -- section 4e: sibling, never child ------------------------------------
+
+    def test_the_variant_tree_is_a_sibling_of_the_default_tree_not_a_child(self):
+        default = self._capture().load().masked_images_path
+        variant = self._capture(
+            mask_sets=("masks", "masks_leaf"), variant="leaf"
+        ).load().masked_images_path
+        self.assertNotEqual(default, variant)
+        self.assertFalse(dt4ag_config._is_within(variant, default))
+        self.assertFalse(dt4ag_config._is_within(default, variant))
+
+    def test_a_default_run_is_unaffected_by_another_variants_composites(self):
+        """A recursive glob of the default directory must find nothing.
+
+        The composites are written first, then the variant's masks are
+        removed so the default config loads (decision 1 would otherwise
+        refuse it), which is also a real situation: composites outlive the
+        masks they came from.
+        """
+        fixture = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf")
+        leaf = fixture.load()
+        leaf.masked_images_path.mkdir(parents=True)
+        (leaf.masked_images_path / "0001.png").write_bytes(b"leaf")
+        import shutil
+        shutil.rmtree(fixture.images_path.parent / "masks_leaf")
+        default = self._capture().load()
+        self.assertEqual(list(default.masked_images_path.rglob("*.png")), [])
+
+    def test_two_variants_do_not_share_composites(self):
+        sets = ("masks_leaf", "masks_plant")
+        leaf = self._capture(mask_sets=sets, variant="leaf").load()
+        plant = self._capture(mask_sets=sets, variant="plant").load()
+        self.assertNotEqual(leaf.masks_path, plant.masks_path)
+        self.assertNotEqual(leaf.masked_images_path, plant.masked_images_path)
+        self.assertFalse(dt4ag_config._is_within(leaf.masked_images_path,
+                                                 plant.masked_images_path))
+        self.assertFalse(dt4ag_config._is_within(plant.masked_images_path,
+                                                 leaf.masked_images_path))
+
+    # -- the name is a name --------------------------------------------------
+
+    def test_a_variant_that_is_not_one_directory_name_is_refused(self):
+        for bad in ("a/b", "../masks", "..", "masks/..", ".", "a\\b", "/abs"):
+            with self.subTest(variant=bad):
+                fixture = self._capture(variant=bad)
+                self.assertConfigError(
+                    fixture.path, "mask_variant", "single directory name"
+                )
+
+    # -- section 11c: the retirement -----------------------------------------
+
+    def test_the_old_composite_key_with_a_value_is_refused_naming_the_change(self):
+        fixture = self._capture(extra={"masked_images_subpath": "comps"})
+        self.assertConfigError(
+            fixture.path, "masked_images_subpath",
+            "masked_images_parent_subpath", "MEANING changed", "PARENT",
+            "appends",
+        )
+
+    def test_the_old_composite_key_left_empty_is_accepted(self):
+        """Every archived per-run config carries it empty and must stay runnable."""
+        cfg = self._capture(extra={"masked_images_subpath": ""}).load()
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.derived_dir / "masked" / "scene-01" / "capture-a",
+        )
+
+    # -- section 11d: the five decisions -------------------------------------
+
+    def test_decision_1_several_sets_and_no_variant_is_refused_and_lists_them(self):
+        fixture = self._capture(mask_sets=("masks", "masks_leaf", "masks_plant"))
+        self.assertConfigError(
+            fixture.path, "mask_variant", "3 mask sets",
+            "masks, masks_leaf, masks_plant",
+        )
+
+    def test_decision_1_also_fires_with_no_plain_masks_directory(self):
+        fixture = self._capture(mask_sets=("masks_leaf", "masks_plant"))
+        self.assertConfigError(fixture.path, "mask_variant", "2 mask sets")
+
+    def test_decision_1_naming_a_variant_resolves_the_ambiguity(self):
+        fixture = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf")
+        self.assertEqual(
+            fixture.load().masks_path, fixture.images_path.parent / "masks_leaf"
+        )
+
+    def test_decision_1_does_not_fire_when_masking_is_off(self):
+        cfg = self._capture(mask_sets=("masks", "masks_leaf"), use_masks="false").load()
+        self.assertFalse(cfg.use_masks)
+
+    def test_decision_2_only_masks_and_no_variant_is_unchanged(self):
+        fixture = self._capture(mask_sets=("masks",))
+        cfg = fixture.load()
+        self.assertEqual(cfg.masks_path, fixture.images_path.parent / "masks")
+        self.assertEqual(cfg.notes, [])
+
+    def test_decision_3_a_variant_with_use_masks_false_is_accepted_with_a_note(self):
+        cfg = self._capture(
+            mask_sets=("masks", "masks_leaf"), variant="leaf", use_masks="false"
+        ).load()
+        self.assertFalse(cfg.use_masks)
+        self.assertEqual(cfg.mask_variant, "leaf")
+        self.assertEqual(len(cfg.notes), 1)
+        self.assertIn("mask_variant = leaf", cfg.notes[0])
+        self.assertIn("use_masks is false", cfg.notes[0])
+        self.assertIn("NOT read", cfg.notes[0])
+
+    def test_decision_3_the_note_reaches_the_run_log(self):
+        cfg = self._capture(
+            mask_sets=("masks", "masks_leaf"), variant="leaf", use_masks="false"
+        ).load()
+        cfg.append_run_log("run_260905-01-3120")
+        row = self._rows(cfg)[0]
+        self.assertIn("mask_variant = leaf", row["note"])
+        self.assertEqual(row["masks"], "none")
+        self.assertEqual(row["mask_variant"], "leaf")
+
+    def test_decision_3_an_explicit_note_still_wins_over_the_default(self):
+        cfg = self._capture(
+            mask_sets=("masks", "masks_leaf"), variant="leaf", use_masks="false"
+        ).load()
+        cfg.append_run_log("run_260905-01-3120", note="smoke")
+        self.assertEqual(self._rows(cfg)[0]["note"], "smoke")
+
+    def test_decision_5_a_variant_on_a_legacy_layout_is_refused(self):
+        """Otherwise it would be read, validated and never consulted."""
+        fixture = self._capture(
+            mask_sets=(), variant="leaf", use_masks="false",
+            images_subpath="scene-01/capture-a",
+        )
+        self.assertConfigError(fixture.path, "mask_variant", "does not end in 'images'")
+
+    # -- provenance ----------------------------------------------------------
+
+    def test_the_run_log_gains_a_variant_column_and_masks_keeps_its_vocabulary(self):
+        cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
+        cfg.append_run_log("run_260905-01-3120")
+        row = self._rows(cfg)[0]
+        self.assertEqual(row["masks"], "used")
+        self.assertEqual(row["mask_variant"], "leaf")
+        self.assertEqual(row["note"], "")
+
+    def test_an_older_run_log_is_widened_in_place_with_a_backup(self):
+        cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
+        old_header = ("timestamp,run_id,dataset,images_path,colmap_version,"
+                      "train_method,max_num_iterations,downscale_factor,masks,"
+                      "object_id,imaging_date,config_file,note\n")
+        cfg.run_log.parent.mkdir(parents=True, exist_ok=True)
+        cfg.run_log.write_text(
+            old_header + "2026-08-28T13:57:51,old_260828-01-3120,x/images,"
+            "/x/images,3120,splatfacto,30000,auto,used,,,old.ini,\n",
+            encoding="utf-8",
+        )
+        cfg.append_run_log("run_260905-01-3120")
+        self.assertTrue(cfg.run_log.with_suffix(".csv.bak").is_file())
+        rows = self._rows(cfg)
+        self.assertEqual([r["run_id"] for r in rows],
+                         ["old_260828-01-3120", "run_260905-01-3120"])
+        self.assertEqual(rows[0]["mask_variant"], "")
+        self.assertEqual(rows[0]["masks"], "used")
+        self.assertEqual(rows[1]["mask_variant"], "leaf")
+
+    def test_the_archived_config_records_the_variant(self):
+        cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
+        archived = cfg.archive_run_config("run_260905-01-3120")
+        parser = configparser.ConfigParser()
+        parser.read(archived, encoding="utf-8")
+        self.assertEqual(parser["run-record"]["mask_variant"], "leaf")
+        self.assertEqual(parser["run-record"]["masks_path"], str(cfg.masks_path))
+        # And it is still a loadable config that resolves the same variant.
+        self.assertEqual(load_config(archived).mask_variant, "leaf")
+
+    def test_describe_names_the_variant(self):
+        cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
+        self.assertIn("mask_variant       : leaf", cfg.describe())
+
+
+# --------------------------------------------------------------------------
 # per-run config archive
 # --------------------------------------------------------------------------
 

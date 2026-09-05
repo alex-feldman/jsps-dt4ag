@@ -11,8 +11,9 @@ the same place and name the pipeline now writes for every new run.
 
 **It only claims a config it can PROVE still matches.** For each run it compares
 the file on disk against what ``run-log.csv`` recorded at run time: the images
-subpath, the iteration count, the downscale factor, the masking route and the
-training method. Every checkable field must agree. A single mismatch means the
+subpath, the iteration count, the downscale factor, the masking route, the mask
+variant (for rows logged since that column exists) and the training method.
+Every checkable field must agree. A single mismatch means the
 file has been edited since, so it is no longer that run's config, and the run is
 reported as unrecoverable rather than archived.
 
@@ -153,6 +154,12 @@ def compare(config_path: Path, row: dict, data_root: Path
         file_masks = cfg("dataset", "use_masks", "false").lower()
         check("use_masks", logged_masks,
               "used" if file_masks in ("true", "yes", "1", "on") else "none")
+
+    # Which mask set. A column added after the `masks` one, so rows older
+    # than it are blank here and, like every other blank, not checked. The
+    # key itself defaults to empty, which is what an empty cell means too.
+    check("mask_variant", row.get("mask_variant"),
+          cfg("dataset", "mask_variant"))
 
     return verified, mismatches
 

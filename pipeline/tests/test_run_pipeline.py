@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 
+import shutil
 import sys
 import tempfile
 import unittest
@@ -731,15 +732,127 @@ class MaskSupportTests(TempTreeTestCase):
 
     def test_an_override_pointing_into_datasets_is_refused(self):
         """Which is exactly what every pre-v0.2.0 config did."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as caught:
             make_config(
                 self.root,
                 dataset_extra=(
                     "image_extensions = .jpg\nmask_extensions = .png\n"
                     "use_masks = true\n"
-                    "masked_images_subpath = datasets/scene-01/masked-images"
+                    "masked_images_parent_subpath = datasets/scene-01"
                 ),
             )
+        self.assertIn("inside the", str(caught.exception))
+
+    def test_a_parent_override_gets_the_capture_appended(self):
+        """The renamed key is a parent, not the composite directory itself."""
+        cfg = make_config(
+            self.root,
+            dataset_extra=(
+                "image_extensions = .jpg\nmask_extensions = .png\n"
+                "use_masks = true\nmasked_images_parent_subpath = comps"
+            ),
+        )
+        self.assertEqual(
+            cfg.masked_images_path,
+            self.root / "comps" / "scene-01" / "capture-a" / "session-001",
+        )
+
+    def test_the_retired_masked_images_subpath_key_is_refused_when_set(self):
+        """Its meaning changed, so a mechanical rename would move composites."""
+        with self.assertRaises(Exception) as caught:
+            make_config(
+                self.root,
+                dataset_extra=(
+                    "image_extensions = .jpg\nmask_extensions = .png\n"
+                    "use_masks = true\nmasked_images_subpath = comps"
+                ),
+            )
+        self.assertIn("masked_images_parent_subpath", str(caught.exception))
+
+    def test_the_retired_masked_images_subpath_key_is_tolerated_empty(self):
+        cfg = make_config(
+            self.root,
+            dataset_extra=(
+                "image_extensions = .jpg\nmask_extensions = .png\n"
+                "use_masks = true\nmasked_images_subpath ="
+            ),
+        )
+        self.assertEqual(
+            cfg.masked_images_path,
+            cfg.derived_dir / "masked" / "scene-01" / "capture-a" / "session-001",
+        )
+
+    def _variant(self, name, use_masks="true"):
+        """A canonical capture holding masks/ AND masks_<name>/, set to <name>."""
+        capture = self.root / "datasets" / "scene-01" / "capture-a"
+        (capture / "images" / "cam-002").mkdir(parents=True, exist_ok=True)
+        (capture / "images" / "cam-002" / "shot_1.jpg").write_bytes(b"rgb")
+        for masks in ("masks", f"masks_{name}"):
+            (capture / masks / "cam-002").mkdir(parents=True, exist_ok=True)
+            (capture / masks / "cam-002" / "shot_1.png").write_bytes(b"mask")
+        return make_config(
+            self.root,
+            images_subpath="scene-01/capture-a/images",
+            dataset_extra=self.DATASET.format(use=use_masks)
+            + f"\nmask_variant = {name}",
+        )
+
+    def test_a_variants_composites_are_invisible_to_the_default_run(self):
+        """The trap the first design fell into.
+
+        The reuse check globs the composite directory RECURSIVELY, because a
+        capture's cameras are subdirectories, and refuses anything it finds
+        that is not one of this run's composites, with an instruction to
+        delete the directory. A variant nested under the capture would make
+        every default run refuse, and the deletion would take every variant.
+        So the variant's tree is a sibling, and this proves the default run
+        reuses its own complete set with the variant's composites present.
+        """
+        leaf = self._variant("leaf")
+        (leaf.masked_images_path / "cam-002").mkdir(parents=True)
+        (leaf.masked_images_path / "cam-002" / "shot_1.png").write_bytes(b"leaf")
+        self.assertEqual(
+            leaf.masked_images_path,
+            leaf.derived_dir / "masked" / "leaf" / "scene-01" / "capture-a",
+        )
+        # The default run: masks_leaf/ removed so that only masks/ remains and
+        # the loader does not refuse the ambiguity. The composites stay.
+        shutil.rmtree(leaf.masks_path)
+        cfg = make_config(
+            self.root,
+            images_subpath="scene-01/capture-a/images",
+            dataset_extra=self.DATASET.format(use="true"),
+        )
+        (cfg.masked_images_path / "cam-002").mkdir(parents=True)
+        (cfg.masked_images_path / "cam-002" / "shot_1.png").write_bytes(b"ok")
+        lines = run_pipeline.composite_masked_images(cfg)   # would raise, or shell out
+        self.assertIn("reused", lines[0])
+        self.assertTrue((leaf.masked_images_path / "cam-002" / "shot_1.png").is_file())
+
+    def test_a_variant_run_never_reuses_the_default_composites(self):
+        capture = self.root / "datasets" / "scene-01" / "capture-a"
+        (capture / "images" / "cam-002").mkdir(parents=True)
+        (capture / "images" / "cam-002" / "shot_1.jpg").write_bytes(b"rgb")
+        (capture / "masks" / "cam-002").mkdir(parents=True)
+        (capture / "masks" / "cam-002" / "shot_1.png").write_bytes(b"mask")
+        cfg = make_config(
+            self.root,
+            images_subpath="scene-01/capture-a/images",
+            dataset_extra=self.DATASET.format(use="true"),
+        )
+        (cfg.masked_images_path / "cam-002").mkdir(parents=True)
+        (cfg.masked_images_path / "cam-002" / "shot_1.png").write_bytes(b"ok")
+        leaf = self._variant("leaf")
+        self.assertNotEqual(leaf.masked_images_path, cfg.masked_images_path)
+        self.assertEqual(list(leaf.masked_images_path.rglob("*.png")), [])
+
+    def test_sfm_input_is_the_variant_composite_directory(self):
+        leaf = self._variant("leaf")
+        workspace = leaf.colmap_workspace("run_260101-03-3120")
+        self.assertEqual(
+            run_pipeline.sfm_input_path(leaf, workspace), leaf.masked_images_path
+        )
+        self.assertEqual(leaf.masks_path.name, "masks_leaf")
 
     def test_a_stale_extra_composite_is_refused_not_silently_reused(self):
         """A subset test cannot see files that should not be there.

@@ -44,6 +44,10 @@ from PIL import Image
 # --images is counted as an unsupported extension, which is a failure.
 SUPPORTED_IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 
+# Standalone default only. The pipeline always passes --masks explicitly, and
+# since [dataset] mask_variant that may be a sibling named masks_<variant>
+# rather than this directory; do not read this constant as the layout rule
+# (that rule is in dt4ag_config.load_config).
 MASKS_DIRNAME = "masks"
 
 EXIT_OK = 0
