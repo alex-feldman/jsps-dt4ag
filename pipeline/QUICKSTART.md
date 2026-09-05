@@ -672,6 +672,47 @@ raw photos reconstruct the background along with the subject, which is a
 supported thing to do but gives you far more gaussians and something to crop
 afterwards.
 
+### What makes a capture reconstructable, and what no setting can fix
+
+**A bad capture cannot be rescued by tuning, and it is worth knowing that before
+you spend an afternoon trying.** Measured 2026-09-05 on a deliberately poor
+capture: 19 photographs of a car, walked along one side.
+
+| symptom | value | what it means |
+|---|---|---|
+| Angular coverage | **44.8 deg of 360** | 315 degrees of the subject was never photographed |
+| Mean track length | 2.74 | the average 3D point survives fewer than three frames |
+| Features becoming points | ~12% | correspondences are failing, not features |
+
+The result was 630,000 gaussians of mostly background and floaters, against
+1,360 for the reference capture. Masking removed the background and left a
+recognisable subject only on the side that was photographed.
+
+**`--quality extreme` does not help, and was tested rather than assumed.** On the
+same images, SfM only: 8,938 points, track length 2.749, reprojection error
+1.123 px, against `high`'s 9,120 / 2.738 / 1.079 px. Marginally worse, for 4.5
+extra minutes. Feature counts were unchanged at roughly 10,000 per image, which
+is the point: **the extractor was never the constraint.** What fails is matching
+features across views, and that is a property of the surface and the camera path,
+not of any COLMAP setting.
+
+So, for a capture that will actually reconstruct:
+
+1. **Go all the way around the subject.** This matters more than everything else
+   combined. Roughly 10 degrees per shot, about 36 frames per ring. Wide steps
+   over a full circle beat fine steps over a narrow arc.
+2. **Two or three heights**, so the top and the underside edges are seen. 70 to
+   110 photographs total for an object the size of a car.
+3. **Fill the frame with the subject**, and keep the distance roughly constant.
+   Standing far back spends your pixels and your parallax on the background.
+4. **Walk, do not pivot.** Rotating on the spot gives no parallax and therefore
+   no depth.
+5. **Avoid glossy and specular surfaces in direct sun.** Highlights move with the
+   viewpoint, so features on a shiny panel do not match between frames. Shade or
+   overcast light is worth more than any parameter in this document. Matte,
+   textured subjects such as plants are the easy case, which is what this
+   pipeline was built for.
+
 Two more keys are worth setting even though nothing fails without them, because
 they are baked into the export filename and are how a `.ply` records what
 produced it:
