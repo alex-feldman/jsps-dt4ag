@@ -446,6 +446,14 @@ def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) ->
     ``images_path.parent.name``, which names the capture only by coincidence of
     layout: under the canonical one it is right, and under a legacy one it
     names the collection, so every capture in a collection shared a prefix.
+
+    The steps component is ALWAYS ``{x}steps_from{y}run``: ``x`` the training
+    steps the exported checkpoint holds, ``y`` the run's ``max_num_iterations``.
+    This function exports the run's final checkpoint, so here both are the same
+    number (``10000steps_from10000run``). The pair exists so that a file made
+    from an EARLIER checkpoint of a longer run (``10000steps_from20000run``,
+    see QUICKSTART "Several step counts from one run") is named by the same rule
+    and cannot be mistaken for a run that was configured to stop at 10000.
     """
     parts = [
         cfg.capture_rel.name,
@@ -453,7 +461,7 @@ def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) ->
         "splat",
         cfg.platform_label,
         cfg.env_label,
-        f"{cfg.max_num_iterations}steps",
+        f"{cfg.max_num_iterations}steps_from{cfg.max_num_iterations}run",
     ]
     if downscale_factor:
         parts.append(f"ds{downscale_factor}")

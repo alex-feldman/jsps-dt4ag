@@ -827,11 +827,16 @@ RUN=<data_root>/outputs/<dataset>/<run-id>/splatfacto/<timestamp>
 ls $RUN/nerfstudio_models                      # step-000002500.ckpt, ...
 sed 's/^load_step: .*/load_step: 12500/' $RUN/config.yml > $RUN/config-step-12500.yml
 ns-export gaussian-splat --load-config $RUN/config-step-12500.yml \
-    --output-dir <data_root>/exports --output-filename <name>_12500steps.ply
+    --output-dir <data_root>/exports --output-filename <name>
 ```
 
-Name the file yourself: the pipeline's own export filename carries the config's
-`max_num_iterations`, which would mislabel an earlier step.
+Name the file yourself, with the pipeline's own pattern (`configs/README.md`,
+"Export filenames"): `..._<x>steps_from<y>run_...`, where `x` is the checkpoint's
+step and `y` the run's `max_num_iterations`, for example
+`..._12500steps_from30000run_ds4_individual.ply`. The pipeline writes both as the
+same number for its own final-checkpoint export. Checkpoint files are named by the
+zero-based step they were saved at, so a run's final checkpoint is one below its
+maximum (`step-000009999` for a 10,000-step run); count it as `x = y`.
 
 **Score each checkpoint with `ns-eval` to choose a step count.** Same trick, one
 config copy per step:

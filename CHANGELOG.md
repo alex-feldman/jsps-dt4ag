@@ -16,6 +16,18 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Changed
+
+- **Export filenames now carry `{x}steps_from{y}run` in every case**, replacing
+  the single `{iterations}steps` component: `x` is the training steps the
+  exported checkpoint holds, `y` the run's `max_num_iterations`. A pipeline
+  export is always the final checkpoint, so it reads `10000steps_from10000run`.
+  Anything that matches the old `_{N}steps_` token in a filename must be updated;
+  nothing in this repository did. The reason is the new per-checkpoint export:
+  a file exported from step 10,000 of a 20,000-step run
+  (`10000steps_from20000run`) must not look like a run configured to stop at
+  10,000, even though the two are equivalent training.
+
 ### Added
 
 - **`[train] steps_per_save` and `save_only_latest_checkpoint`: a checkpoint

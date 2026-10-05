@@ -360,15 +360,21 @@ class TestCommands(TempTreeTestCase):
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120"),
-            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_individual.ply",
         )
+
+    def test_export_filename_always_names_checkpoint_steps_and_run_length(self):
+        """{x}steps_from{y}run in every case, so an early checkpoint of a longer
+        run (250steps_from500run) is named by the same rule as a finished run."""
+        cfg = make_config(self.root)
+        self.assertIn("_500steps_from500run_", export_filename(cfg, "run_260101-03-3120"))
 
     def test_export_filename_carries_the_resolution_when_known(self):
         """Two resolutions of one dataset must not collide on one filename."""
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120", 2),
-            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_ds2_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_ds2_individual.ply",
         )
         self.assertNotEqual(
             export_filename(cfg, "run_260101-03-3120", 2),

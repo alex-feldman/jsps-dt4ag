@@ -222,12 +222,20 @@ Feeds `ns-export` and the optional point-cloud conversion.
 Export filenames are built as (`export_filename` in `run_pipeline.py`)
 
 ```
-<capture>_<run_id>_splat_<platform_label>_<env_label>_<iterations>steps[_dsN]_<colmap data_type>.ply
+<capture>_<run_id>_splat_<platform_label>_<env_label>_<x>steps_from<y>run[_dsN]_<colmap data_type>.ply
 ```
 
 `<capture>` is `capture_rel`'s last component, so it names the capture under
 both layouts. `dsN` appears whenever the effective downscale factor is known,
 which is what stops two resolutions of one capture overwriting each other.
+
+`<x>steps_from<y>run` is always written in full: `x` is the number of training
+steps the exported checkpoint holds and `y` is the run's `max_num_iterations`. The
+pipeline exports a run's final checkpoint, so it writes both as the same number
+(`10000steps_from10000run`). A file exported by hand from an earlier checkpoint of
+a longer run carries the pair that tells them apart (`10000steps_from20000run`),
+so it cannot be mistaken for a run that was configured to stop at 10000. Before
+2026-10-05 the name carried only `<iterations>steps`.
 
 ## Validation behaviour
 
