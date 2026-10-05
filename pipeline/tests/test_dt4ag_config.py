@@ -844,6 +844,37 @@ class TestRunLog(TempDirTestCase):
         self.assertIn("smoke test", text)
         self.assertNotIn("dropped", text)
 
+    def test_widens_mask_variant_header_and_preserves_old_rows(self):
+        cfg = self._cfg()
+        cfg.mask_variant = "plant"
+        cfg.vis = "tensorboard"
+        cfg.append_run_log("seed_260807-01-312")
+        columns = [name for name in self._rows(cfg)[0]
+                   if name not in ("eval_mode", "vis")]
+        old_rows = [dict(zip(columns, ["old" if name == "run_id" else
+                    "leaf" if name == "mask_variant" else
+                    "historical note" if name == "note" else ""
+                    for name in columns]))]
+        with cfg.run_log.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(old_rows)
+        old_bytes = cfg.run_log.read_bytes()
+
+        cfg.append_run_log("new_260807-02-312")
+
+        self.assertEqual(cfg.run_log.with_suffix(".csv.bak").read_bytes(), old_bytes)
+        rows = self._rows(cfg)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({name: rows[0][name] for name in columns}, old_rows[0])
+        self.assertEqual(rows[0]["eval_mode"], "")
+        self.assertEqual(rows[0]["vis"], "")
+        self.assertEqual(rows[1]["mask_variant"], "plant")
+        self.assertEqual(rows[1]["eval_mode"], "evalfrac90")
+        self.assertEqual(rows[1]["vis"], "tensorboard")
+        self.assertNotIn(None, rows[0])
+        self.assertNotIn(None, rows[1])
+
     def test_relative_log_file_resolves_under_data_root(self):
         cfg = self._cfg()
         self.assertEqual(cfg.run_log, cfg.data_root / "logs" / "run-log.csv")
