@@ -816,7 +816,10 @@ A checkpoint at step N of a longer run is the same training as a run configured
 for N steps, because splatfacto's schedules do not depend on
 `max_num_iterations`: the learning-rate decay is fixed at 30,000 steps and
 densification stops at step 15,000 either way. (Equivalent, not bit-identical:
-the random seed is not pinned.)
+nerfstudio pins its seed, `machine.seed = 42`, but two runs of one configuration still
+differ slightly. The cause was not isolated; non-deterministic GPU kernels are the
+likely one. To size that noise, repeat one configuration and compare, rather than
+assuming zero.)
 
 **Have the pipeline export them: set `[export] checkpoint_interval = 2500`.** The
 export stage then writes one PLY for every checkpoint whose step is a multiple of
