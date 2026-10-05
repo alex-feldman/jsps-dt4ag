@@ -98,7 +98,10 @@ the broken one. Both measurements, and the earlier manual-route pair, are in
 Judge with **held-out views** instead. `ns-eval` gives PSNR cheaply: on the
 development dataset a 30,000-step run scored 46.5 and a 500-step run of the same
 data scored 10.4. That is a sanity check, not an accuracy measurement; the
-intended evaluation methodology is a separate piece of work.
+intended evaluation methodology is a separate piece of work. The training run
+itself computes no metrics, so `ns-eval` is the only source. To score several
+step counts from one run, and for how many held-out images that leaves, see
+`QUICKSTART.md` "Several step counts from one run".
 
 **Cleaning a background by hand is not normally necessary.** With masked input,
 training drives background gaussians to zero opacity and the export drops them.
