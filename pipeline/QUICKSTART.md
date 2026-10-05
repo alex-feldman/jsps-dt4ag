@@ -801,6 +801,98 @@ so runs never overwrite each other:
 
 Change `[run] id_prefix` to keep a set of runs separate from another set.
 
+### Several step counts from one run
+
+**To compare how many training steps a reconstruction needs, train once to the
+largest count and export the checkpoints on the way. Do not train once per
+count, and do not try to resume.**
+
+The pipeline keeps a checkpoint every `[train] steps_per_save` steps (default
+2500) and keeps all of them (`save_only_latest_checkpoint = false`), plus one at
+the final step. nerfstudio's own defaults are every 2000 and newest only, which
+deletes the earlier ones and leaves nothing to export an earlier step from.
+
+A checkpoint at step N of a longer run is the same training as a run configured
+for N steps, because splatfacto's schedules do not depend on
+`max_num_iterations`: the learning-rate decay is fixed at 30,000 steps and
+densification stops at step 15,000 either way. (Equivalent, not bit-identical:
+the random seed is not pinned.)
+
+Export an earlier step by pointing a copy of the run's `config.yml` at it.
+`ns-export` has no step option of its own, but it honours `load_step` in the
+config:
+
+```bash
+RUN=<data_root>/outputs/<dataset>/<run-id>/splatfacto/<timestamp>
+ls $RUN/nerfstudio_models                      # step-000002500.ckpt, ...
+sed 's/^load_step: .*/load_step: 12500/' $RUN/config.yml > $RUN/config-step-12500.yml
+ns-export gaussian-splat --load-config $RUN/config-step-12500.yml \
+    --output-dir <data_root>/exports --output-filename <name>_12500steps.ply
+```
+
+Name the file yourself: the pipeline's own export filename carries the config's
+`max_num_iterations`, which would mislabel an earlier step.
+
+**Score each checkpoint with `ns-eval` to choose a step count.** Same trick, one
+config copy per step:
+
+```bash
+sed 's/^load_step: .*/load_step: 10000/' $RUN/config.yml > $RUN/config-step-10000.yml
+ns-eval --load-config $RUN/config-step-10000.yml --output-path eval-step10000.json
+```
+
+`ns-eval` loads that checkpoint, renders every HELD-OUT image from its own pose
+and compares it with the photograph: PSNR, SSIM and LPIPS, mean and standard
+deviation over those images (about 11 seconds per checkpoint here). Which images
+are held out is nerfstudio's default `train_split_fraction = 0.9`: the first and
+last photographs and evenly spaced ones train, **the remainder are never seen in
+training**. With 24 photographs that is 22 train and 2 evaluate, so the standard
+deviation is large and a 0.5 dB difference between two checkpoints is noise.
+Read the LPIPS and SSIM trend and the plateau, not the third digit of PSNR.
+
+A run that trains with the viewer only (`quit_on_train_completion`, as the
+pipeline does) computes NO metrics during training; `ns-eval` is the only
+source of them.
+
+Measured 2026-10-05, 24 photographs of one cucumber plant (22 train, 2 held
+out), 4x downscale, one 20,000-step run with a checkpoint every 2500 steps:
+
+| step | PSNR | SSIM | LPIPS |
+|---|---|---|---|
+| 2500 | 17.7 | 0.579 | 0.418 |
+| 5000 | 19.1 | 0.659 | 0.337 |
+| 7500 | 19.6 | 0.689 | 0.310 |
+| 10000 | 19.5 | 0.685 | 0.298 |
+| 15000 | 19.6 | 0.680 | 0.292 |
+| 19999 | 19.5 | 0.673 | 0.293 |
+
+Everything flattens by step 7500 to 10000, and SSIM drifts down after 10000,
+which is consistent with overfitting the 22 training views (two held-out
+images cannot confirm it). For this capture 10,000 steps was
+enough and 20,000 bought nothing measurable. A separate 10,000-step run scored
+20.1 against 19.5 for the 10,000-step checkpoint of the longer run: that 0.6 dB
+is how far two identical-setting runs differ.
+
+**Resuming a finished run to train further does not work** with the pinned
+nerfstudio 1.1.5 (`ns-train splatfacto ... --load-dir`). The trainer builds its
+optimizers before the checkpoint is loaded, and splatfacto's loader then
+replaces every gaussian parameter with a new tensor sized to the checkpoint, so
+the optimizers still hold the old ones. Resuming after any densification
+therefore crashes in gsplat's `duplicate()` at the first densification step
+(`device-side assert`, an index out of bounds). Seen 2026-10-05 resuming a
+10,000-step run. If you need more steps, retrain to the larger count.
+
+**What a checkpoint costs.** About 740 bytes per gaussian: 300,000 gaussians is
+about 220 MB (80 MB of model, 140 MB of optimizer state). Writing one takes
+about 0.2 to 0.3 seconds on ext4, so 12 checkpoints in a 30,000-step run add a
+few seconds to roughly 10 minutes of training. The cost that matters is disk:
+12 checkpoints of a 300,000-gaussian scene is about 2.6 GB per run, and it
+scales with the gaussian count, so a scene of a million gaussians is about
+740 MB per checkpoint. Delete the checkpoints you no longer need after
+exporting, or set `save_only_latest_checkpoint = true` when you will not
+compare step counts. Lower `steps_per_save` only for short exploratory runs
+where the early steps are the question.
+
 ## 6. Check it actually worked
 
 **Do not judge quality by gaussian count.** On data where the subject fills a

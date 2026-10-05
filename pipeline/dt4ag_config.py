@@ -335,6 +335,8 @@ class Dt4agConfig:
     # [train]
     train_method: str
     max_num_iterations: int
+    steps_per_save: int
+    save_only_latest_checkpoint: bool
     downscale_factor: int
     use_scale_regularization: bool
     background_color: str
@@ -716,6 +718,8 @@ class Dt4agConfig:
             f"scene_type         : {self.scene_type}",
             f"train_method       : {self.train_method}",
             f"max_num_iterations : {self.max_num_iterations}",
+            f"steps_per_save     : {self.steps_per_save} "
+            f"({'newest only' if self.save_only_latest_checkpoint else 'all kept'})",
             f"export_format      : {self.export_format}",
             f"export_3dgs        : {self.export_3dgs}",
         ]
@@ -983,6 +987,22 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"key 'max_num_iterations' in section [train] of config file {source} "
             f"must be positive, got {max_num_iterations}"
         )
+    # Checkpoints are the only way to see a run at an earlier step: resuming
+    # from one is NOT possible with nerfstudio 1.1.5 splatfacto (its optimizers
+    # are built before the checkpoint replaces the gaussian parameters, so a
+    # resume that follows any densification crashes in gsplat's duplicate()),
+    # so training once to the largest step count of interest and exporting the
+    # checkpoints along the way is how several step counts are compared without
+    # retraining. nerfstudio's own default (2000, newest only) throws that away.
+    steps_per_save = _get_int(parser, "train", "steps_per_save", source, 2500)
+    if steps_per_save <= 0:
+        raise ConfigError(
+            f"key 'steps_per_save' in section [train] of config file {source} "
+            f"must be positive, got {steps_per_save}"
+        )
+    save_only_latest_checkpoint = _get_bool(
+        parser, "train", "save_only_latest_checkpoint", source, False
+    )
     # 0 means "let nerfstudio choose", which it does by probing the downscale
     # pyramid on disk. Pinning it makes the training resolution a recorded
     # input of the run rather than a property of which files happen to be
@@ -1048,6 +1068,8 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         colmap_model_path=colmap_model_path,
         train_method=train_method,
         max_num_iterations=max_num_iterations,
+        steps_per_save=steps_per_save,
+        save_only_latest_checkpoint=save_only_latest_checkpoint,
         downscale_factor=downscale_factor,
         use_scale_regularization=use_scale_regularization,
         background_color=background_color,

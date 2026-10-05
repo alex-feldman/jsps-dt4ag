@@ -356,6 +356,11 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         "--viewer.quit-on-train-completion", str(cfg.quit_on_train_completion),
         "--max-num-iterations", str(cfg.max_num_iterations),
         "--logging.local-writer.max-log-size", str(cfg.max_log_size),
+        # Both are TrainerConfig fields, so every nerfstudio method accepts
+        # them. Without them nerfstudio saves every 2000 steps and DELETES all
+        # but the newest, which leaves nothing to export an earlier step from.
+        "--steps-per-save", str(cfg.steps_per_save),
+        "--save-only-latest-checkpoint", str(cfg.save_only_latest_checkpoint),
     ]
     # Left off entirely when 0, so nerfstudio keeps choosing for itself and
     # configs written before this key behave exactly as they did.

@@ -343,8 +343,17 @@ class TestCommands(TempTreeTestCase):
                 "--viewer.quit-on-train-completion", "True",
                 "--max-num-iterations", "500",
                 "--logging.local-writer.max-log-size", "0",
+                "--steps-per-save", "2500",
+                "--save-only-latest-checkpoint", "False",
             ],
         )
+
+    def test_train_command_keeps_a_checkpoint_every_2500_steps_by_default(self):
+        """nerfstudio's own default deletes all but the newest; that is the trap."""
+        command = train_command(make_config(self.root), self.root / "ws")
+        self.assertEqual(command[command.index("--steps-per-save") + 1], "2500")
+        self.assertEqual(
+            command[command.index("--save-only-latest-checkpoint") + 1], "False")
 
     def test_export_filename_records_the_run_provenance(self):
         """The leading component is the CAPTURE, not the collection above it."""

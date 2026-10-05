@@ -186,6 +186,8 @@ class TestHappyPath(TempDirTestCase):
         # [train]
         self.assertEqual(cfg.train_method, "splatfacto")
         self.assertEqual(cfg.max_num_iterations, 30000)
+        self.assertEqual(cfg.steps_per_save, 2500)
+        self.assertFalse(cfg.save_only_latest_checkpoint)
         self.assertTrue(cfg.use_scale_regularization)
         self.assertEqual(cfg.background_color, "random")
         self.assertFalse(cfg.quit_on_train_completion)
@@ -370,6 +372,22 @@ class TestFailureModes(TempDirTestCase):
                 message = self.assertConfigError(
                     fixture.path, "max_num_iterations", "train", fixture.path)
                 self.assertIn("positive", message)
+
+    def test_non_positive_steps_per_save(self):
+        for value in ("0", "-2500"):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(
+                    self.tmp, extra={"train": {"steps_per_save": value}})
+                message = self.assertConfigError(
+                    fixture.path, "steps_per_save", "train", fixture.path)
+                self.assertIn("positive", message)
+
+    def test_checkpoint_keys_can_be_overridden(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"steps_per_save": "1000", "save_only_latest_checkpoint": "true"}})
+        cfg = fixture.load()
+        self.assertEqual(cfg.steps_per_save, 1000)
+        self.assertTrue(cfg.save_only_latest_checkpoint)
 
     def test_video_scene_type_requires_a_video_path(self):
         fixture = ConfigFixture(self.tmp, extra={"nerfstudio": {"scene_type": "video"}})

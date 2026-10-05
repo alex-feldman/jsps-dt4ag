@@ -18,6 +18,32 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- **`[train] steps_per_save` and `save_only_latest_checkpoint`: a checkpoint
+  every 2500 steps, all kept, by default.** nerfstudio saves every 2000 steps and
+  deletes all but the newest, which leaves nothing to export an earlier step
+  from, so comparing step counts meant one full training run per count.
+  Training once to the largest count and exporting the checkpoints on the way is
+  equivalent, because splatfacto's schedules do not depend on
+  `max_num_iterations` (learning-rate decay is fixed at 30,000 steps,
+  densification stops at 15,000). Both keys are passed to `ns-train` as
+  `--steps-per-save` and `--save-only-latest-checkpoint`, and both are
+  TrainerConfig fields, so every method accepts them.
+
+  Measured 2026-10-05 on a 24-photo capture: a checkpoint is about 740 bytes per
+  gaussian (300,000 gaussians: ~220 MB) and writes in 0.2 to 0.3 seconds, so
+  the cost is disk and not time. `save_only_latest_checkpoint = true` restores
+  the old behavior. QUICKSTART "Several step counts from one run" has the export
+  recipe (`ns-export` has no step option; a copy of `config.yml` with
+  `load_step` set does it).
+
+  **Documented alongside it, because it is the obvious next thing to try:
+  resuming a finished run (`ns-train splatfacto --load-dir`) does not work on the
+  pinned nerfstudio 1.1.5.** The trainer builds its optimizers before the
+  checkpoint loads and splatfacto's loader then replaces every gaussian
+  parameter, so the optimizers hold stale tensors and the first densification
+  step crashes in gsplat's `duplicate()` (index out of bounds). Reproduced twice,
+  with `CUDA_LAUNCH_BLOCKING=1` to place the fault.
+
 - **Every run freezes its config** at `<data_root>/configs/runs/<run-id>.ini`:
   the config file verbatim, plus a `[run-record]` section holding what resolves
   only at run time (run id, resolved input/workspace/output paths, and the

@@ -200,6 +200,8 @@ Feeds `ns-train`.
 |---|---|---|---|
 | `method` | no | `splatfacto` | The nerfstudio method name. |
 | `max_num_iterations` | no | `30000` | `--max-num-iterations`. Must be positive. |
+| `steps_per_save` | no | `2500` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. nerfstudio's own default is 2000. |
+| `save_only_latest_checkpoint` | no | `false` | `--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest. |
 | `use_scale_regularization` | no | `true` | `--pipeline.model.use-scale-regularization`. |
 | `background_color` | no | `random` | `--pipeline.model.background-color`. |
 | `quit_on_train_completion` | no | `false` | `--viewer.quit-on-train-completion`. |
