@@ -38,15 +38,24 @@ That is not hypothetical. On 2026-08-21 the five `tomato-2512*.ini` configs went
 from `max_num_iterations = 10000` to `30000`, and the settings behind the
 2026-08-18 runs survive now only in the per-run `config.yml` nerfstudio wrote.
 
-**The pipeline now handles this for every run it executes.** Each run writes
-`<data_root>/configs/runs/<run-id>.ini`: this config file verbatim, plus a
-`[run-record]` section holding what only resolves at run time, including the
-pipeline's git commit. `[run-record]` is an unknown section, so the loader
-ignores it and the archived file is still a runnable config:
+**The pipeline now handles this for every invocation it executes.** Each one writes
+`<data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini`: this config file verbatim,
+plus a `[run-record]` section holding what only resolves at run time, including the
+pipeline's git commit, the stages that ran, the eval mode and the checkpoint
+settings. `[run-record]` is an unknown section, so the loader ignores it and the
+archived file is still a runnable config:
 
 ```bash
-uv run python pipeline/run_pipeline.py --config <data_root>/configs/runs/<run-id>.ini
+uv run python pipeline/run_pipeline.py --config <data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini
 ```
+
+**The name carries the moment because one run id can be trained more than once.**
+Training twice on one COLMAP workspace (an `eval_mode = all` run and a held-out
+run, which must share their camera poses) reuses the run id, and until 2026-10-05
+the archive was named for the bare run id, so the second training overwrote the
+first one's record. Nothing is ever overwritten now, and a timestamp cannot clash
+across two machines the way a counter would. Files written before then keep their
+bare `<run-id>.ini` names and are still valid records.
 
 That reproduces the configuration, though it derives a NEW run id unless you
 pin `[run] date` and `run_count` to the values the record carries.
@@ -202,6 +211,9 @@ Feeds `ns-train`.
 | `max_num_iterations` | no | `30000` | `--max-num-iterations`. Must be positive. |
 | `steps_per_save` | no | `2500` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. nerfstudio's own default is 2000. |
 | `save_only_latest_checkpoint` | no | `false` | `--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest. |
+| `eval_mode` | no | `fraction` | Which photographs train: `fraction` holds a share out for `ns-eval`, `interval` holds out every n-th, `all` trains on every photograph (and `ns-eval` then scores fit on photographs it trained on, not generalization). Passed as `nerfstudio-data --eval-mode`, always, so the training set is stated and not inherited. `filename` mode is not offered. |
+| `train_split_fraction` | no | `0.9` | Share of photographs that train, when `eval_mode = fraction`. Must be above 0 and below 1: 1.0 holds nothing out and makes `ns-eval` crash, so use `eval_mode = all` for that. The run also refuses to start if the fraction would hold out 0 of the registered photographs. |
+| `eval_interval` | no | `8` | Every n-th photograph is held out, when `eval_mode = interval`. At least 2. |
 | `use_scale_regularization` | no | `true` | `--pipeline.model.use-scale-regularization`. |
 | `background_color` | no | `random` | `--pipeline.model.background-color`. |
 | `quit_on_train_completion` | no | `false` | `--viewer.quit-on-train-completion`. |
@@ -214,6 +226,7 @@ Feeds `ns-export` and the optional point-cloud conversion.
 | Key | Required | Default | Controls |
 |---|---|---|---|
 | `format` | no | `gaussian-splat` | The `ns-export` subcommand. |
+| `checkpoint_interval` | no | `0` | Export every checkpoint whose step is a multiple of this, plus the final one. `0` exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only. |
 | `env_label` | no | `env` | Free-text label baked into the export filename to record which environment produced it. Was the hardcoded `conda_env_name`. |
 | `platform_label` | no | the running platform | Second label in the export filename. |
 | `export_3dgs` | no | `false` | Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x. |
@@ -222,7 +235,7 @@ Feeds `ns-export` and the optional point-cloud conversion.
 Export filenames are built as (`export_filename` in `run_pipeline.py`)
 
 ```
-<capture>_<run_id>_splat_<platform_label>_<env_label>_<x>steps_from<y>run[_dsN]_<colmap data_type>.ply
+<capture>_<run_id>_splat_<platform_label>_<env_label>_<x>steps_from<y>run_<eval token>[_dsN]_<colmap data_type>.ply
 ```
 
 `<capture>` is `capture_rel`'s last component, so it names the capture under
@@ -230,12 +243,19 @@ both layouts. `dsN` appears whenever the effective downscale factor is known,
 which is what stops two resolutions of one capture overwriting each other.
 
 `<x>steps_from<y>run` is always written in full: `x` is the number of training
-steps the exported checkpoint holds and `y` is the run's `max_num_iterations`. The
-pipeline exports a run's final checkpoint, so it writes both as the same number
-(`10000steps_from10000run`). A file exported by hand from an earlier checkpoint of
-a longer run carries the pair that tells them apart (`10000steps_from20000run`),
-so it cannot be mistaken for a run that was configured to stop at 10000. Before
-2026-10-05 the name carried only `<iterations>steps`.
+steps the exported checkpoint holds and `y` is the run's `max_num_iterations`. A
+run's final checkpoint reads `30000steps_from30000run` (the final checkpoint file
+is named one step lower, `step-000029999`, but holds all 30,000 steps); an earlier
+checkpoint exported with `checkpoint_interval` reads `10000steps_from30000run`, so
+it cannot be mistaken for a run that was configured to stop at 10000.
+
+`<eval token>` says which photographs the run trained on, and is always present:
+`evalall` (every photograph), `evalfrac90` (`fraction`, 90% train; a fraction is
+written as a percentage, with `p` for a decimal point, so 0.925 is `evalfrac92p5`)
+or `evalint8` (`interval`, every 8th held out). It is read from the exported run's
+own `config.yml`, which records what training actually did, and not from the INI,
+which may have been edited since. If the two disagree the run says so and names the
+file by the run. Before 2026-10-05 the name carried only `<iterations>steps`.
 
 ## Validation behaviour
 

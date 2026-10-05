@@ -18,17 +18,54 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
-- **Export filenames now carry `{x}steps_from{y}run` in every case**, replacing
-  the single `{iterations}steps` component: `x` is the training steps the
-  exported checkpoint holds, `y` the run's `max_num_iterations`. A pipeline
-  export is always the final checkpoint, so it reads `10000steps_from10000run`.
+- **Export filenames now carry `{x}steps_from{y}run` and an eval-mode token in
+  every case**, replacing the single `{iterations}steps` component: `x` is the
+  training steps the exported checkpoint holds, `y` the run's
+  `max_num_iterations`, and the token (`evalall`, `evalfrac90`, `evalint8`) says
+  which photographs the run trained on, read from the exported run's own
+  `config.yml` so it records what training did and not what the INI says now. A
+  finished run's final checkpoint reads `30000steps_from30000run_evalall`.
   Anything that matches the old `_{N}steps_` token in a filename must be updated;
-  nothing in this repository did. The reason is the new per-checkpoint export:
-  a file exported from step 10,000 of a 20,000-step run
-  (`10000steps_from20000run`) must not look like a run configured to stop at
-  10,000, even though the two are equivalent training.
+  nothing in this repository did. The reason is the per-checkpoint export: a file
+  from step 10,000 of a 30,000-step run (`10000steps_from30000run`) must not look
+  like a run configured to stop at 10,000, and two runs of one COLMAP workspace
+  that differ only in which photographs were held out must not share a name.
+
+- **The per-run config archive is now `{run-id}_{yymmdd-HHMMSS}.ini`, one file
+  per invocation, never overwritten.** It was the bare `{run-id}.ini`, so training
+  a second time on one run id (an `eval_mode = all` run and a held-out run share a
+  COLMAP workspace, hence a run id) overwrote the first training's record. A
+  timestamp cannot clash across machines the way a counter would. Files written
+  before keep their bare names and remain valid; `recover-run-configs.py` treats
+  either form as already archived. `[run-record]` now also carries `stages`,
+  `eval_mode`, `steps_per_save` and `checkpoint_interval`.
+
+- **`ns-train` now always receives `nerfstudio-data --eval-mode ...`** (and the
+  matching fraction or interval), so which photographs a run trained on is
+  stated, not inherited from nerfstudio's default.
 
 ### Added
+
+- **`[train] eval_mode`, `train_split_fraction`, `eval_interval`.** `fraction`
+  (default, 0.9) holds a share out for `ns-eval`, `interval` holds out every
+  n-th, `all` trains on every photograph (and `ns-eval` then scores fit on
+  photographs it trained on, not generalization). Refused at load: `fraction` of
+  1.0 or outside (0, 1), which would hold nothing out and make `ns-eval` crash
+  (use `all`), and `interval` below 2. The train stage also counts the
+  photographs COLMAP registered, logs how many train and how many are held out,
+  and refuses to start training that would hold out none under a held-out mode.
+  `run-log.csv` gained an `eval_mode` column (an existing log is widened in place
+  with a `.bak`).
+
+- **`[export] checkpoint_interval`: export every checkpoint that is a multiple of
+  it, plus the final one.** `0` (default) is the final checkpoint only. Must be a
+  multiple of `steps_per_save` and cannot be combined with
+  `save_only_latest_checkpoint = true`. For each earlier checkpoint the export
+  stage writes a sibling `config-step-{N}.yml` with `load_step` set (the original
+  `config.yml` is never changed), runs `ns-export` and verifies the file as before.
+  Exercised end to end with a 300-step run saving and exporting every 100 steps:
+  three distinct PLYs. The point-cloud conversion still runs for the final
+  checkpoint only.
 
 - **`[train] steps_per_save` and `save_only_latest_checkpoint`: a checkpoint
   every 2500 steps, all kept, by default.** nerfstudio saves every 2000 steps and

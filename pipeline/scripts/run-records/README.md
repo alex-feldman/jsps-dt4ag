@@ -3,7 +3,10 @@
 Tools for the per-run config archive under `<data_root>/configs/runs/`.
 
 Every run since 2026-08-21 freezes its own config there, written by the pipeline
-(`archive_run_config` in `dt4ag_config.py`). Runs before that froze nothing,
+(`archive_run_config` in `dt4ag_config.py`), as `<run-id>_<yymmdd-HHMMSS>.ini`, one
+per invocation and never overwritten (before 2026-10-05 the bare `<run-id>.ini`;
+those files are still valid, and the recovery tool below treats either form as
+"already archived"). Runs before 2026-08-21 froze nothing,
 because nothing did. These tools put the real config of an already-executed run
 into the same place, where it can be proved to be the real one.
 

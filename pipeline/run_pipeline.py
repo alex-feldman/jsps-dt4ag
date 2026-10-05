@@ -47,7 +47,9 @@ if str(PIPELINE_DIR) not in sys.path:
 from dt4ag_config import (  # noqa: E402
     ConfigError,
     Dt4agConfig,
+    eval_token,
     find_config,
+    held_out_count,
     load_config,
     read_capture_metadata,
 )
@@ -59,6 +61,11 @@ __all__ = [
     "parse_args",
     "resolve_stages",
     "discover_checkpoint",
+    "list_checkpoints",
+    "select_checkpoints",
+    "checkpoint_steps_label",
+    "config_for_step",
+    "read_run_eval_token",
     "colmap_command",
     "process_command",
     "train_command",
@@ -362,23 +369,32 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         "--steps-per-save", str(cfg.steps_per_save),
         "--save-only-latest-checkpoint", str(cfg.save_only_latest_checkpoint),
     ]
-    # Left off entirely when 0, so nerfstudio keeps choosing for itself and
-    # configs written before this key behave exactly as they did.
-    #
-    # The dataparser is a tyro SUBCOMMAND, not a nested config path: the flag
-    # only exists as `... nerfstudio-data --downscale-factor N`, appended after
+    # The dataparser is a tyro SUBCOMMAND, not a nested config path: its flags
+    # only exist as `... nerfstudio-data --eval-mode M ...`, appended after
     # every option of the parent command. `--pipeline.datamanager.dataparser.
-    # downscale-factor` looks right, matches how config.yml nests it, and is
-    # rejected as an unrecognized option.
+    # eval-mode` looks right, matches how config.yml nests it, and is rejected
+    # as an unrecognized option.
+    #
+    # The eval mode is ALWAYS passed, even at its default, so which photographs
+    # a run trained on is stated rather than inherited from nerfstudio's
+    # default (and so the exact command is the record). `fraction` takes
+    # --train-split-fraction, `interval` takes --eval-interval, `all` takes
+    # neither.
+    #
+    # --downscale-factor is left off entirely when 0, so nerfstudio keeps
+    # choosing for itself and configs written before that key behave exactly as
+    # they did.
     #
     # `nerfstudio-data` is also the default subcommand, and it is what a
     # workspace with a transforms.json resolves to anyway, so naming it changes
     # nothing else about the run.
+    command += ["nerfstudio-data", "--eval-mode", cfg.eval_mode]
+    if cfg.eval_mode == "fraction":
+        command += ["--train-split-fraction", f"{cfg.train_split_fraction:g}"]
+    elif cfg.eval_mode == "interval":
+        command += ["--eval-interval", str(cfg.eval_interval)]
     if cfg.downscale_factor:
-        command += [
-            "nerfstudio-data",
-            "--downscale-factor", str(cfg.downscale_factor),
-        ]
+        command += ["--downscale-factor", str(cfg.downscale_factor)]
     return command
 
 
@@ -434,7 +450,13 @@ def resolve_downscale_factor(cfg: Dt4agConfig, workspace: Path) -> int:
     return 2 ** exponent
 
 
-def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) -> str:
+def export_filename(
+    cfg: Dt4agConfig,
+    run_id: str,
+    downscale_factor: int = 0,
+    checkpoint_steps: Optional[int] = None,
+    trained_eval_token: Optional[str] = None,
+) -> str:
     """The notebook's export filename: the run's whole provenance in one name.
 
     ``downscale_factor`` joined the name on 2026-08-17. Without it, the same
@@ -448,20 +470,27 @@ def export_filename(cfg: Dt4agConfig, run_id: str, downscale_factor: int = 0) ->
     names the collection, so every capture in a collection shared a prefix.
 
     The steps component is ALWAYS ``{x}steps_from{y}run``: ``x`` the training
-    steps the exported checkpoint holds, ``y`` the run's ``max_num_iterations``.
-    This function exports the run's final checkpoint, so here both are the same
-    number (``10000steps_from10000run``). The pair exists so that a file made
-    from an EARLIER checkpoint of a longer run (``10000steps_from20000run``,
-    see QUICKSTART "Several step counts from one run") is named by the same rule
-    and cannot be mistaken for a run that was configured to stop at 10000.
+    steps the exported checkpoint holds (``checkpoint_steps``, the run's own
+    ``max_num_iterations`` for its final checkpoint), ``y`` the run's
+    ``max_num_iterations``. A file made from an EARLIER checkpoint of a longer
+    run is ``10000steps_from30000run``, named by the same rule so it cannot be
+    mistaken for a run that was configured to stop at 10000.
+
+    The eval-mode token follows it, always: ``evalall`` for a run that trained
+    on every photograph, ``evalfrac90`` for one that held 10% out. It comes
+    from the exported run's own ``config.yml`` (``trained_eval_token``) when
+    the caller has read it, because that records what the run ACTUALLY did and
+    the INI may have been edited since; it falls back to the config's value.
     """
+    steps = cfg.max_num_iterations if checkpoint_steps is None else checkpoint_steps
     parts = [
         cfg.capture_rel.name,
         run_id,
         "splat",
         cfg.platform_label,
         cfg.env_label,
-        f"{cfg.max_num_iterations}steps_from{cfg.max_num_iterations}run",
+        f"{steps}steps_from{cfg.max_num_iterations}run",
+        trained_eval_token or cfg.eval_token(),
     ]
     if downscale_factor:
         parts.append(f"ds{downscale_factor}")
@@ -747,6 +776,107 @@ def discover_checkpoint(
 
     run_dir, checkpoint = usable[-1]
     return run_dir, run_dir / "config.yml", checkpoint
+
+
+_CHECKPOINT_RE = re.compile(r"^step-(\d+)\.ckpt$")
+
+
+def list_checkpoints(run_dir: Path) -> List[Tuple[int, Path]]:
+    """Every checkpoint in a run directory as ``(step, path)``, oldest step first.
+
+    The step is the one in the FILE NAME, which nerfstudio writes zero-padded to
+    nine digits, so it is exact for a periodic checkpoint (``step-000010000``)
+    and one below ``max_num_iterations`` for the final one (``step-000029999``):
+    the loop runs steps 0 to N-1 and saves after the last of them.
+    """
+    found: List[Tuple[int, Path]] = []
+    for path in (run_dir / "nerfstudio_models").glob("*.ckpt"):
+        match = _CHECKPOINT_RE.match(path.name)
+        if match:
+            found.append((int(match.group(1)), path))
+    return sorted(found)
+
+
+def select_checkpoints(
+    checkpoints: Sequence[Tuple[int, Path]], interval: int
+) -> List[Tuple[int, Path]]:
+    """The checkpoints to export: every multiple of ``interval``, plus the final one.
+
+    ``interval`` 0 selects the final checkpoint only. The final one is always
+    included, whether or not it lands on a multiple, because it is the run's
+    result and exporting only the intermediates would omit it.
+    """
+    if not checkpoints:
+        return []
+    final = checkpoints[-1]
+    chosen = [
+        c for c in checkpoints[:-1] if interval and c[0] > 0 and c[0] % interval == 0
+    ]
+    return chosen + [final]
+
+
+def checkpoint_steps_label(step: int, final_step: int, max_iterations: int) -> int:
+    """The ``x`` in ``{x}steps``: the training steps a checkpoint holds.
+
+    A periodic checkpoint is named for the step it was saved at. The FINAL one
+    is named one step below ``max_iterations`` (the loop's last step is N-1),
+    but it holds all N steps, so it is labelled N and a finished run's export
+    reads ``30000steps_from30000run`` rather than ``29999``.
+    """
+    if step == final_step and step + 1 == max_iterations:
+        return max_iterations
+    return step
+
+
+def config_for_step(config_yml: Path, step: int, final_step: int) -> Path:
+    """The config ``ns-export`` should load to export ``step``.
+
+    ``ns-export`` has no step option, but it honours ``load_step`` in the run's
+    ``config.yml`` (``nerfstudio/utils/eval_utils.py``, ``eval_setup``). The
+    final checkpoint needs no change (``load_step: null`` loads the newest); an
+    earlier one gets a sibling ``config-step-{step}.yml`` with that one line
+    replaced. The original is never modified.
+    """
+    if step == final_step:
+        return config_yml
+    text = config_yml.read_text(encoding="utf-8")
+    patched, count = re.subn(r"^load_step:.*$", f"load_step: {step}", text, flags=re.MULTILINE)
+    if count != 1:
+        raise StageError(
+            f"{config_yml} has {count} 'load_step:' lines, expected exactly 1, so "
+            f"it cannot be pointed at checkpoint step {step}. nerfstudio's config "
+            f"format may have changed; export that step by hand."
+        )
+    target = config_yml.with_name(f"config-step-{step}.yml")
+    target.write_text(patched, encoding="utf-8")
+    return target
+
+
+def read_run_eval_token(config_yml: Path) -> Optional[str]:
+    """The eval-mode token a training run ACTUALLY used, read from its own config.yml.
+
+    nerfstudio dumps the whole resolved config beside the checkpoints, including
+    ``eval_mode``, ``train_split_fraction`` and ``eval_interval``, so the truth
+    is on disk whatever the INI said then or says now. None when the file has no
+    ``eval_mode`` line (a method with a different dataparser).
+    """
+    try:
+        text = config_yml.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    mode = re.search(r"^\s*eval_mode:\s*(\w+)\s*$", text, flags=re.MULTILINE)
+    if not mode:
+        return None
+    fraction = re.search(r"^\s*train_split_fraction:\s*([0-9.]+)\s*$", text, flags=re.MULTILINE)
+    interval = re.search(r"^\s*eval_interval:\s*(\d+)\s*$", text, flags=re.MULTILINE)
+    try:
+        return eval_token(
+            mode.group(1),
+            float(fraction.group(1)) if fraction else 0.9,
+            int(interval.group(1)) if interval else 8,
+        )
+    except ValueError:
+        return None
 
 
 def read_ply_vertex_count(path: Path) -> Optional[int]:
@@ -1256,7 +1386,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         # configs have no other record. Never fatal: a reconstruction that
         # cannot be archived is still a reconstruction.
         try:
-            log(f"config archive    : {cfg.archive_run_config(run_id, **log_extra)}")
+            log(f"config archive    : "
+                f"{cfg.archive_run_config(run_id, stages=','.join(stages), **log_extra)}")
         except OSError as exc:
             log(f"config archive    : FAILED ({exc}); the run continues")
 
@@ -1329,6 +1460,29 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                         f"  Re-run the process stage, or set downscale_factor "
                         f"to 0 to let nerfstudio pick from what is there."
                     )
+            if not dry_run:
+                # Counted from transforms.json, which is what nerfstudio splits,
+                # not from the photographs on disk: COLMAP may not register all.
+                transforms = workspace / "transforms.json"
+                try:
+                    registered = len(json.loads(transforms.read_text())["frames"])
+                except (OSError, ValueError, KeyError):
+                    registered = 0
+                if registered:
+                    held = held_out_count(
+                        cfg.eval_mode, registered, cfg.train_split_fraction, cfg.eval_interval
+                    )
+                    log(f"training set      : {cfg.eval_token()}: "
+                        f"{registered - held} train, {held} held out of {registered}"
+                        + (" (every photograph trains; ns-eval then scores fit, not "
+                           "generalization)" if cfg.eval_mode == "all" else ""))
+                    if cfg.eval_mode != "all" and held == 0:
+                        raise StageError(
+                            f"[train] eval_mode = {cfg.eval_mode} would hold out 0 of "
+                            f"{registered} registered photographs, so ns-eval would "
+                            f"crash afterwards. Lower train_split_fraction, or set "
+                            f"eval_mode = all to train on every photograph on purpose."
+                        )
             train_started = time.time()
             if not dry_run:
                 effective_downscale = resolve_downscale_factor(cfg, workspace)
@@ -1363,21 +1517,54 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             # the train stage having set it.
             if not dry_run and not effective_downscale:
                 effective_downscale = resolve_downscale_factor(cfg, workspace)
-            filename = export_filename(cfg, run_id, effective_downscale)
-            ply = export_dir / filename
-            run_command(
-                export_command(cfg, config_yml, export_dir, filename),
-                "ns-export",
-                dry_run,
-            )
-            if not dry_run:
-                verify_export(ply, export_dir)
-                if cfg.export_3dgs:
-                    run_command(
-                        gauss_to_pc_command(cfg, ply, workspace),
-                        "gauss_to_pc",
-                        dry_run,
+
+            # Which checkpoints to export: the final one always, plus every
+            # multiple of [export] checkpoint_interval. A dry run has no run
+            # directory to list, so it shows the final export only.
+            trained_token: Optional[str] = None
+            if dry_run:
+                targets = [(None, None, config_yml, True)]
+            else:
+                trained_token = read_run_eval_token(config_yml)
+                if trained_token and trained_token != cfg.eval_token():
+                    log(f"WARNING           : this run trained as {trained_token} but "
+                        f"the config now says {cfg.eval_token()}; exported files are "
+                        f"named by what the run did")
+                checkpoints = list_checkpoints(run_dir)
+                final_step = checkpoints[-1][0]
+                targets = [
+                    (
+                        step,
+                        checkpoint_steps_label(step, final_step, cfg.max_num_iterations),
+                        config_for_step(config_yml, step, final_step),
+                        step == final_step,
                     )
+                    for step, _ in select_checkpoints(checkpoints, cfg.checkpoint_interval)
+                ]
+                log(f"exporting         : {len(targets)} checkpoint(s), steps "
+                    + ", ".join(str(label) for _, label, _, _ in targets)
+                    + (f" (every {cfg.checkpoint_interval} plus the final one)"
+                       if cfg.checkpoint_interval else " (the final one only)"))
+            for step, label, target_config, is_final in targets:
+                filename = export_filename(
+                    cfg, run_id, effective_downscale, label, trained_token
+                )
+                ply = export_dir / filename
+                run_command(
+                    export_command(cfg, target_config, export_dir, filename),
+                    "ns-export",
+                    dry_run,
+                )
+                if not dry_run:
+                    verify_export(ply, export_dir)
+                    # The point-cloud conversion inflates a file about a
+                    # thousandfold, so it runs for the final checkpoint only.
+                    if cfg.export_3dgs and is_final:
+                        run_command(
+                            gauss_to_pc_command(cfg, ply, workspace),
+                            "gauss_to_pc",
+                            dry_run,
+                        )
 
         log(f"stage {stage}: done in {format_elapsed(time.time() - stage_start)}")
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import csv
+import glob
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -182,7 +183,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     for run_id in sorted(rows):
         destination = archive / f"{run_id}.ini"
-        if destination.is_file():
+        # Since 2026-10-05 the pipeline writes `<run-id>_<yymmdd-HHMMSS>.ini`,
+        # one per invocation; before that, the bare `<run-id>.ini`. Either one
+        # means the run is already archived.
+        timestamped = (list(archive.glob(f"{glob.escape(run_id)}_??????-??????*.ini"))
+                       if archive.is_dir() else [])
+        if destination.is_file() or timestamped:
             already.append(run_id)
             continue
         config_path = resolve_config(rows[run_id].get("config_file", ""), args.repo_root)

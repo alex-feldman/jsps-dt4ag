@@ -345,8 +345,26 @@ class TestCommands(TempTreeTestCase):
                 "--logging.local-writer.max-log-size", "0",
                 "--steps-per-save", "2500",
                 "--save-only-latest-checkpoint", "False",
+                "nerfstudio-data",
+                "--eval-mode", "fraction",
+                "--train-split-fraction", "0.9",
             ],
         )
+
+    def test_train_command_passes_the_eval_mode_explicitly(self):
+        """Which photographs train is stated, never inherited from nerfstudio."""
+        root = self.root
+        for extra, tail in (
+            ("eval_mode = all", ["--eval-mode", "all"]),
+            ("eval_mode = interval\neval_interval = 4",
+             ["--eval-mode", "interval", "--eval-interval", "4"]),
+            ("eval_mode = fraction\ntrain_split_fraction = 0.75",
+             ["--eval-mode", "fraction", "--train-split-fraction", "0.75"]),
+        ):
+            with self.subTest(extra=extra):
+                command = train_command(make_config(root, train_extra=extra), root / "ws")
+                at = command.index("nerfstudio-data")
+                self.assertEqual(command[at + 1:], tail)
 
     def test_train_command_keeps_a_checkpoint_every_2500_steps_by_default(self):
         """nerfstudio's own default deletes all but the newest; that is the trap."""
@@ -360,7 +378,7 @@ class TestCommands(TempTreeTestCase):
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120"),
-            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_evalfrac90_individual.ply",
         )
 
     def test_export_filename_always_names_checkpoint_steps_and_run_length(self):
@@ -368,13 +386,28 @@ class TestCommands(TempTreeTestCase):
         run (250steps_from500run) is named by the same rule as a finished run."""
         cfg = make_config(self.root)
         self.assertIn("_500steps_from500run_", export_filename(cfg, "run_260101-03-3120"))
+        self.assertIn(
+            "_250steps_from500run_",
+            export_filename(cfg, "run_260101-03-3120", checkpoint_steps=250),
+        )
+
+    def test_export_filename_always_carries_the_eval_mode_token(self):
+        cfg = make_config(self.root, train_extra="eval_mode = all")
+        self.assertIn("_500steps_from500run_evalall_", export_filename(cfg, "r-1-3120"))
+
+    def test_the_run_own_eval_mode_beats_the_configs(self):
+        """The INI may have been edited since training; the file says what happened."""
+        cfg = make_config(self.root)  # fraction 0.9
+        name = export_filename(cfg, "r-1-3120", trained_eval_token="evalall")
+        self.assertIn("_evalall_", name)
+        self.assertNotIn("evalfrac90", name)
 
     def test_export_filename_carries_the_resolution_when_known(self):
         """Two resolutions of one dataset must not collide on one filename."""
         cfg = make_config(self.root)
         self.assertEqual(
             export_filename(cfg, "run_260101-03-3120", 2),
-            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_ds2_individual.ply",
+            "session-001_run_260101-03-3120_splat_ubuntu_my-env_500steps_from500run_evalfrac90_ds2_individual.ply",
         )
         self.assertNotEqual(
             export_filename(cfg, "run_260101-03-3120", 2),
@@ -814,13 +847,10 @@ class MaskSupportTests(TempTreeTestCase):
 
 
 class DownscaleFactorTests(TempTreeTestCase):
-    def test_zero_leaves_the_flag_off_entirely(self):
+    def test_zero_leaves_the_downscale_flag_off_entirely(self):
         cfg = make_config(self.root)
         self.assertEqual(cfg.downscale_factor, 0)
-        self.assertNotIn(
-            "nerfstudio-data",
-            train_command(cfg, self.root / "ws"),
-        )
+        self.assertNotIn("--downscale-factor", train_command(cfg, self.root / "ws"))
 
     def test_a_pinned_factor_is_passed_through(self):
         cfg = make_config(self.root, train_extra="downscale_factor = 4")
@@ -829,7 +859,8 @@ class DownscaleFactorTests(TempTreeTestCase):
         # options, not a nested config path. Asserting the tail catches a
         # regression to the plausible-but-rejected --pipeline.datamanager.
         # dataparser.downscale-factor form.
-        self.assertEqual(command[-3:], ["nerfstudio-data", "--downscale-factor", "4"])
+        self.assertEqual(command[-2:], ["--downscale-factor", "4"])
+        self.assertLess(command.index("nerfstudio-data"), command.index("--downscale-factor"))
 
     def test_non_power_of_two_is_rejected(self):
         with self.assertRaises(Exception):
@@ -970,6 +1001,110 @@ class DownscalePyramidTests(unittest.TestCase):
             run_pipeline.MAX_AUTO_RESOLUTION,
             nerfstudio_dataparser.MAX_AUTO_RESOLUTION,
         )
+
+
+class TestEvalMode(unittest.TestCase):
+    """The train/eval split vocabulary: tokens, held-out counts, reading a run's own."""
+
+    def test_tokens(self):
+        from dt4ag_config import eval_token
+        self.assertEqual(eval_token("all"), "evalall")
+        self.assertEqual(eval_token("fraction", 0.9), "evalfrac90")
+        self.assertEqual(eval_token("fraction", 0.925), "evalfrac92p5")
+        self.assertEqual(eval_token("interval", interval=8), "evalint8")
+        with self.assertRaises(ValueError):
+            eval_token("filename")
+
+    def test_distinct_fractions_never_share_a_token(self):
+        from dt4ag_config import eval_token
+        fractions = [0.5, 0.75, 0.9, 0.925, 0.95, 0.99]
+        tokens = {eval_token("fraction", f) for f in fractions}
+        self.assertEqual(len(tokens), len(fractions))
+
+    def test_held_out_counts_match_nerfstudios_split(self):
+        """Verified against nerfstudio 1.1.5 on 24 photographs (2 held out)."""
+        from dt4ag_config import held_out_count
+        self.assertEqual(held_out_count("fraction", 24, 0.9), 2)
+        self.assertEqual(held_out_count("fraction", 24, 0.05), 22)
+        self.assertEqual(held_out_count("fraction", 24, 0.99), 0)
+        self.assertEqual(held_out_count("interval", 24, interval=8), 3)
+        self.assertEqual(held_out_count("interval", 24, interval=100), 1)
+        self.assertEqual(held_out_count("all", 24), 0)
+
+    def test_read_the_eval_mode_a_run_actually_used(self):
+        import tempfile
+        text = (
+            "load_step: null\n"
+            "pipeline:\n  datamanager:\n    dataparser:\n"
+            "      eval_interval: 8\n      eval_mode: all\n      train_split_fraction: 0.9\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yml"
+            path.write_text(text)
+            self.assertEqual(run_pipeline.read_run_eval_token(path), "evalall")
+            path.write_text(text.replace("eval_mode: all", "eval_mode: fraction"))
+            self.assertEqual(run_pipeline.read_run_eval_token(path), "evalfrac90")
+            path.write_text("load_step: null\n")
+            self.assertIsNone(run_pipeline.read_run_eval_token(path))
+            self.assertIsNone(run_pipeline.read_run_eval_token(Path(tmp) / "missing.yml"))
+
+
+class TestCheckpointExport(TempTreeTestCase):
+    """Exporting several checkpoints of one run."""
+
+    def _run_dir(self, steps):
+        run_dir = self.root / "run"
+        (run_dir / "nerfstudio_models").mkdir(parents=True)
+        for step in steps:
+            (run_dir / "nerfstudio_models" / f"step-{step:09d}.ckpt").write_bytes(b"x")
+        (run_dir / "config.yml").write_text("a: 1\nload_step: null\nb: 2\n")
+        return run_dir
+
+    def test_lists_checkpoints_in_step_order_ignoring_other_files(self):
+        run_dir = self._run_dir([10000, 2500, 5000, 29999])
+        (run_dir / "nerfstudio_models" / "notes.txt").write_text("")
+        self.assertEqual(
+            [s for s, _ in run_pipeline.list_checkpoints(run_dir)],
+            [2500, 5000, 10000, 29999])
+
+    def test_interval_selects_multiples_plus_the_final_checkpoint(self):
+        run_dir = self._run_dir([2500, 5000, 7500, 29999])
+        found = run_pipeline.list_checkpoints(run_dir)
+        self.assertEqual([s for s, _ in run_pipeline.select_checkpoints(found, 5000)],
+                         [5000, 29999])
+        self.assertEqual([s for s, _ in run_pipeline.select_checkpoints(found, 2500)],
+                         [2500, 5000, 7500, 29999])
+
+    def test_interval_zero_selects_the_final_checkpoint_only(self):
+        found = run_pipeline.list_checkpoints(self._run_dir([2500, 5000, 29999]))
+        self.assertEqual([s for s, _ in run_pipeline.select_checkpoints(found, 0)], [29999])
+
+    def test_the_final_checkpoint_is_labelled_with_the_full_step_count(self):
+        label = run_pipeline.checkpoint_steps_label
+        self.assertEqual(label(29999, 29999, 30000), 30000)
+        self.assertEqual(label(27500, 29999, 30000), 27500)
+        # A run that stopped early keeps the step it actually reached.
+        self.assertEqual(label(12500, 12500, 30000), 12500)
+
+    def test_an_earlier_step_gets_a_config_copy_with_load_step_set(self):
+        run_dir = self._run_dir([2500, 29999])
+        config = run_dir / "config.yml"
+        original = config.read_text()
+        copy = run_pipeline.config_for_step(config, 2500, 29999)
+        self.assertEqual(copy.name, "config-step-2500.yml")
+        self.assertEqual(copy.read_text(), "a: 1\nload_step: 2500\nb: 2\n")
+        self.assertEqual(config.read_text(), original)
+
+    def test_the_final_step_uses_the_original_config(self):
+        run_dir = self._run_dir([29999])
+        config = run_dir / "config.yml"
+        self.assertEqual(run_pipeline.config_for_step(config, 29999, 29999), config)
+
+    def test_a_config_without_exactly_one_load_step_line_is_refused(self):
+        run_dir = self._run_dir([2500, 29999])
+        (run_dir / "config.yml").write_text("a: 1\n")
+        with self.assertRaises(StageError):
+            run_pipeline.config_for_step(run_dir / "config.yml", 2500, 29999)
 
 
 if __name__ == "__main__":

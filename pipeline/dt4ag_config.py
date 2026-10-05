@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import math
 import os
 import re
 import shutil
@@ -221,6 +222,59 @@ def _get_bool(
     )
 
 
+def _archive_stamp() -> str:
+    """The ``yymmdd-HHMMSS`` suffix of a config archive file (a seam for tests)."""
+    return _dt.datetime.now().strftime("%y%m%d-%H%M%S")
+
+
+# --------------------------------------------------------------------------
+# train/eval split: which photographs a run trained on
+# --------------------------------------------------------------------------
+
+#: nerfstudio's dataparser `--eval-mode` values this pipeline exposes. `filename`
+#: is deliberately absent: it needs photographs renamed to contain "train" or
+#: "eval", which the pipeline's staging would have to know about.
+EVAL_MODES = ("fraction", "interval", "all")
+
+
+def eval_token(mode: str, fraction: float = 0.9, interval: int = 8) -> str:
+    """The filename-safe name of an eval mode: ``evalall``, ``evalfrac90``, ``evalint8``.
+
+    Written into every export filename, because two runs of one COLMAP workspace
+    that differ only in which photographs were held out produce files that
+    differ in nothing else, and "which one trained on everything" is not
+    recoverable from the bytes. A fraction is written as a percentage, with
+    ``p`` for a decimal point (0.925 -> ``evalfrac92p5``) so no two fractions
+    share a token.
+    """
+    if mode == "all":
+        return "evalall"
+    if mode == "interval":
+        return f"evalint{interval}"
+    if mode == "fraction":
+        return "evalfrac" + f"{fraction * 100:g}".replace(".", "p")
+    raise ValueError(f"unknown eval mode {mode!r}")
+
+
+def held_out_count(mode: str, photographs: int, fraction: float = 0.9, interval: int = 8) -> int:
+    """How many photographs nerfstudio's dataparser will hold out, for ``photographs`` frames.
+
+    Mirrors ``nerfstudio/data/utils/dataparsers_utils.py`` (1.1.5):
+    ``fraction`` holds out ``N - ceil(N x fraction)``, ``interval`` holds out
+    every ``interval``-th frame starting at the first, and ``all`` holds out
+    none (it evaluates on the training photographs). The pipeline checks this
+    BEFORE training because zero held out with ``fraction`` makes ``ns-eval``
+    crash afterwards, and an hour of training should not end there.
+    """
+    if mode == "all":
+        return 0
+    if mode == "interval":
+        return len(range(0, photographs, interval))
+    if mode == "fraction":
+        return photographs - math.ceil(photographs * fraction)
+    raise ValueError(f"unknown eval mode {mode!r}")
+
+
 # --------------------------------------------------------------------------
 # COLMAP version detection
 # --------------------------------------------------------------------------
@@ -337,6 +391,9 @@ class Dt4agConfig:
     max_num_iterations: int
     steps_per_save: int
     save_only_latest_checkpoint: bool
+    eval_mode: str
+    train_split_fraction: float
+    eval_interval: int
     downscale_factor: int
     use_scale_regularization: bool
     background_color: str
@@ -345,6 +402,7 @@ class Dt4agConfig:
 
     # [export]
     export_format: str
+    checkpoint_interval: int
     env_label: str
     platform_label: str
     export_3dgs: bool
@@ -529,6 +587,10 @@ class Dt4agConfig:
         self._resolved_run_id = f"{self.run_id_prefix}_{date}-{count}-{version}"
         return self._resolved_run_id
 
+    def eval_token(self) -> str:
+        """This config's eval mode as the filename token (``evalall``, ``evalfrac90``)."""
+        return eval_token(self.eval_mode, self.train_split_fraction, self.eval_interval)
+
     # -- config archive ----------------------------------------------------
 
     @property
@@ -542,7 +604,15 @@ class Dt4agConfig:
         return self.data_root / "configs" / "runs"
 
     def archive_run_config(self, run_id: str, **extra: object) -> Path:
-        """Freeze this run's config at ``<data_root>/configs/runs/<run-id>.ini``.
+        """Freeze this run's config at ``<data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini``.
+
+        One file per INVOCATION, never overwritten. Until 2026-10-05 the name
+        was the bare ``<run-id>.ini``, so training a second time on the same
+        run id (the standing practice: an ``eval_mode = all`` run and a
+        held-out run share one COLMAP workspace, hence one run id) overwrote
+        the first training's record. A timestamp cannot collide across the two
+        machines the way a counter would. Files written before then keep their
+        bare names and are still valid records.
 
         The config file VERBATIM, plus a ``[run-record]`` section holding what
         resolved only at run time: the run id, the pipeline commit, and the
@@ -586,6 +656,9 @@ class Dt4agConfig:
             "colmap_version": run_id.rsplit("-", 1)[-1],
             "train_method": self.train_method,
             "max_num_iterations": str(self.max_num_iterations),
+            "steps_per_save": str(self.steps_per_save),
+            "checkpoint_interval": str(self.checkpoint_interval),
+            "eval_mode": self.eval_token(),
             "downscale_factor": str(self.downscale_factor or "auto"),
             "use_masks": str(self.use_masks).lower(),
         }
@@ -605,13 +678,22 @@ class Dt4agConfig:
         width = max(len(k) for k in record)
         lines += [f"{k.ljust(width)} = {v}" for k, v in record.items()]
 
-        destination = self.config_archive_dir / f"{run_id}.ini"
         self.config_archive_dir.mkdir(parents=True, exist_ok=True)
-        destination.write_text(
-            self.source.read_text(encoding="utf-8") + "\n".join(lines) + "\n",
-            encoding="utf-8",
-        )
-        return destination
+        body = self.source.read_text(encoding="utf-8") + "\n".join(lines) + "\n"
+        stamp = _archive_stamp()
+        # Exclusive creation: two invocations inside one second must not
+        # overwrite each other, and an overwrite here is the failure this
+        # naming exists to prevent. The tail is a counter only in that rare case.
+        for attempt in range(1, 100):
+            tail = stamp if attempt == 1 else f"{stamp}-{attempt}"
+            destination = self.config_archive_dir / f"{run_id}_{tail}.ini"
+            try:
+                with destination.open("x", encoding="utf-8") as handle:
+                    handle.write(body)
+            except FileExistsError:
+                continue
+            return destination
+        raise OSError(f"could not find a free archive name for {run_id} at {stamp}")
 
     # -- run log -----------------------------------------------------------
 
@@ -631,6 +713,7 @@ class Dt4agConfig:
             "max_num_iterations",
             "downscale_factor",
             "masks",
+            "eval_mode",
             "object_id",
             "imaging_date",
             "config_file",
@@ -646,6 +729,7 @@ class Dt4agConfig:
             "max_num_iterations": self.max_num_iterations,
             "downscale_factor": self.downscale_factor or "auto",
             "masks": "used" if self.use_masks else "none",
+            "eval_mode": self.eval_token(),
             "object_id": "",
             "imaging_date": "",
             "config_file": str(self.source),
@@ -720,6 +804,8 @@ class Dt4agConfig:
             f"max_num_iterations : {self.max_num_iterations}",
             f"steps_per_save     : {self.steps_per_save} "
             f"({'newest only' if self.save_only_latest_checkpoint else 'all kept'})",
+            f"eval_mode          : {self.eval_token()}",
+            f"checkpoint_interval: {self.checkpoint_interval or '(final only)'}",
             f"export_format      : {self.export_format}",
             f"export_3dgs        : {self.export_3dgs}",
         ]
@@ -1003,6 +1089,41 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     save_only_latest_checkpoint = _get_bool(
         parser, "train", "save_only_latest_checkpoint", source, False
     )
+    # Which photographs train, and which are held out for ns-eval. nerfstudio's
+    # dataparser decides this at load time and it is NOT a property of the
+    # checkpoint, so the pipeline has to say it explicitly to make a run's
+    # training set a recorded input. `all` trains on every photograph (and
+    # evaluates on those same photographs); the held-out modes are what keep a
+    # score meaningful. The standing practice is one `all` run, then one
+    # held-out run, on one COLMAP workspace.
+    eval_mode = _get_str(parser, "train", "eval_mode", source, "fraction").lower()
+    if eval_mode not in EVAL_MODES:
+        raise ConfigError(
+            f"key 'eval_mode' in section [train] of config file {source} must be "
+            f"one of {', '.join(EVAL_MODES)}, got {eval_mode!r}"
+        )
+    raw_fraction = _get_str(parser, "train", "train_split_fraction", source, "0.9")
+    try:
+        train_split_fraction = float(raw_fraction)
+    except ValueError as exc:
+        raise ConfigError(
+            f"key 'train_split_fraction' in section [train] of config file {source} "
+            f"must be a number, got {raw_fraction!r}"
+        ) from exc
+    if eval_mode == "fraction" and not 0.0 < train_split_fraction < 1.0:
+        raise ConfigError(
+            f"key 'train_split_fraction' in section [train] of config file {source} "
+            f"must be greater than 0 and less than 1 when eval_mode = fraction, got "
+            f"{train_split_fraction}. A fraction of 1.0 holds nothing out and makes "
+            f"ns-eval crash; to train on every photograph set eval_mode = all."
+        )
+    eval_interval = _get_int(parser, "train", "eval_interval", source, 8)
+    if eval_mode == "interval" and eval_interval < 2:
+        raise ConfigError(
+            f"key 'eval_interval' in section [train] of config file {source} must be "
+            f"at least 2 when eval_mode = interval, got {eval_interval} (1 would hold "
+            f"out every photograph and leave nothing to train on)"
+        )
     # 0 means "let nerfstudio choose", which it does by probing the downscale
     # pyramid on disk. Pinning it makes the training resolution a recorded
     # input of the run rather than a property of which files happen to be
@@ -1025,6 +1146,31 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
 
     # [export]
     export_format = _get_str(parser, "export", "format", source, "gaussian-splat")
+    # Export every checkpoint whose step is a multiple of this, plus the final
+    # one. 0 is the final checkpoint only. The checkpoints have to exist, so it
+    # must divide into what training saves.
+    checkpoint_interval = _get_int(parser, "export", "checkpoint_interval", source, 0)
+    if checkpoint_interval < 0:
+        raise ConfigError(
+            f"key 'checkpoint_interval' in section [export] of config file {source} "
+            f"must be 0 (final checkpoint only) or positive, got {checkpoint_interval}"
+        )
+    if checkpoint_interval:
+        if checkpoint_interval % steps_per_save:
+            raise ConfigError(
+                f"key 'checkpoint_interval' in section [export] of config file "
+                f"{source} is {checkpoint_interval}, which is not a multiple of "
+                f"[train] steps_per_save = {steps_per_save}; checkpoints exist only "
+                f"at multiples of steps_per_save, so some of those exports could "
+                f"never be made"
+            )
+        if save_only_latest_checkpoint:
+            raise ConfigError(
+                f"key 'checkpoint_interval' in section [export] of config file "
+                f"{source} is {checkpoint_interval}, but [train] "
+                f"save_only_latest_checkpoint = true deletes every checkpoint but "
+                f"the newest, so there is nothing earlier to export"
+            )
     env_label = _get_str(parser, "export", "env_label", source, "env")
     platform_label = _get_str(parser, "export", "platform_label", source, sys.platform)
     export_3dgs = _get_bool(parser, "export", "export_3dgs", source, False)
@@ -1070,12 +1216,16 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         max_num_iterations=max_num_iterations,
         steps_per_save=steps_per_save,
         save_only_latest_checkpoint=save_only_latest_checkpoint,
+        eval_mode=eval_mode,
+        train_split_fraction=train_split_fraction,
+        eval_interval=eval_interval,
         downscale_factor=downscale_factor,
         use_scale_regularization=use_scale_regularization,
         background_color=background_color,
         quit_on_train_completion=quit_on_train_completion,
         max_log_size=max_log_size,
         export_format=export_format,
+        checkpoint_interval=checkpoint_interval,
         env_label=env_label,
         platform_label=platform_label,
         export_3dgs=export_3dgs,

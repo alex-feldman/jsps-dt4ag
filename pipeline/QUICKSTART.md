@@ -818,9 +818,15 @@ for N steps, because splatfacto's schedules do not depend on
 densification stops at step 15,000 either way. (Equivalent, not bit-identical:
 the random seed is not pinned.)
 
-Export an earlier step by pointing a copy of the run's `config.yml` at it.
-`ns-export` has no step option of its own, but it honours `load_step` in the
-config:
+**Have the pipeline export them: set `[export] checkpoint_interval = 2500`.** The
+export stage then writes one PLY for every checkpoint whose step is a multiple of
+that number, plus the final one, each named `{x}steps_from{y}run` and carrying the
+eval-mode token. `0` (the default) exports the final checkpoint only. It must be a
+multiple of `steps_per_save`. Exporting takes about 20 seconds per checkpoint.
+
+To export a single earlier step by hand instead, point a copy of the run's
+`config.yml` at it. `ns-export` has no step option of its own, but it honours
+`load_step` in the config (this is what the export stage does for each checkpoint):
 
 ```bash
 RUN=<data_root>/outputs/<dataset>/<run-id>/splatfacto/<timestamp>
@@ -830,13 +836,13 @@ ns-export gaussian-splat --load-config $RUN/config-step-12500.yml \
     --output-dir <data_root>/exports --output-filename <name>
 ```
 
-Name the file yourself, with the pipeline's own pattern (`configs/README.md`,
-"Export filenames"): `..._<x>steps_from<y>run_...`, where `x` is the checkpoint's
-step and `y` the run's `max_num_iterations`, for example
-`..._12500steps_from30000run_ds4_individual.ply`. The pipeline writes both as the
-same number for its own final-checkpoint export. Checkpoint files are named by the
-zero-based step they were saved at, so a run's final checkpoint is one below its
-maximum (`step-000009999` for a 10,000-step run); count it as `x = y`.
+When exporting by hand, name the file with the pipeline's own pattern
+(`configs/README.md`, "Export filenames"):
+`..._<x>steps_from<y>run_<eval token>_...`, where `x` is the checkpoint's step and
+`y` the run's `max_num_iterations`, for example
+`..._12500steps_from30000run_evalall_ds4_individual.ply`. Checkpoint files are
+named by the zero-based step they were saved at, so a run's final checkpoint is one
+below its maximum (`step-000029999` for a 30,000-step run); count it as `x = y`.
 
 **Score each checkpoint with `ns-eval` to choose a step count.** Same trick, one
 config copy per step:
@@ -849,9 +855,14 @@ ns-eval --load-config $RUN/config-step-10000.yml --output-path eval-step10000.js
 `ns-eval` loads that checkpoint, renders every HELD-OUT image from its own pose
 and compares it with the photograph: PSNR, SSIM and LPIPS, mean and standard
 deviation over those images (about 11 seconds per checkpoint here). Which images
-are held out is nerfstudio's default `train_split_fraction = 0.9`: the first and
-last photographs and evenly spaced ones train, **the remainder are never seen in
-training**. With 24 photographs that is 22 train and 2 evaluate, so the standard
+are held out is `[train] eval_mode` (default `fraction`, `train_split_fraction =
+0.9`): the first and last photographs and evenly spaced ones train, **the remainder
+are never seen in training**. The split is made from the photographs sorted by
+filename and involves no randomness, so it is the same for every run and every
+`ns-eval` on one capture. With `eval_mode = all` every photograph trains and
+`ns-eval` evaluates on those same photographs, so its score measures fit and not
+generalization; never compare it with a held-out score. With 24 photographs the
+default is 22 train and 2 evaluate, so the standard
 deviation is large and a 0.5 dB difference between two checkpoints is noise.
 Read the LPIPS and SSIM trend and the plateau, not the third digit of PSNR.
 

@@ -382,6 +382,77 @@ class TestFailureModes(TempDirTestCase):
                     fixture.path, "steps_per_save", "train", fixture.path)
                 self.assertIn("positive", message)
 
+    def test_eval_mode_defaults_hold_ten_percent_out(self):
+        cfg = ConfigFixture(self.tmp).load()
+        self.assertEqual(cfg.eval_mode, "fraction")
+        self.assertEqual(cfg.train_split_fraction, 0.9)
+        self.assertEqual(cfg.eval_interval, 8)
+        self.assertEqual(cfg.checkpoint_interval, 0)
+
+    def test_unknown_eval_mode_is_refused(self):
+        for value in ("filename", "everything", ""):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(self.tmp, extra={"train": {"eval_mode": value}})
+                if value == "":
+                    fixture.load()  # empty falls back to the default
+                else:
+                    self.assertConfigError(fixture.path, "eval_mode", "train", fixture.path)
+
+    def test_a_fraction_that_holds_nothing_out_is_refused_and_points_at_all(self):
+        for value in ("1.0", "0", "-0.5", "1.5"):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(
+                    self.tmp, extra={"train": {"train_split_fraction": value}})
+                message = self.assertConfigError(
+                    fixture.path, "train_split_fraction", "train", fixture.path)
+                self.assertIn("eval_mode = all", message)
+
+    def test_fraction_is_not_checked_when_the_mode_ignores_it(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"eval_mode": "all", "train_split_fraction": "1.0"}})
+        self.assertEqual(fixture.load().eval_mode, "all")
+
+    def test_a_non_numeric_fraction_is_refused(self):
+        fixture = ConfigFixture(self.tmp, extra={"train": {"train_split_fraction": "most"}})
+        self.assertConfigError(fixture.path, "train_split_fraction", "train", fixture.path)
+
+    def test_an_interval_of_one_is_refused(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"eval_mode": "interval", "eval_interval": "1"}})
+        message = self.assertConfigError(fixture.path, "eval_interval", "train", fixture.path)
+        self.assertIn("at least 2", message)
+
+    def test_checkpoint_interval_must_be_a_multiple_of_steps_per_save(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"steps_per_save": "2500"}, "export": {"checkpoint_interval": "3000"}})
+        message = self.assertConfigError(
+            fixture.path, "checkpoint_interval", "export", fixture.path)
+        self.assertIn("multiple", message)
+
+    def test_checkpoint_interval_needs_every_checkpoint_kept(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "true"},
+            "export": {"checkpoint_interval": "2500"}})
+        message = self.assertConfigError(
+            fixture.path, "checkpoint_interval", "export", fixture.path)
+        self.assertIn("save_only_latest_checkpoint", message)
+
+    def test_a_valid_checkpoint_interval_loads(self):
+        fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "5000"}})
+        self.assertEqual(fixture.load().checkpoint_interval, 5000)
+
+    def test_negative_checkpoint_interval_is_refused(self):
+        fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "-1"}})
+        self.assertConfigError(fixture.path, "checkpoint_interval", "export", fixture.path)
+
+    def test_the_run_log_records_the_eval_mode(self):
+        fixture = ConfigFixture(self.tmp, extra={"train": {"eval_mode": "all"}})
+        cfg = fixture.load()
+        cfg.append_run_log("run_260807-01-312")
+        with cfg.run_log.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[-1]["eval_mode"], "evalall")
+
     def test_checkpoint_keys_can_be_overridden(self):
         fixture = ConfigFixture(self.tmp, extra={
             "train": {"steps_per_save": "1000", "save_only_latest_checkpoint": "true"}})
@@ -775,11 +846,45 @@ class TestArchiveRunConfig(TempDirTestCase):
             "run": {"date": "260807", "run_count": "01", "colmap_version": "312"}})
         return fixture.load()
 
-    def test_writes_under_data_root_configs_runs_named_for_the_run(self):
+    def test_writes_under_data_root_configs_runs_named_for_the_run_and_the_moment(self):
         cfg = self._cfg()
+        self.patch_module("_archive_stamp", lambda: "261005-135237")
         written = cfg.archive_run_config(self.RUN_ID)
-        self.assertEqual(written, cfg.data_root / "configs" / "runs" / f"{self.RUN_ID}.ini")
+        self.assertEqual(
+            written,
+            cfg.data_root / "configs" / "runs" / f"{self.RUN_ID}_261005-135237.ini")
         self.assertTrue(written.is_file())
+
+    def test_a_second_invocation_of_the_same_run_id_never_overwrites_the_first(self):
+        """The standing practice (an all-images run, then a held-out run) trains
+        twice on one run id; the first training's record must survive."""
+        cfg = self._cfg()
+        stamps = iter(["261005-135237", "261005-141543"])
+        self.patch_module("_archive_stamp", lambda: next(stamps))
+        first = cfg.archive_run_config(self.RUN_ID)
+        first_text = first.read_text(encoding="utf-8")
+        second = cfg.archive_run_config(self.RUN_ID)
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_text(encoding="utf-8"), first_text)
+
+    def test_two_invocations_inside_one_second_still_get_two_files(self):
+        cfg = self._cfg()
+        self.patch_module("_archive_stamp", lambda: "261005-135237")
+        first = cfg.archive_run_config(self.RUN_ID)
+        second = cfg.archive_run_config(self.RUN_ID)
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.is_file() and second.is_file())
+
+    def test_records_the_eval_mode_and_checkpoint_settings(self):
+        cfg = self._cfg()
+        written = cfg.archive_run_config(self.RUN_ID, stages="train,export")
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        record = parser["run-record"]
+        self.assertEqual(record["eval_mode"], "evalfrac90")
+        self.assertEqual(record["steps_per_save"], "2500")
+        self.assertEqual(record["checkpoint_interval"], "0")
+        self.assertEqual(record["stages"], "train,export")
 
     def test_creates_the_directory_lazily(self):
         cfg = self._cfg()
