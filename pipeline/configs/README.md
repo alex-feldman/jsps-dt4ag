@@ -150,7 +150,8 @@ directory inside the capture rather than the capture itself
 | `image_extensions` | no | empty | Which files under `images_subpath` are photographs, comma separated. Empty means every supported image type. |
 | `mask_extensions` | no | empty | Which files are masks. Always kept out of SfM. |
 | `use_masks` | no | `false` | Composite each mask into its photograph's alpha channel as a pre-step. Every photograph must have a mask; a partial set is an error. |
-| `masked_images_subpath` | no | `<derived_dirname>/masked/<capture_rel>` | Where composites are written. Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. |
+| `mask_variant` | no | empty | Which of a capture's mask sets to read: empty for `<capture>/masks/`, `X` for `<capture>/masks_X/`. A single directory name, never a path (`/` and `..` are refused). Also keys the composite directory, so two variants never share composites. Recorded in the run log's `mask_variant` column and the archived per-run config. Requires the canonical layout; on a legacy capture it is refused rather than left inert. Set with `use_masks = false` it is accepted with a note in the run log. |
+| `masked_images_parent_subpath` | no | `<derived_dirname>/masked` | The PARENT composites are written under; the pipeline appends `<mask_variant>/<capture_rel>` to it (the variant segment only when set). Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. Replaces `masked_images_subpath`, which named the composite directory itself; that key is refused when non-empty, since renaming it mechanically would move the composites. |
 
 **There is no key for where the masks are.** It is derived from the layout:
 `<capture>/masks/` when `images_subpath` ends in `images`, mirroring it, and
@@ -158,6 +159,14 @@ beside each photograph otherwise. Both real arrangements follow from that one
 rule, so a key stating it could only ever agree with the filesystem or be wrong.
 The `mask_subpath` key that used to set it was retired in v0.2.0, and a config
 still carrying it is refused rather than ignored.
+
+`mask_variant` does not reopen that. It chooses BETWEEN sibling sets of the
+canonical layout by name, and the name cannot leave the capture. When
+`use_masks = true`, no variant is named and the capture holds more than one
+`masks*` directory, the run is refused and the sets are listed, so which masks
+a run used is never a guess. Generating a variant means passing samask's
+`--masks` explicitly (`--masks <capture>/masks_X`): samask has no variant
+concept and defaults to writing `masks/`.
 
 This one key replaces the notebook's `subdir_a_id` through `subdir_d_id` and the
 four substring-matching loops that resolved them, along with both escape

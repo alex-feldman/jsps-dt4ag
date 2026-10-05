@@ -16,8 +16,11 @@ unversioned on a removable drive.
 - **Nobody but its author has installed it from scratch**, which is the open
   question the alpha exists to answer.
 - **It accepts raw photographs plus separate mask files** and composites them
-  itself (`[dataset] use_masks`, since v0.2.0). It does not *create* masks;
-  producing them is a separate concern with its own repository.
+  itself (`[dataset] use_masks`, since v0.2.0). One capture can carry several
+  mask sets as `masks_<variant>/` siblings, selected by name with `[dataset]
+  mask_variant` and never guessed between. It does not *create* masks;
+  producing them is a separate concern with its own repository (and a variant
+  is produced by passing that tool's `--masks` explicitly).
 - **There is no LICENSE or citation file yet.** See "Known gaps" below.
 
 ## What is here

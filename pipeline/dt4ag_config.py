@@ -371,6 +371,10 @@ class Dt4agConfig:
     masks_path: Path
     masked_images_path: Path
     use_masks: bool
+    #: ``[dataset] mask_variant``: which of a capture's mask sets to read.
+    #: Empty for ``<capture>/masks/``; ``X`` for ``<capture>/masks_X/``. Also
+    #: keys the composite directory, see ``load_config``.
+    mask_variant: str
 
     # [run]
     run_id_prefix: str
@@ -416,6 +420,13 @@ class Dt4agConfig:
     gauss_to_pc_script: str
 
     _resolved_run_id: Optional[str] = field(default=None, repr=False)
+
+    #: Things the loader accepted but wants on the record: one line each, in
+    #: the same shape as the ``List[str]`` a stage returns. The runner logs
+    #: them and ``append_run_log`` writes them to the run log's ``note``
+    #: column, because there is no other warning surface in this pipeline and
+    #: a warning that only scrolls past on a console was never recorded.
+    notes: List[str] = field(default_factory=list, repr=False)
 
     # -- derived paths -----------------------------------------------------
 
@@ -669,6 +680,7 @@ class Dt4agConfig:
             "vis": self.vis,
             "downscale_factor": str(self.downscale_factor or "auto"),
             "use_masks": str(self.use_masks).lower(),
+            "mask_variant": self.mask_variant,
         }
         record.update({k: str(v) for k, v in extra.items() if v not in (None, "")})
 
@@ -721,6 +733,8 @@ class Dt4agConfig:
             "max_num_iterations",
             "downscale_factor",
             "masks",
+            # Keep masks vocabulary stable for run-record verification.
+            "mask_variant",
             "eval_mode",
             "vis",
             "object_id",
@@ -738,12 +752,13 @@ class Dt4agConfig:
             "max_num_iterations": self.max_num_iterations,
             "downscale_factor": self.downscale_factor or "auto",
             "masks": "used" if self.use_masks else "none",
+            "mask_variant": self.mask_variant,
             "eval_mode": self.eval_token(),
             "vis": self.vis,
             "object_id": "",
             "imaging_date": "",
             "config_file": str(self.source),
-            "note": "",
+            "note": "; ".join(self.notes),
         }
         row.update({k: v for k, v in extra.items() if k in columns})
         is_new = not self.run_log.exists()
@@ -801,6 +816,7 @@ class Dt4agConfig:
             f"masks_path         : "
             f"{self.masks_path if self.masks_path != self.images_path else '(beside the images)'}",
             f"use_masks          : {self.use_masks}",
+            f"mask_variant       : {self.mask_variant or '(none: masks/)'}",
             f"masked_images      : {self.masked_images_path if self.use_masks else '(not used)'}",
             f"run_id_prefix      : {self.run_id_prefix}",
             f"run_date           : {self.run_date or '(auto: today)'}",
@@ -842,6 +858,32 @@ def _is_within(candidate: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _validate_mask_variant(value: str, source: Path) -> None:
+    """``[dataset] mask_variant`` must be ONE directory name.
+
+    It is a name and never a path, on purpose. The retired ``mask_subpath``
+    could point anywhere and so could contradict the layout; a variant only
+    ever selects ``<capture>/masks_<variant>/`` beside ``<capture>/masks/``
+    and cannot leave the capture. Anything that would climb or descend is
+    refused here rather than resolved.
+    """
+    reason = None
+    if "/" in value or "\\" in value:
+        reason = "it contains a path separator"
+    elif value in (".", ".."):
+        reason = "it is a relative-path component, not a name"
+    elif Path(value).parts != (value,):
+        reason = "it is not a single path segment"
+    if reason:
+        raise ConfigError(
+            f"key 'mask_variant' in section [dataset] of config file {source} "
+            f"must be a single directory name, got {value!r}: {reason}.\n"
+            f"  A variant X selects '<capture>/masks_X/' beside "
+            f"'<capture>/masks/'. It is a name, not a path, so it cannot "
+            f"point outside the capture (see pipeline/LAYOUT.md)."
+        )
 
 
 def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
@@ -933,30 +975,97 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"was retired in v0.2.0 and is no longer read. Masks are found by "
             f"layout: put them in '<capture>/masks/' beside '<capture>/images/' "
             f"(see pipeline/LAYOUT.md), or leave them alongside the "
-            f"photographs. Delete the key once the capture is migrated.\n"
+            f"photographs. Delete the key once the capture is migrated. To "
+            f"choose between several mask sets on one capture, name one with "
+            f"'mask_variant' (masks_<variant>/), which is a name and never a "
+            f"path.\n"
             f"  (this refuses rather than ignoring the key, because a mask "
             f"directory silently not read is a run that trains against the "
             f"wrong supervision and still exits 0)"
         )
-    canonical_masks = images_path.parent / "masks"
+    # A capture may carry several mask sets, as siblings named
+    # 'masks_<variant>' beside the default 'masks'. The variant is a NAME and
+    # is recorded in the config, so a run stays reproducible from its archived
+    # config alone; the alternative of picking a 'masks*' directory
+    # automatically is the substring-matching ambiguity images_subpath was
+    # introduced to remove (configs/example.ini, images_subpath).
+    notes: List[str] = []
+    mask_variant = _get_str(
+        parser, "dataset", "mask_variant", source, "", allow_empty=True
+    )
+    if mask_variant:
+        _validate_mask_variant(mask_variant, source)
+        if images_path.name != "images":
+            # The variant only means anything as a sibling of 'images'. On the
+            # legacy layout it would be read, validated and then never
+            # consulted, which is the silent-no-op property the mask_subpath
+            # retirement above exists to prevent.
+            raise ConfigError(
+                f"key 'mask_variant' in section [dataset] of config file "
+                f"{source} is set to {mask_variant!r}, but images_subpath "
+                f"{images_rel} does not end in 'images', so masks are looked "
+                f"for beside the photographs and no variant directory would "
+                f"ever be read.\n"
+                f"  A variant selects '<capture>/masks_{mask_variant}/' "
+                f"beside '<capture>/images/' and needs the canonical layout "
+                f"(see pipeline/LAYOUT.md). Migrate the capture, or delete "
+                f"the key."
+            )
+    masks_dirname = f"masks_{mask_variant}" if mask_variant else "masks"
+    canonical_masks = images_path.parent / masks_dirname
     if images_path.name == "images" and canonical_masks.is_dir():
         masks_path = canonical_masks
     else:
         masks_path = images_path
 
     use_masks = _get_bool(parser, "dataset", "use_masks", source, False)
-    if use_masks and validate_paths and masks_path == images_path and images_path.name == "images":
-        # A canonical capture with no masks/ sibling. Without this the run falls
-        # back to looking for masks beside the photographs, finds none, and dies
-        # one photograph at a time in the compositing pre-step instead of here.
-        raise ConfigError(
-            f"[dataset] use_masks is true in config file {source}, but the "
-            f"capture {images_path.parent} has no 'masks' directory beside its "
-            f"'images' directory.\n"
-            f"  Under the canonical layout masks live in '<capture>/masks/', "
-            f"mirroring '<capture>/images/' (see pipeline/LAYOUT.md). Create "
-            f"it, or set use_masks = false to reconstruct the full scene."
+    if mask_variant and not use_masks:
+        # Accepted, but not silently: a variant that is read and then not used
+        # is the same shape of trap as an ignored key, only smaller. Goes to
+        # the console via the runner and to the run log's note column.
+        notes.append(
+            f"[dataset] mask_variant = {mask_variant} is set but use_masks is "
+            f"false, so masks_{mask_variant}/ is NOT read and this run "
+            f"reconstructs the full scene"
         )
+    if use_masks and validate_paths and images_path.name == "images":
+        mask_sets = sorted(
+            p.name for p in images_path.parent.glob("masks*") if p.is_dir()
+        )
+        if not mask_variant and len(mask_sets) > 1:
+            # Several mask sets and nothing choosing between them. Reading
+            # 'masks/' by default would be a guess that exits 0.
+            raise ConfigError(
+                f"[dataset] use_masks is true in config file {source} and no "
+                f"mask_variant is named, but the capture {images_path.parent} "
+                f"holds {len(mask_sets)} mask sets: {', '.join(mask_sets)}.\n"
+                f"  Name the one this run should use: leave mask_variant "
+                f"empty only when 'masks/' is the sole set, or set "
+                f"mask_variant = X to read 'masks_X/'. This refuses rather "
+                f"than defaulting so that which masks a run used is never a "
+                f"guess."
+            )
+        if masks_path == images_path:
+            # A canonical capture with no masks directory of the requested
+            # name. Without this the run falls back to looking for masks
+            # beside the photographs, finds none, and dies one photograph at
+            # a time in the compositing pre-step instead of here.
+            others = (
+                f" The capture does hold: {', '.join(mask_sets)}."
+                if mask_sets else ""
+            )
+            raise ConfigError(
+                f"[dataset] use_masks is true in config file {source}, but the "
+                f"capture {images_path.parent} has no '{masks_dirname}' "
+                f"directory beside its 'images' directory.{others}\n"
+                f"  Under the canonical layout masks live in "
+                f"'<capture>/{masks_dirname}/', mirroring '<capture>/images/' "
+                f"(see pipeline/LAYOUT.md). Create it, pick an existing set "
+                f"with mask_variant, or set use_masks = false to reconstruct "
+                f"the full scene.\n"
+                f"  (samask defaults to writing 'masks/'; a variant has to be "
+                f"generated with an explicit --masks)"
+            )
     if use_masks and not mask_extensions:
         raise ConfigError(
             f"key 'use_masks' in section [dataset] of config file {source} is "
@@ -971,32 +1080,77 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     # the one tree you most want to back up was wrong; they were briefly
     # written there in 2026-08-17 and moved out in v0.2.0.
     #
-    #   images_subpath = <collection>/<capture>/images
-    #   composites  -> <data_root>/derived/masked/<collection>/<capture>/
+    # One rule, for the default and the override alike:
     #
-    # A relative override is resolved against data_root, not datasets_dir, for
-    # the same reason: every default destination it could reasonably name is a
-    # sibling of `datasets/`, not a child of it.
-    masked_images_raw = _get_str(
-        parser, "dataset", "masked_images_subpath", source, "", allow_empty=True
-    )
-    if masked_images_raw:
-        masked_rel = Path(masked_images_raw)
-        masked_images_path = (
-            masked_rel if masked_rel.is_absolute() else data_root / masked_rel
+    #   parent = masked_images_parent_subpath   if set
+    #            else <data_root>/<derived_dirname>/masked
+    #   parent = parent / <mask_variant>        if a variant is set
+    #   result = parent / <capture_rel>
+    #
+    # so with images_subpath = <collection>/<capture>/images:
+    #
+    #   composites  -> <data_root>/derived/masked/<collection>/<capture>/
+    #   variant X   -> <data_root>/derived/masked/X/<collection>/<capture>/
+    #
+    # The variant goes in at the masked/ level, NEVER under the capture.
+    # composite_masked_images decides whether an existing set can be reused by
+    # globbing the capture's composite directory RECURSIVELY (a capture's
+    # cameras are subdirectories), and anything it finds that is not one of
+    # this run's composites is refused with an instruction to delete the whole
+    # directory. A variant nested under the capture would make every default
+    # run refuse, and the deletion it prescribes would take every variant
+    # with it. As a sibling, no run's glob can see another variant's files.
+    #
+    # A relative parent is resolved against data_root, not datasets_dir: every
+    # default destination it could reasonably name is a sibling of `datasets/`,
+    # not a child of it.
+    #
+    # The old key named the composite directory ITSELF, and it is refused when
+    # set for the same reason mask_subpath is: a value silently reinterpreted
+    # as a parent would put composites one directory below where the operator
+    # said, and a value silently ignored would put them somewhere else again.
+    # Empty is accepted, because every config and archived run config written
+    # before the rename carries the key empty, and archived configs are
+    # promised to stay runnable (configs/README.md).
+    if _get_str(parser, "dataset", "masked_images_subpath", source, "", allow_empty=True):
+        raise ConfigError(
+            f"key 'masked_images_subpath' in section [dataset] of config file "
+            f"{source} was renamed to 'masked_images_parent_subpath', and its "
+            f"MEANING changed, so it is refused rather than read.\n"
+            f"  The old key named the composite directory itself. The new key "
+            f"names a PARENT that the pipeline appends to: "
+            f"'<parent>/<mask_variant>/<capture_rel>/', where <capture_rel> is "
+            f"the capture's path under datasets/ and the variant segment is "
+            f"present only when [dataset] mask_variant is set.\n"
+            f"  Renaming the key mechanically would move your composites one "
+            f"or two directories down. Set masked_images_parent_subpath to "
+            f"the directory you want the capture's path appended to, or "
+            f"delete the key for the default under '{derived_dirname}/'. An "
+            f"empty leftover 'masked_images_subpath =' is tolerated."
         )
+    masked_parent_raw = _get_str(
+        parser, "dataset", "masked_images_parent_subpath", source, "",
+        allow_empty=True,
+    )
+    if masked_parent_raw:
+        masked_parent = Path(masked_parent_raw)
+        if not masked_parent.is_absolute():
+            masked_parent = data_root / masked_parent
     else:
-        masked_images_path = data_root / derived_dirname / "masked" / capture_rel
+        masked_parent = data_root / derived_dirname / "masked"
+    if mask_variant:
+        masked_parent = masked_parent / mask_variant
+    masked_images_path = masked_parent / capture_rel
     if use_masks and masked_images_path == images_path:
         raise ConfigError(
-            f"'masked_images_subpath' in section [dataset] of config file "
-            f"{source} resolves to the image directory itself. Compositing "
-            f"would overwrite the source photographs."
+            f"'masked_images_parent_subpath' in section [dataset] of config "
+            f"file {source} resolves to the image directory itself. "
+            f"Compositing would overwrite the source photographs."
         )
     if use_masks and _is_within(masked_images_path, datasets_dir):
         raise ConfigError(
-            f"'masked_images_subpath' in section [dataset] of config file "
-            f"{source} resolves to {masked_images_path}, which is inside the "
+            f"'masked_images_parent_subpath' in section [dataset] of config "
+            f"file {source} resolves to {masked_images_path}, which is inside the "
             f"datasets directory {datasets_dir}.\n"
             f"  datasets/ is INPUT and the pipeline never writes to it. "
             f"Composited masked images are rebuildable and run to gigabytes "
@@ -1219,6 +1373,8 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         masks_path=masks_path,
         masked_images_path=masked_images_path,
         use_masks=use_masks,
+        mask_variant=mask_variant,
+        notes=notes,
         run_id_prefix=run_id_prefix,
         run_date=run_date,
         run_count=run_count,

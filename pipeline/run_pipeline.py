@@ -1327,6 +1327,14 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
     log(f"stages            : {', '.join(stages)}"
         + ("  (dry run, nothing will execute)" if dry_run else ""))
     log(f"images            : {cfg.images_path}")
+    if cfg.mask_variant:
+        log(f"mask variant      : {cfg.mask_variant}"
+            + (f"  ({cfg.masks_path})" if cfg.use_masks else "  (not used)"))
+    # What the loader accepted with reservations. Printed here AND written
+    # to the run log's note column by append_run_log, so it is on the record
+    # and not only on a console nobody kept.
+    for line in cfg.notes:
+        log(f"note              : {line}")
     log(f"colmap workspace  : {workspace}")
     log(f"training output   : {cfg.output_parent}")
 

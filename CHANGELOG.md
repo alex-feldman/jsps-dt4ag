@@ -27,36 +27,6 @@ Dates are the tag date, not the commit date, where they differ.
   in testing, and the logged eval has no standard deviation; `ns-eval` remains
   the per-checkpoint tool.
 
-### Changed
-
-- **Export filenames now carry `{x}steps_from{y}run` and an eval-mode token in
-  every case**, replacing the single `{iterations}steps` component: `x` is the
-  training steps the exported checkpoint holds, `y` the run's
-  `max_num_iterations`, and the token (`evalall`, `evalfrac90`, `evalint8`) says
-  which photographs the run trained on, read from the exported run's own
-  `config.yml` so it records what training did and not what the INI says now. A
-  finished run's final checkpoint reads `30000steps_from30000run_evalall`.
-  Anything that matches the old `_{N}steps_` token in a filename must be updated;
-  nothing in this repository did. The reason is the per-checkpoint export: a file
-  from step 10,000 of a 30,000-step run (`10000steps_from30000run`) must not look
-  like a run configured to stop at 10,000, and two runs of one COLMAP workspace
-  that differ only in which photographs were held out must not share a name.
-
-- **The per-run config archive is now `{run-id}_{yymmdd-HHMMSS}.ini`, one file
-  per invocation, never overwritten.** It was the bare `{run-id}.ini`, so training
-  a second time on one run id (an `eval_mode = all` run and a held-out run share a
-  COLMAP workspace, hence a run id) overwrote the first training's record. A
-  timestamp cannot clash across machines the way a counter would. Files written
-  before keep their bare names and remain valid; `recover-run-configs.py` treats
-  either form as already archived. `[run-record]` now also carries `stages`,
-  `eval_mode`, `steps_per_save` and `checkpoint_interval`.
-
-- **`ns-train` now always receives `nerfstudio-data --eval-mode ...`** (and the
-  matching fraction or interval), so which photographs a run trained on is
-  stated, not inherited from nerfstudio's default.
-
-### Added
-
 - **`[train] eval_mode`, `train_split_fraction`, `eval_interval`.** `fraction`
   (default, 0.9) holds a share out for `ns-eval`, `interval` holds out every
   n-th, `all` trains on every photograph (and `ns-eval` then scores fit on
@@ -103,6 +73,55 @@ Dates are the tag date, not the commit date, where they differ.
   parameter, so the optimizers hold stale tensors and the first densification
   step crashes in gsplat's `duplicate()` (index out of bounds). Reproduced twice,
   with `CUDA_LAUNCH_BLOCKING=1` to place the fault.
+- **`[dataset] mask_variant`, so one capture can carry several mask sets.**
+  `masks_<variant>/` siblings beside `masks/`, each the same parallel tree,
+  selected by name: empty reads `masks/` exactly as before, `X` reads
+  `masks_X/`. A single directory name and never a path (`/` and `..` are
+  refused), so unlike the retired `mask_subpath` it cannot contradict the
+  layout or leave the capture. Motivated by mask-set comparison on captures
+  that already hold two sets for the same photographs, and by prompt families
+  (whole plant, leaf, fruit) wanted simultaneously on one capture.
+
+  Composites are keyed by the variant at the `masked/` level,
+  `derived/masked/<variant>/<capture_rel>/`, and deliberately NOT under the
+  capture: `composite_masked_images` reuses an existing set only when the
+  capture's composite directory, globbed recursively, holds exactly this run's
+  files, and a variant nested beneath would make every default run refuse with
+  an instruction to delete the whole directory, every variant included. As a
+  sibling tree, no variant can see or reuse another's composites, which is the
+  failure that mattered: two variants silently sharing composites reconstruct
+  identically and "the prompt made no difference" is a believable wrong answer.
+
+  Three refusals and one note come with it. `use_masks = true` with no variant
+  named and more than one `masks*` directory present is refused with the sets
+  listed, so which masks a run used is never a guess. A variant on a capture
+  outside the canonical layout is refused, since it would be read, validated
+  and never consulted. A variant that is not one directory name is refused. A
+  variant set while `use_masks = false` is accepted, with the fact written to
+  the console and to the run log's `note` column, since nothing else in the
+  pipeline is a warning surface.
+
+  Recorded in a new `mask_variant` column of `run-log.csv` (an existing log is
+  widened in place with a `.bak`, as the header migration already did) and in
+  the archived per-run config's `[run-record]`. The `masks` column keeps its
+  `used`/`none` vocabulary, which `recover-run-configs.py` compares against;
+  that tool now also verifies `mask_variant` for rows that carry it.
+
+  samask has no variant concept and defaults to writing `masks/`, so generating
+  a variant means passing its `--masks` explicitly. Stated in every place the
+  key is introduced, because it is cheap to say and expensive to discover.
+
+- `Dt4agConfig.mask_variant` and `Dt4agConfig.notes`, the latter the loader's
+  accepted-with-reservations lines, logged by the runner and written to the run
+  log's `note` column.
+
+- **`[dataset] masked_images_parent_subpath`**, replacing
+  `masked_images_subpath` with changed semantics: it names a PARENT that the
+  pipeline appends `<mask_variant>/<capture_rel>` to, rather than the composite
+  directory itself. One resolution rule now serves the default and the override
+  alike, which is what lets a variant apply to both; under the old key the
+  override replaced the default path outright and a variant added to the
+  default branch would have been silently bypassed.
 
 - **Every run freezes its config** at `<data_root>/configs/runs/<run-id>.ini`:
   the config file verbatim, plus a `[run-record]` section holding what resolves
@@ -133,12 +152,51 @@ Dates are the tag date, not the commit date, where they differ.
   `_pipeline_commit()`, which reports `unknown` rather than raising when git is
   unavailable.
 
+### Changed
+
+- **Export filenames now carry `{x}steps_from{y}run` and an eval-mode token in
+  every case**, replacing the single `{iterations}steps` component: `x` is the
+  training steps the exported checkpoint holds, `y` the run's
+  `max_num_iterations`, and the token (`evalall`, `evalfrac90`, `evalint8`) says
+  which photographs the run trained on, read from the exported run's own
+  `config.yml` so it records what training did and not what the INI says now. A
+  finished run's final checkpoint reads `30000steps_from30000run_evalall`.
+  Anything that matches the old `_{N}steps_` token in a filename must be updated;
+  nothing in this repository did. The reason is the per-checkpoint export: a file
+  from step 10,000 of a 30,000-step run (`10000steps_from30000run`) must not look
+  like a run configured to stop at 10,000, and two runs of one COLMAP workspace
+  that differ only in which photographs were held out must not share a name.
+
+- **The per-run config archive is now `{run-id}_{yymmdd-HHMMSS}.ini`, one file
+  per invocation, never overwritten.** It was the bare `{run-id}.ini`, so training
+  a second time on one run id (an `eval_mode = all` run and a held-out run share a
+  COLMAP workspace, hence a run id) overwrote the first training's record. A
+  timestamp cannot clash across machines the way a counter would. Files written
+  before keep their bare names and remain valid; `recover-run-configs.py` treats
+  either form as already archived. `[run-record]` now also carries `stages`,
+  `eval_mode`, `steps_per_save` and `checkpoint_interval`.
+
+- **`ns-train` now always receives `nerfstudio-data --eval-mode ...`** (and the
+  matching fraction or interval), so which photographs a run trained on is
+  stated, not inherited from nerfstudio's default.
+
 ### Fixed
 
 - `pipeline/configs/README.md` told you to add your own config to `.gitignore`.
   That had been unnecessary since the blanket `pipeline/configs/*.ini` rule with
   its `!example.ini` exception was written, so the file documented a step the
   repository already took.
+
+### Removed
+
+- **`[dataset] masked_images_subpath`.** Superseded by
+  `masked_images_parent_subpath` above. A config carrying the old key with a
+  VALUE is refused with a message that says the meaning changed, not just the
+  name: renamed mechanically, the same value would put composites one or two
+  directories below where it said. An empty leftover `masked_images_subpath =`
+  is accepted, because every working config and every archived per-run config
+  written before the rename carries it empty, and archived configs are promised
+  to stay runnable.
 
 ## [0.2.0] — 2026-08-18
 

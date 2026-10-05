@@ -72,22 +72,32 @@ class RecoverTestCase(unittest.TestCase):
         self.repo = self.root / "repo"
         (self.repo / "configs").mkdir(parents=True)
 
-    def write_config(self, iters="10000", ds="4", subpath="coll/cap/images"):
+    def write_config(self, iters="10000", ds="4", subpath="coll/cap/images",
+                     variant=None):
         text = CONFIG.format(data_root=self.data_root, iters=iters, ds=ds)
         text = text.replace("images_subpath = coll/cap/images",
                             f"images_subpath = {subpath}")
+        if variant is not None:
+            text = text.replace("use_masks = true",
+                                f"use_masks = true\nmask_variant = {variant}")
         path = self.repo / "configs" / "run.ini"
         path.write_text(text, encoding="utf-8")
         return path
 
     def write_log(self, iters="10000", ds="4", masks="used",
                   images="coll/cap/images", method="splatfacto",
-                  config="configs/run.ini"):
+                  config="configs/run.ini", variant=None):
+        """``variant=None`` writes the pre-variant header; a string, even an
+        empty one, writes the current header with that cell."""
+        header, cell = LOG_HEADER, ""
+        if variant is not None:
+            header = LOG_HEADER.replace("masks,", "masks,mask_variant,")
+            cell = f"{variant},"
         (self.data_root / "run-log.csv").write_text(
-            LOG_HEADER
+            header
             + f"2026-08-18T18:49:03,{self.RUN},{images},"
               f"{self.data_root / 'datasets' / images},3120,{method},"
-              f"{iters},{ds},{masks},,,{config},\n",
+              f"{iters},{ds},{masks},{cell},,{config},\n",
             encoding="utf-8")
 
     def run_tool(self, *extra):
@@ -166,6 +176,47 @@ class TestRefusesAnEditedConfig(RecoverTestCase):
         self.write_config()
         self.write_log(masks="none")
         self.assert_refused()
+
+    def test_refuses_when_the_mask_variant_changed(self):
+        self.write_config(variant="leaf")
+        self.write_log(variant="plant")
+        self.assert_refused()
+
+    def test_refuses_when_a_logged_variant_was_since_removed_from_the_file(self):
+        self.write_config()
+        self.write_log(variant="leaf")
+        self.assert_refused()
+
+    def test_a_matching_variant_is_verified_and_named(self):
+        self.write_config(variant="leaf")
+        self.write_log(variant="leaf")
+        self.run_tool()
+        parser = configparser.ConfigParser()
+        parser.read_string(self.archived.read_text(encoding="utf-8"))
+        self.assertIn("mask_variant", parser["run-record"]["verified_fields"])
+
+    def test_a_row_without_the_variant_column_is_still_verifiable(self):
+        """Rows older than the column carry no cell; a blank is never checked."""
+        self.write_config(variant="leaf")
+        self.write_log()
+        self.run_tool()
+        self.assertTrue(self.archived.exists())
+        parser = configparser.ConfigParser()
+        parser.read_string(self.archived.read_text(encoding="utf-8"))
+        self.assertNotIn("mask_variant", parser["run-record"]["verified_fields"])
+
+    def test_a_blank_variant_cell_is_not_checked_even_when_the_file_names_one(self):
+        """Known limit, pinned so it is not mistaken for a bug.
+
+        The header migration gives older rows an empty cell, so an empty cell
+        cannot be told apart from a run that used no variant. Treating blank
+        as "no variant" would disqualify every migrated row, so the tool
+        stays consistent with its rule that a blank is unverifiable.
+        """
+        self.write_config(variant="leaf")
+        self.write_log(variant="")
+        self.run_tool()
+        self.assertTrue(self.archived.exists())
 
     def test_refuses_when_the_config_file_is_gone(self):
         self.write_log(config="configs/vanished.ini")
