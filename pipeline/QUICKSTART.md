@@ -870,8 +870,14 @@ deviation is large and a 0.5 dB difference between two checkpoints is noise.
 Read the LPIPS and SSIM trend and the plateau, not the third digit of PSNR.
 
 A run that trains with the viewer only (`quit_on_train_completion`, as the
-pipeline does) computes NO metrics during training; `ns-eval` is the only
-source of them.
+pipeline does by default) computes NO metrics during training; `ns-eval` is the
+only source of them. Setting `[train] vis = viewer+tensorboard` changes that:
+nerfstudio then writes TensorBoard event files (gaussian count, train PSNR, a
+mean eval over the held-out images every 1000 steps) into the run directory,
+read with `tensorboard --logdir {run directory}` or `EventAccumulator`. The
+total `Train Loss` tag read NaN in testing, and the logged eval is a mean with
+no standard deviation, so `ns-eval` is still the per-checkpoint tool. See
+`configs/README.md`, "Training-time logging".
 
 Measured 2026-10-05, 24 photographs of one cucumber plant (22 train, 2 held
 out), 4x downscale, one 20,000-step run with a checkpoint every 2500 steps:

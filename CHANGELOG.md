@@ -16,6 +16,17 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- **`[train] vis`** (`viewer` default, `viewer+tensorboard`, `tensorboard`):
+  passes nerfstudio `--vis` so a run can write training-time TensorBoard event
+  files (gaussian count, train PSNR, mean eval PSNR/SSIM/LPIPS every 1000 steps)
+  into its run directory. `viewer` adds no flag, so existing configs produce the
+  same command. Recorded in `run-log.csv` (new `vis` column, widened in place)
+  and the archived config's `[run-record]`. The total `Train Loss` tag read NaN
+  in testing, and the logged eval has no standard deviation; `ns-eval` remains
+  the per-checkpoint tool.
+
 ### Changed
 
 - **Export filenames now carry `{x}steps_from{y}run` and an eval-mode token in

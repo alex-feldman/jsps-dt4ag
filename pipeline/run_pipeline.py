@@ -369,6 +369,13 @@ def train_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         "--steps-per-save", str(cfg.steps_per_save),
         "--save-only-latest-checkpoint", str(cfg.save_only_latest_checkpoint),
     ]
+    # `--vis` is passed only when it is not nerfstudio's default (`viewer`), so
+    # every config written before the key existed produces the command it always
+    # did. `viewer+tensorboard` makes nerfstudio evaluate during training and
+    # write TensorBoard event files into the run directory;
+    # --viewer.quit-on-train-completion above still ends the process.
+    if cfg.vis != "viewer":
+        command += ["--vis", cfg.vis]
     # The dataparser is a tyro SUBCOMMAND, not a nested config path: its flags
     # only exist as `... nerfstudio-data --eval-mode M ...`, appended after
     # every option of the parent command. `--pipeline.datamanager.dataparser.

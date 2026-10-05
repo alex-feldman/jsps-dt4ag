@@ -366,6 +366,23 @@ class TestCommands(TempTreeTestCase):
                 at = command.index("nerfstudio-data")
                 self.assertEqual(command[at + 1:], tail)
 
+    def test_train_command_adds_vis_only_when_it_is_not_the_default(self):
+        """No --vis for `viewer` (old commands unchanged); parent option, before the dataparser."""
+        root = self.root
+        default = train_command(make_config(root), root / "ws")
+        self.assertNotIn("--vis", default)
+        explicit = train_command(make_config(root, train_extra="vis = viewer"), root / "ws")
+        self.assertEqual(explicit, default)
+        for value in ("viewer+tensorboard", "tensorboard"):
+            with self.subTest(value=value):
+                command = train_command(
+                    make_config(root, train_extra=f"vis = {value}"), root / "ws")
+                at = command.index("--vis")
+                self.assertEqual(command[at + 1], value)
+                self.assertLess(at, command.index("nerfstudio-data"))
+                self.assertEqual(command.count("--vis"), 1)
+                self.assertIn("--viewer.quit-on-train-completion", command)
+
     def test_train_command_keeps_a_checkpoint_every_2500_steps_by_default(self):
         """nerfstudio's own default deletes all but the newest; that is the trap."""
         command = train_command(make_config(self.root), self.root / "ws")

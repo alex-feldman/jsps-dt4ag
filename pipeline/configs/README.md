@@ -214,10 +214,30 @@ Feeds `ns-train`.
 | `eval_mode` | no | `fraction` | Which photographs train: `fraction` holds a share out for `ns-eval`, `interval` holds out every n-th, `all` trains on every photograph (and `ns-eval` then scores fit on photographs it trained on, not generalization). Passed as `nerfstudio-data --eval-mode`, always, so the training set is stated and not inherited. `filename` mode is not offered. |
 | `train_split_fraction` | no | `0.9` | Share of photographs that train, when `eval_mode = fraction`. Must be above 0 and below 1: 1.0 holds nothing out and makes `ns-eval` crash, so use `eval_mode = all` for that. The run also refuses to start if the fraction would hold out 0 of the registered photographs. |
 | `eval_interval` | no | `8` | Every n-th photograph is held out, when `eval_mode = interval`. At least 2. |
+| `vis` | no | `viewer` | nerfstudio `--vis`. `viewer` (default, nothing passed) computes no metric during training. `viewer+tensorboard` also writes TensorBoard event files (see below); `tensorboard` writes them without the viewer. Anything else is refused. `quit_on_train_completion = true` still ends a `viewer+tensorboard` run. Recorded in `run-log.csv` (`vis` column) and the archived config's `[run-record]`. |
 | `use_scale_regularization` | no | `true` | `--pipeline.model.use-scale-regularization`. |
 | `background_color` | no | `random` | `--pipeline.model.background-color`. |
 | `quit_on_train_completion` | no | `false` | `--viewer.quit-on-train-completion`. |
 | `max_log_size` | no | `0` | `--logging.local-writer.max-log-size`. |
+
+#### Training-time logging (`vis = viewer+tensorboard`)
+
+nerfstudio then evaluates during training and writes TensorBoard event files
+(`events.out.tfevents.*`) directly into the run directory,
+`{outputs}/{...}/{run-id}/splatfacto/{timestamp}/`, next to `config.yml`. Read them
+with `tensorboard --logdir {that directory}`, or in Python with
+`tensorboard.backend.event_processing.event_accumulator.EventAccumulator`. Tested
+2026-10-05 on 24 photographs: `Train Metrics Dict/gaussian_count` and `psnr` every
+10 steps; `Eval Images Metrics Dict (all images)/psnr`, `ssim`, `lpips`, `fps`
+(the mean over every held-out image) every 1000 steps; plus a single-image eval
+series every 100 steps (noisy, index 0 only) and loss, learning-rate, timing and
+GPU-memory series.
+
+Caveats: the total `Train Loss` tag read NaN throughout the test while training
+progressed, so do not read that tag (`Train Loss Dict/main_loss` was not checked).
+The logged eval is a mean with no standard deviation, so per-checkpoint `ns-eval`
+is still needed when the spread matters. Under `eval_mode = all` the "all images"
+series scores photographs the run trained on (fit, not generalization).
 
 ### `[export]`
 

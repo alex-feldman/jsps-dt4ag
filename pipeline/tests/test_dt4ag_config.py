@@ -389,6 +389,29 @@ class TestFailureModes(TempDirTestCase):
         self.assertEqual(cfg.eval_interval, 8)
         self.assertEqual(cfg.checkpoint_interval, 0)
 
+    def test_vis_defaults_to_viewer_and_validates(self):
+        self.assertEqual(ConfigFixture(self.tmp).load().vis, "viewer")
+        for value in ("viewer", "viewer+tensorboard", "tensorboard", "Viewer+TensorBoard"):
+            with self.subTest(value=value):
+                cfg = ConfigFixture(self.tmp, extra={"train": {"vis": value}}).load()
+                self.assertEqual(cfg.vis, value.lower())
+        for value in ("wandb", "viewer+wandb", "tb"):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(self.tmp, extra={"train": {"vis": value}})
+                self.assertConfigError(fixture.path, "vis", "train", fixture.path)
+
+    def test_the_run_log_and_archive_record_vis(self):
+        cfg = ConfigFixture(
+            self.tmp, extra={"train": {"vis": "viewer+tensorboard"}}).load()
+        cfg.append_run_log("run_260807-01-312")
+        with cfg.run_log.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[-1]["vis"], "viewer+tensorboard")
+        written = cfg.archive_run_config("run_260807-01-312")
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        self.assertEqual(parser["run-record"]["vis"], "viewer+tensorboard")
+
     def test_unknown_eval_mode_is_refused(self):
         for value in ("filename", "everything", ""):
             with self.subTest(value=value):

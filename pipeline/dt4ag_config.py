@@ -236,6 +236,12 @@ def _archive_stamp() -> str:
 #: "eval", which the pipeline's staging would have to know about.
 EVAL_MODES = ("fraction", "interval", "all")
 
+#: nerfstudio `--vis` values this pipeline exposes. `viewer` is nerfstudio's own
+#: default and is what a run did before this key existed, so it adds no flag.
+#: `wandb` and `viewer_legacy` are absent: neither is needed here and `wandb`
+#: needs an account.
+VIS_MODES = ("viewer", "viewer+tensorboard", "tensorboard")
+
 
 def eval_token(mode: str, fraction: float = 0.9, interval: int = 8) -> str:
     """The filename-safe name of an eval mode: ``evalall``, ``evalfrac90``, ``evalint8``.
@@ -391,6 +397,7 @@ class Dt4agConfig:
     max_num_iterations: int
     steps_per_save: int
     save_only_latest_checkpoint: bool
+    vis: str
     eval_mode: str
     train_split_fraction: float
     eval_interval: int
@@ -659,6 +666,7 @@ class Dt4agConfig:
             "steps_per_save": str(self.steps_per_save),
             "checkpoint_interval": str(self.checkpoint_interval),
             "eval_mode": self.eval_token(),
+            "vis": self.vis,
             "downscale_factor": str(self.downscale_factor or "auto"),
             "use_masks": str(self.use_masks).lower(),
         }
@@ -714,6 +722,7 @@ class Dt4agConfig:
             "downscale_factor",
             "masks",
             "eval_mode",
+            "vis",
             "object_id",
             "imaging_date",
             "config_file",
@@ -730,6 +739,7 @@ class Dt4agConfig:
             "downscale_factor": self.downscale_factor or "auto",
             "masks": "used" if self.use_masks else "none",
             "eval_mode": self.eval_token(),
+            "vis": self.vis,
             "object_id": "",
             "imaging_date": "",
             "config_file": str(self.source),
@@ -805,6 +815,7 @@ class Dt4agConfig:
             f"steps_per_save     : {self.steps_per_save} "
             f"({'newest only' if self.save_only_latest_checkpoint else 'all kept'})",
             f"eval_mode          : {self.eval_token()}",
+            f"vis                : {self.vis}",
             f"checkpoint_interval: {self.checkpoint_interval or '(final only)'}",
             f"export_format      : {self.export_format}",
             f"export_3dgs        : {self.export_3dgs}",
@@ -1142,6 +1153,16 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     quit_on_train_completion = _get_bool(
         parser, "train", "quit_on_train_completion", source, False
     )
+    # nerfstudio's `--vis`: where training-time logging goes. `viewer` (default)
+    # computes no metric; `viewer+tensorboard` also writes TensorBoard event
+    # files (gaussian count, train PSNR, and a mean eval over all held-out
+    # images every 1000 steps) into the run directory.
+    vis = _get_str(parser, "train", "vis", source, "viewer").lower()
+    if vis not in VIS_MODES:
+        raise ConfigError(
+            f"key 'vis' in section [train] of config file {source} must be "
+            f"one of {', '.join(VIS_MODES)}, got {vis!r}"
+        )
     max_log_size = _get_int(parser, "train", "max_log_size", source, 0)
 
     # [export]
@@ -1216,6 +1237,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         max_num_iterations=max_num_iterations,
         steps_per_save=steps_per_save,
         save_only_latest_checkpoint=save_only_latest_checkpoint,
+        vis=vis,
         eval_mode=eval_mode,
         train_split_fraction=train_split_fraction,
         eval_interval=eval_interval,
