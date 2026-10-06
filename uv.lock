@@ -925,7 +925,7 @@ wheels = [
 
 [[package]]
 name = "jsps-dt4ag-pipeline"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "gsplat", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },

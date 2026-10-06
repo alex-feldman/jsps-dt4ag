@@ -1,6 +1,6 @@
 [project]
 name = "jsps-dt4ag-pipeline"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reconstruction pipeline environment: nerfstudio + PREBUILT gsplat, no CUDA JIT, no compiler toolchain"
 readme = "pipeline/README.md"
 # Python 3.10 is MANDATORY, not a preference: cp310 is the only Python tag the
