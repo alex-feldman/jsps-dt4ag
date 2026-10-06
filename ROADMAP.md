@@ -130,7 +130,8 @@ configuration.
 - [ ] Installs and runs on Windows from the repository alone
 - [ ] The install path is documented and verified by someone other than the
       author
-- [ ] LICENSE and CITATION.cff present
+- [x] LICENSE present
+- [ ] CITATION.cff present
 
 **Acceptance:** a collaborator on either OS can install it, run it on their own
 capture, and cite it.

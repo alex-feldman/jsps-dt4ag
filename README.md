@@ -75,7 +75,7 @@ The pipeline has been run end to end and had its output verified, including on
 clean machines that started with nothing. It is installable and reproducible.
 
 What that does **not** yet mean: nobody outside this project has installed it,
-there is no LICENSE or citation file yet, and the evaluation methodology
+it has no `CITATION.cff` file yet, and the evaluation methodology
 described on parts of the wiki has not been run. Treat published numbers as
 coming from this project's own runs.
 

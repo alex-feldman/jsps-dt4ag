@@ -18,6 +18,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Add the MIT license, copyright 2026 Alexander Feldman.
+
 - **`[train] vis`** (`viewer` default, `viewer+tensorboard`, `tensorboard`):
   passes nerfstudio `--vis` so a run can write training-time TensorBoard event
   files (gaussian count, train PSNR, mean eval PSNR/SSIM/LPIPS every 1000 steps)
