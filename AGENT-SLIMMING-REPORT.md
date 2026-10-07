@@ -6,44 +6,41 @@ Base: main at d0ecbfc
 
 ## Goal
 
-Make the repository's only agent-facing instructions an operator guide for translating plain requests into existing dataset configs and pipeline scripts. The operator should not need developer setup or pipeline internals in context.
+Keep one concise agent-facing document for operators. It should map plain requests to existing configuration keys and pipeline scripts without loading developer setup or pipeline internals.
 
 ## Repository changes
 
-- Added root AGENTS.md as the single agent-facing operator guide. It maps a photoset path to dataset configuration, copies a matching INI into the external data-root config directory, clears run metadata, maps iteration/downscale/split requests to existing keys, and requires a pipeline dry-run before execution.
-- Added optional SAMask handling: canonical capture/images layout, variant naming, provenance/completeness checks in samask-runs.jsonl, preview suppression, no overwrite, mask extension settings, and explicit stop conditions.
-- Added WSL execution requirements: PATH setup, COLMAP GPU index, check for competing GPU use, and unload the local Ollama model in the same shell call before a GPU run when the endpoint and model are available.
-- Added the same-run all-then-fraction comparison procedure and the held-out metric reporting requirement.
-- Updated README.md and pipeline/README.md to point operators to AGENTS.md. Updated CHANGELOG.md to record the operator guide and this trial report.
-- Added this report to record the implementation, trial evidence, and remaining limitations.
-- Kept pipeline implementation and existing scripts unchanged. Removed the temporary project opencode.json used for model testing. The earlier draft pipeline/AGENT-RUN.md was removed so AGENTS.md remains the sole agent-facing document.
+- Added root AGENTS.md as the only agent-facing guide. It covers safe photoset-to-config mapping, copying rather than editing source configs, mask defaults, SAMask provenance, WSL GPU setup, dry-run limits, long-running GPU calls, two-pass comparisons, and result reporting.
+- Updated README.md and pipeline/README.md to point to AGENTS.md and this report. Updated CHANGELOG.md.
+- Added this report with the implementation and trial evidence.
+- Pipeline code and scripts were not changed. The temporary project opencode.json used for testing was removed. An earlier pipeline/AGENT-RUN.md draft was removed so AGENTS.md remains the only agent-facing guide.
 
-## Review and safety corrections
+## Code reviews and corrections
 
-An independent high-effort review caught several places where the guide needed to match existing code behavior. The guide now requires mask provenance to include a completed end record, matching prompt and score threshold, a written count equal to the photo count, and zero failures. It uses .png for masks and the actual photo extension for images, and stops if the extensions overlap. It also restricts masks to the canonical images layout, prevents overwriting existing mask sets, requires a dry-run, and does not bypass pipeline refusals. The comparison instructions keep the same run id and COLMAP workspace between all and fraction passes.
+Two independent high-effort reviews were checked against repository and SAMask source. The guide now handles copied configs that already enable masks, requires the WSL GPU index flag even when the template leaves extra_args empty, rejects photosets outside the data-root datasets tree and unsafe relative paths, and keeps the source config intact. It also uses the actual SAMask record schema and default 0.50 threshold, keeps the default preview output, marks visual review as a human check, and refuses partial mask results.
+
+The guide also says what the pipeline dry-run does not validate: runtime prerequisites, mask compositing and coverage, downscale files, and held-out counts from registered images. Fraction runs must have at least one held-out view. Metrics are reported only when viewer+tensorboard produces them. Run IDs are generated from existing output directories, so the separate manual collision check was removed.
 
 ## Local model and harness trial
 
-The test used native WSL OpenCode 1.18.34 with local Ollama model alias qwen35-agent-48k at a 49,152-token context. The Windows OpenCode shim resolved to a different version, so the Linux binary was invoked directly. A temporary project OpenCode config granted access to external data directories and routed to the WSL-only Ollama proxy; that config has been removed.
+The test used native WSL OpenCode 1.18.34 with Ollama alias qwen35-agent-48k at 49,152-token context. The Windows OpenCode shim resolved to a different version, so the Linux binary was invoked directly. A temporary project config granted access to external data directories and routed through the WSL-only Ollama proxy; it has been removed.
 
-A 48K-context request successfully had the model read only AGENTS.md, copy the matching Welzo M1 config to /home/alex/data/configs/welzo-m1_20261007.ini, set downscale_factor=4, and run the pipeline dry-run. The dry-run accepted run id welzo-m1_261007-01-3120, 24 images, evalfrac90, downscale 4, and GPU 0.
+Before the final review corrections, the model read only AGENTS.md, copied the Welzo M1 config to /home/alex/data/configs/welzo-m1_20261007.ini, set downscale_factor=4, and ran a valid dry-run. It accepted run id welzo-m1_261007-01-3120, 24 images, evalfrac90, downscale 4, and GPU 0. The final guide changes were not retested through OpenCode.
 
-The next request exposed an instruction-following weakness: the model ignored the requested eval_mode=all, tried importing a nonexistent PipelineConfig symbol, and ultimately invoked the existing config as evalfrac90. It also failed to unload the Ollama model before the first attempt; the manager unloaded it before allowing the GPU run. This is evidence that deterministic gates help, but the model still needs close supervision around multi-step comparisons and GPU cleanup.
+A later request exposed an instruction-following failure: the model ignored eval_mode=all, attempted to import a nonexistent PipelineConfig symbol, and ultimately invoked the config as evalfrac90. It also did not unload Ollama before its first GPU attempt; the manager unloaded the model before proceeding.
 
-The model then started a 10,000-iteration evalfrac90 run for welzo-m1_261007-01-3120. Windows restarted before it completed. The output contains a COLMAP database and sparse/project.ini only; there is no completed sparse model, training output, export, or metric result. The run did not reproduce the previous reconstruction. The dump analysis found a 0x50 PAGE_FAULT_IN_NONPAGED_AREA at nvlddmkm.sys, preceded by GPU watchdog dumps 0x141 and 0x117 in the same driver. Current nvidia-smi reports driver 617.14. The crash interrupted the trial, but the dumps do not prove the pipeline itself caused the driver failure.
+The model then started a 10,000-iteration evalfrac90 run at about 03:34. Windows restarted before completion. Only a COLMAP database and sparse/project.ini remain; there is no completed sparse model, training output, export, or metric. The run did not reproduce the prior reconstruction.
 
-## What this establishes
+## Restart evidence and test limits
 
-- A small local model can follow the single-file operator guide for config creation and a valid dry-run at 48K context.
-- A real completed reconstruction has not yet been demonstrated with this model.
-- The two-pass comparison and SAMask-plus-pipeline prompt remain unvalidated end to end.
-- The model's mistake on eval_mode=all shows that the guide cannot replace checking the generated config and command before a GPU run.
-- GPU training should be retried only after the NVIDIA driver instability is addressed. Preserve the incomplete run as evidence; do not treat it as a successful result.
+The 0x50 crash dump faults inside nvlddmkm.sys. Two earlier live dumps, 0x141 and 0x117, also identify the NVIDIA driver and GPU timeout recovery. The current post-restart driver is 617.14 (Windows driver version 32.0.16.1714). This is strong evidence of an NVIDIA graphics-driver failure during GPU work, but does not prove the pipeline caused the failure or distinguish driver, hardware, and memory corruption.
 
-## Test cleanup and next step
+A completed reconstruction, the all/fraction comparison, and the SAMask-plus-pipeline prompt remain unvalidated. Do not count the interrupted run as a result.
 
-The temporary opencode.json is removed from the worktree. The WSL proxy stopped when Windows rebooted. The temporary Windows firewall rule named Temporary WSL Ollama test may still exist; remove it from an elevated PowerShell session when WSL Ollama testing is finished:
+## Next step
+
+After addressing NVIDIA driver stability, rerun the plain 10,000-iteration prompt and the SAMask plant prompt against the known photoset. Compare with the previous 10,000-iteration reconstruction. Record config, run id, context, VRAM placement, speed, and final artifacts.
+
+The WSL proxy stopped at reboot. The temporary Windows firewall rule may still exist; remove it when WSL Ollama testing is finished with elevated PowerShell:
 
     Remove-NetFirewallRule -DisplayName 'Temporary WSL Ollama test'
-
-After addressing the NVIDIA driver issue, rerun the two requested operator prompts against a known photoset: a plain 10,000-iteration run, then a SAMask prompt such as plant followed by the same pipeline. Compare outputs with the known prior 10,000-iteration reconstruction and record config, run id, context size, VRAM placement, performance, and final artifacts.
