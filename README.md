@@ -85,7 +85,6 @@ coming from this project's own runs.
 |---|---|
 | [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) | **Start here to run it.** Install and use, from nothing. |
 | [`AGENTS.md`](AGENTS.md) | Operator instructions for plain requests, configs, masks and runs. |
-| [AGENT-SLIMMING-REPORT.md](AGENT-SLIMMING-REPORT.md) | Trial record and change log for the local operator agent. |
 | [`pipeline/README.md`](pipeline/README.md) | What is in the pipeline directory, and the runner's options. |
 | [`pipeline/configs/README.md`](pipeline/configs/README.md) | Every configuration key. |
 | [`scripts/install.sh`](scripts/install.sh) | The automated install. `--dry-run` prints every command it would run. |

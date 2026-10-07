@@ -18,7 +18,6 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 - Add concise operator instructions in `AGENTS.md` for mapping photoset paths, optional SAMask prompts and run settings to existing configs and runners.
-- Record the OpenCode local-agent trial and its limits in AGENT-SLIMMING-REPORT.md.
 
 - Add the MIT license, copyright 2026 Alexander Feldman.
 
