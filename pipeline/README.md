@@ -29,6 +29,7 @@ unversioned on a removable drive.
 |---|---|
 | `notebooks/nerfstudio-pipeline-06.ipynb` | The same four stages, interactively. Kernel `dt4ag-uv`, the SAME uv environment the CLI uses. Kept for exploration; `run_pipeline.py` is the supported path. |
 | `run_pipeline.py` | The same pipeline as a command-line runner, no Jupyter. See "The runner's options" below. |
+| [`../AGENTS.md`](../AGENTS.md) | Operator contract for plain requests, config creation, masking and runs. |
 | `dt4ag_config.py` | The INI config loader both of the above read, so they cannot drift. |
 | `scripts/rgb-mask/` | Applies masks to RGB images as an alpha channel. **The pipeline calls this itself** when `[dataset] use_masks = true`, as a pre-step before any stage runs (`composite_masked_images`). Still runnable by hand for masking a set outside a pipeline run. This is the route that actually removes background geometry: see [`MASKING.md`](MASKING.md). |
 | `RUN-FLOW.md` | The runner's control flow and every point at which it refuses to continue. For debugging a failed run or extending the runner. |
