@@ -20,6 +20,14 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Add the MIT license, copyright 2026 Alexander Feldman.
 
+- **`pipeline/scripts/reconstruction-compare/`**: `compare_masked_reconstructions.py` renders two masked
+  reconstructions of one capture from the same cameras and scores each against the undistorted ORIGINAL
+  photograph inside the region where both masks are foreground (PSNR, SSIM, LPIPS, per photograph and
+  per eval token), plus a render-versus-render score. `ns-eval` scores each run against its own mask, so
+  its numbers are not comparable across mask variants. `train_mask_variant_arm.sh` trains one arm from a
+  copy of a donor run's COLMAP model so both arms share camera poses. Tested by one real comparison
+  (Welzo M1, plant against leaf masks); no unit tests, the script needs a CUDA GPU and nerfstudio.
+
 - **`[train] vis`** (`viewer` default, `viewer+tensorboard`, `tensorboard`):
   passes nerfstudio `--vis` so a run can write training-time TensorBoard event
   files (gaussian count, train PSNR, mean eval PSNR/SSIM/LPIPS every 1000 steps)
