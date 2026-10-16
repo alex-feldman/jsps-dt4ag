@@ -25,6 +25,14 @@ The functions in `leaf_lift.py` and `skeleton.py` were extracted from the preser
 | Insertion distance and petiole length | NetworkX weighted path lengths in scale-free scene units; candidate geometry only |
 | File hashes and equality checks | SHA-256 and exact array/parsed-JSON equality; software provenance/reproducibility, not accuracy |
 
+The baseline tip-first base rule and GREEN, TIPGAP and TOUCH/contact settings
+were developed or checked with agent-viewed pilot overlays before extraction
+into this package. They do not invoke agent vision at runtime. The subsequent
+Welzo sensitivity work shows stability relative to the reviewed pilot, not
+independent anatomical ground truth. The portable TOUCH investigation has not
+changed repository defaults. Any new morphology rule remains experimental and
+must record its choices and failures rather than tune to a reviewed answer.
+
 The CPU path uses NumPy, SciPy, NetworkX and Pillow; optional plots use Matplotlib. Versions are recorded at run time. No SAM, Torch, Nerfstudio or CUDA model is loaded by this command. Reconstruction and mask generation remain external inputs. The algorithm's library calls and parameters are owned by the code, not duplicated as universal numeric recommendations here.
 
 ## Checks and changing the command
@@ -248,6 +256,91 @@ The assignment therefore depends on the up estimate.
 The first soil run on October 15 failed under a 2.4 GiB address-space cap, because it held all 60 masks at once. Votes now stream one mask at a time, and the pilot regression still matches exactly.
 
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
+
+## Computed base and conservative apex candidates
+
+The opt-in integration lives in `computed_axis.orientation` (artifact validation)
+and `computed_axis.candidates` (rankings, ties, and decision). `skeleton.run`
+uses the supplied up to select the lowest retained network point as root and
+otherwise retains its existing graph construction and leaf associations. The
+base is a candidate network root; the anatomical stem base is unvalidated.
+It is not a measured stem base or soil-plane projection;
+the report records its point-label array row, coordinates, height and signed
+plane distance when available. Per-height slice medians from plant orientation
+are not a traced stem and are not used to claim one here.
+
+Candidate agreement is deliberately conservative. Supported leaf median height,
+associated endpoint geodesic, and terminal height are separate diagnostics.
+Their unique extrema must agree on one terminal. The owning function declares
+the tolerance, bounded below by the existing skeleton BIN width in scene units
+and protected against floating precision loss at larger scene scales. Equal
+ranks remain ambiguity rather than an ID
+tie-break. Disagreement preserves a candidate report and refuses success. A
+supplied leaf override proceeds with its decision basis and the disagreement
+recorded. Candidate agreement still cannot distinguish primary stem from
+strings, tendrils, lateral branches or missed tissue in general.
+
+Orientation enters skeleton provenance, not leaf parameters. A completed
+artifact and run record bind capture identity and camera-frame source digests;
+both and all recorded orientation sources are hashed. Invalid or changed
+orientation is rejected before output creation. Soil up remains primary, with
+camera fallback available only by explicit config. Failure records attempt
+source-hash verification even when candidate resolution refuses. The legacy
+path with no orientation remains unchanged.
+
+Orientation is deliberately scene-level and reusable for per-plant derivatives
+in its capture and coordinate frame. The soil fit's base-plant reference does
+not bind or establish the identity of the analyzed PLY. Confirming the target
+derivative remains an explicit upstream responsibility; no new plant-identity
+schema or soil-distance gate is introduced. Signed plane distance is retained
+as a diagnostic, not evidence that the root is an anatomical base.
+
+The design preference is anatomy-informed base/apex decisions and eventually
+node-first plant semantics with leaves attached. Botanical nodes and phytomers
+remain distinct from current geometric graph samples and leaf segmentation
+labels. Existing coordinates, topology and provenance are retained for future
+mapping. Considering established MTG/OpenAlea or Helios formats is a preference,
+not an adoption decision or a requirement for this feature. Detailed botanical
+node and phytomer conventions are proposed and await Alex's approval; no
+semantic IDs, adapter, or node-first model is implemented here.
+
+### Future plant-plus-environment direction
+
+The longer-term compass includes plant structure coupled with local environment
+and physiology, including canopy temperature and light. This is outside the
+current plant-representation feature. A virtual spatial field, point-associated
+properties, surface or organ properties and regional descriptions are alternatives
+for future FSPM literature work. No environmental grid, sampling resolution,
+required property schema or physiological model is selected here. Preserve the
+distinction between observations, inferred geometry and future model output;
+do not turn this direction into a requirement for current extraction.
+
+### Real-data boundary check, 2026-10-17
+
+The unchanged explicit-apex path reproduced the October 2 saved skeleton
+exactly (104 nodes, 103 edges). With soil-primary orientation, automatic
+selection refused: highest median leaf was cluster 4 and farthest associated
+leaf endpoint was cluster 1. The initial numerical-tolerance trial ranked
+terminal sample 96 highest; the final BIN-resolution trial retained samples
+91 and 96 as tied highest terminals. The existing
+human override for cluster 4 completed with this disagreement retained.
+October 15 also refused: highest median leaf was 11, farthest associated
+leaves tied at 7, 11, 12 and 20, and highest terminal was sample 201.
+
+The October 15 lowest retained network point was 0.4103 scene units above the
+soil plane. This is a warning about the connected-network base estimate, not
+a measured emergence point. Retaining the largest network component can omit
+lower tissue. Component selection, mask/green filtering and scale-dependent
+network linking require investigation before claiming anatomical recovery;
+these checks did not change them. Disagreement and unchanged source hashes
+were recorded even on refusal. Initial trials predate the release version bump; the final review-r2 trials
+use alpha.8 code. All retain their actual source/code provenance and dirty
+worktree status. The final legacy result remains exactly equal to the original.
+
+The candidate signals share input geometry and associations; agreement is an
+internal consistency test, not independent anatomical validation. The automatic
+October 2 acceptance goal remains unmet, even though refusal is correct software
+behavior. This release is candidate diagnostics, not a finished apex detector.
 
 ## Plant asset package and single-leaf export
 

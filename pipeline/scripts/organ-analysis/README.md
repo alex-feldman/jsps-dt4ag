@@ -42,7 +42,56 @@ python pipeline/scripts/organ-analysis/analyze_organs.py --config /path/to/captu
 
 Every output directory must be new, even for validation-only calls. Partial/failed work is retained with a failure record. A repeated call never overwrites outputs. Skeleton-only reuse requires a successful prior command and matching source hashes, parameters and stored label hashes. It may add the apex choice, plot option and annotations, but must not silently change the analysis inputs.
 
-All numerical options are in the optional `parameters` object; `analyze_organs.DEFAULTS` owns their names and values. They originate in the exploratory Welzo baseline, not universally tuned settings. `apex_leaf` is always explicit for skeleton extraction; it is never assumed to be 4. Numeric IDs are local to a particular model and mask association result. Optional `annotations` maps cluster-ID strings to user-supplied JSON metadata; it does not move connections or turn an inference into measured geometry. Set `plots` to true for static 3D and photo-overlay sheets.
+All numerical options are in the optional `parameters` object; `analyze_organs.DEFAULTS` owns their names and values. They originate in the exploratory Welzo baseline, not universally tuned settings. By default `apex_leaf` is explicit for skeleton extraction; it is never assumed to be 4. Numeric IDs are local to a particular model and mask association result. Optional `annotations` maps cluster-ID strings to user-supplied JSON metadata; it does not move connections or turn an inference into measured geometry. Set `plots` to true for static 3D and photo-overlay sheets.
+
+### Optional computed base and apex candidates
+
+Add top-level `"orientation": "/path/to/completed-orientation/orientation.json"` and
+`"apex_mode": "morphology"` to request conservative candidate agreement. Keep the
+same `--stage skeleton --labels-dir` command above. Orientation is skeleton-level
+provenance; the reused leaf inputs and parameters must remain unchanged.
+
+`computed_axis.orientation` checks the completed orientation artifact and its
+run record, capture identity, current source digests and matching camera-frame
+digests before creating output. Soil-primary up is required by default. Only
+explicit `"allow_camera_fallback": true` permits a recorded camera fallback;
+that case has no soil-plane distance. Relative orientation paths resolve against
+the config. Orientation artifacts cannot live inside protected photo/mask trees.
+
+`computed_axis.candidates` owns the candidate rule and tie tolerance, which is
+at least the existing skeleton `BIN` width in scene units and is recorded in
+the report. It records a candidate network root whose anatomical stem base is unvalidated,
+supported leaf median-height and associated endpoint-geodesic ranks, and terminal
+height ranks. It resolves only when all three unique extrema identify the same
+terminal. Ties or disagreement retain `apex-candidates.json` and a failed run
+record, then raise an error without producing a successful skeleton. This is
+candidate agreement, not proof of a biological apex or a traced primary stem.
+
+An explicit `apex_leaf` together with `orientation` overrides that disagreement,
+uses the supplied up for the root, and records the requested decision and all
+candidate diagnostics. The original config remains truthful in the run record;
+the resolved leaf is in the graph. With no orientation opt-in, the existing
+explicit-apex path and geometry remain unchanged. Leaf-only runs do not consume
+orientation provenance.
+
+Orientation is scene-level evidence, reusable across per-plant derivatives in
+the same capture and coordinate frame. Its soil base-plant selection does not
+establish the identity of the analyzed PLY. Selecting and confirming the target
+plant derivative remains an explicit upstream responsibility. The reported
+root-to-plane distance is diagnostic; it does not validate a botanical base or
+impose an additional distance threshold.
+
+Design direction: favor anatomy-informed base/apex decisions and eventually a
+plant described by botanical nodes with attached leaves. Botanical nodes remain
+distinct from today's geometric graph samples. Considering established MTG or
+Helios formats is a preference, not an adoption decision or completion gate.
+Detailed node/phytomer conventions remain proposed pending Alex's approval.
+
+The longer-term plant-plus-environment direction includes local temperature,
+light and physiological modeling. Environmental fields versus point, surface,
+organ or region attributes need a separate FSPM literature review. This is a
+future compass, outside current implementation; no environment schema or spatial
+resolution is required here.
 
 ## Outputs and limits
 

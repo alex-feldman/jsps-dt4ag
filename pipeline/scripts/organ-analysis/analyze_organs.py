@@ -11,7 +11,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-VERSION = '0.3.0-alpha.7'
+VERSION = '0.3.0-alpha.8'
 DEFAULTS = {'opacity_cutoff':0.3,'RD':8,'RM':4,'ZTOL':0.006,'MAXR':8,'MIN_G':15,
             'JOIN':0.35,'MERGE':0.5,'TOUCH':0.004,'TOUCH_SHARE':0.1,
             'LINK':0.009,'BIN':0.008,'LINP':0.55,'GREEN':0.03,'TIPGAP':0.006}
@@ -47,7 +47,7 @@ def source_revision():
 def spec_from(path, stage):
     path = Path(path).resolve()
     spec = read(path)
-    unknown = set(spec)-{'capture_id','inputs','parameters','apex_leaf','plots','annotations'}
+    unknown = set(spec)-{'capture_id','inputs','parameters','apex_leaf','plots','annotations','orientation','apex_mode','allow_camera_fallback'}
     if unknown or not isinstance(spec.get('capture_id'), str) or not spec['capture_id'].strip():
         raise ValueError('Expected capture_id and known config keys; unknown: '+str(sorted(unknown)))
     inputs = dict(spec['inputs'])
@@ -78,7 +78,19 @@ def spec_from(path, stage):
             raise ValueError('Expected fraction in (0,1): '+key)
     if not isinstance(spec.get('plots',False),bool):
         raise ValueError('plots must be boolean')
-    if stage != 'leaves' and (type(spec.get('apex_leaf')) is not int or spec['apex_leaf'] < 0):
+    if 'apex_mode' in spec and spec['apex_mode'] != 'morphology':
+        raise ValueError('apex_mode must be morphology')
+    if 'allow_camera_fallback' in spec and type(spec['allow_camera_fallback']) is not bool:
+        raise ValueError('allow_camera_fallback must be boolean')
+    if stage != 'leaves' and 'apex_leaf' in spec and (type(spec['apex_leaf']) is not int or spec['apex_leaf'] < 0):
+        raise ValueError('apex_leaf must be a nonnegative integer')
+    if 'orientation' in spec:
+        if not isinstance(spec['orientation'],str):
+            raise ValueError('orientation must be a path')
+        spec['orientation'] = str((path.parent / spec['orientation']).resolve())
+    if (spec.get('apex_mode') == 'morphology' or spec.get('allow_camera_fallback')) and 'orientation' not in spec:
+        raise ValueError('Morphology needs an orientation artifact')
+    if stage != 'leaves' and 'apex_leaf' not in spec and spec.get('apex_mode') != 'morphology':
         raise ValueError('Select apex_leaf explicitly after inspecting this model\'s leaf IDs, or run --stage leaves first')
     spec['inputs'], spec['parameters'] = inputs, params
     return spec
@@ -156,7 +168,7 @@ def evidence(spec, out, graph):
     if graph:
         for leaf in result['leaves']:
             row = next((r for r in graph['leaves'] if r['leaf_id']==leaf['id']),None)
-            leaf['geometry_status'] = 'unresolved_no_path' if row is None or (row['petiole_network_length']==0 and leaf['id']!=spec['apex_leaf']) else 'algorithm_candidate'
+            leaf['geometry_status'] = 'unresolved_no_path' if row is None or (row['petiole_network_length']==0 and leaf['id']!=graph['apex_leaf']) else 'algorithm_candidate'
     return result
 
 
@@ -190,6 +202,11 @@ def main(argv=None):
             raise ValueError('Output must be outside source image/mask directories')
     labels_dir = args.labels_dir.resolve() if args.labels_dir else None
     geom, hashes = preflight(spec, labels_dir)
+    orientation = None
+    if args.stage != 'leaves' and 'orientation' in spec:
+        from computed_axis import orientation as load_orientation
+        orientation, orientation_hashes = load_orientation(spec)
+        hashes.update(orientation_hashes)
     if args.validate_only:
         print(json.dumps({'status':'validated','source_files':len(hashes),'stage':args.stage}))
         return 0
@@ -211,7 +228,7 @@ def main(argv=None):
         graph = None
         if args.stage!='leaves':
             import skeleton
-            graph = skeleton.run(geom,out,spec['parameters'],spec['apex_leaf'],spec.get('plots',False))
+            graph = skeleton.run(geom,out,spec['parameters'],spec.get('apex_leaf'),spec.get('plots',False),orientation)
         bundle = evidence(spec,out,graph)
         validate_evidence(bundle,out)
         write(out/'organ-evidence.json',bundle)
@@ -227,6 +244,13 @@ def main(argv=None):
         record['output_sha256']={p.name:sha(p) for p in out.iterdir() if p.is_file()}
     except Exception as exc:
         record.update(status='failed',error=type(exc).__name__+': '+str(exc))
+        if orientation is not None:
+            try:
+                record['source_hashes_verified_on_failure'] = all(sha(p)==digest for p,digest in hashes.items())
+            except OSError:
+                record['source_hashes_verified_on_failure'] = False
+            if not record['source_hashes_verified_on_failure']:
+                record['error'] += '; source input changed during analysis'
         raise
     finally:
         record['ended_utc']=datetime.now(timezone.utc).isoformat()

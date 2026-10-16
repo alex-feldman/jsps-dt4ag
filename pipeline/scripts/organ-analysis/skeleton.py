@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
-def run(geom, output, params, apex_leaf, make_plots=False):
+def run(geom, output, params, apex_leaf, make_plots=False, orientation=None):
     OUT = str(output)
     LINK, BIN, LINP, GREEN = (params[k] for k in ['LINK','BIN','LINP','GREEN'])
     z = np.load(OUT + "/leaf_ids2.npz")
@@ -54,7 +54,7 @@ def run(geom, output, params, apex_leaf, make_plots=False):
     pet_pts = {int(L): int(((label == L) & in_net).sum()) for L in set(label[label >= 0].tolist())}
     print("petiole points recovered per leaf:", {k: v for k, v in sorted(pet_pts.items()) if v})
     G = G[sel][:, sel]
-    up = np.array([0, 0, 1.0])
+    up = np.array([0, 0, 1.0]) if orientation is None else np.array(orientation['up'])
     h = Q @ up
     root = int(np.argmin(h))
     gd = dijkstra(G, indices=root)
@@ -107,12 +107,19 @@ def run(geom, output, params, apex_leaf, make_plots=False):
             i = int(np.argmin(dist))
             info[L] = {"gap": float(dist[i]), "base": pl[i], "node": int(node_of[j[i]]), "size": len(pl), "rule": "nearest"}
     apex = apex_leaf
+    decision = None
+    if orientation is not None:
+        from computed_axis import candidates
+        apex, decision = candidates(output, X, label, Q, idxQ, root, nodes, T, rootn, info, up, orientation, apex_leaf, BIN)
     if apex not in info:
+        if orientation is not None:
+            raise ValueError('Selected apex cluster is not available in the derived leaf info; see apex-candidates.json')
         raise RuntimeError("Selected apex cluster is not available in the derived leaf info")
     main = nx.shortest_path(T, rootn, info[apex]["node"], weight="weight")
     mainset = set(main)
     dist_main = {nd: nx.shortest_path_length(T, rootn, nd, weight="weight") for nd in main}
-    print(f"\napex leaf (user-confirmed cluster): {apex}; main stem nodes {len(main)}, "
+    apex_basis = 'user-confirmed cluster' if decision is None else decision['decision_basis']
+    print(f"\napex leaf ({apex_basis}): {apex}; main stem nodes {len(main)}, "
           f"length {dist_main[main[-1]]:.3f}")
     rows = []
     for L, d in info.items():
@@ -192,6 +199,8 @@ def run(geom, output, params, apex_leaf, make_plots=False):
                "leaves": [{"leaf_id": int(L), "insertion_along_stem": float(s), "insertion_xyz": nodes[ins]["c"].tolist(),
                            "petiole_network_length": float(pet), "base_xyz": d["base"].tolist(), "gap": d["gap"], "base_rule": d["rule"]}
                           for s, L, ins, pet, d in rows]}
+    if decision is not None:
+        result['computed_axis'] = decision
     with open(OUT + "/skeleton.json", "w") as f:
         json.dump(result, f, indent=1, allow_nan=False)
     return result

@@ -14,6 +14,31 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.8] - 2026-10-17
+
+### Added
+
+- Opt-in orientation-aware base and apex candidate diagnostics for organ
+  analysis. A completed, unchanged orientation artifact binds the capture and
+  camera frame; soil-primary up supplies the network root direction. Camera
+  fallback requires explicit permission in the config.
+- A conservative morphology candidate mode reports supported-leaf height,
+  associated endpoint geodesic extent and terminal height. It proceeds only
+  when their unique extrema agree; otherwise it keeps a candidate graph/report
+  and records a failed run. An explicit apex override retains disagreement.
+- Seven CLI integration tests cover tilted orientation, agreement, refusal,
+  override, ties and orientation/source-integrity rejection.
+
+### Changed
+
+- Document the anatomy-informed, node-first semantic direction and consideration
+  of MTG/OpenAlea and Helios as a preference, not a current feature gate.
+- The legacy explicit-apex path reproduces the October 2 skeleton exactly.
+  Both Welzo real-data automatic trials remain ambiguous: this release does
+  not establish autonomous biological main-axis or apex recovery. The October
+  15 retained network starts well above the soil plane, so its base is also
+  unvalidated. No thresholds were tuned to recover a known answer.
+
 ## [0.3.0-alpha.7] - 2026-10-17
 
 ### Added
