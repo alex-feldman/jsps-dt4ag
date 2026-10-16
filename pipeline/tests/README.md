@@ -40,6 +40,11 @@ by a real run.
 Every test is hermetic. Each one builds its own data tree in a
 `tempfile.TemporaryDirectory` and throws it away afterwards.
 
+The separate experimental organ-analysis command has its own dependency-using
+CPU fixtures under `pipeline/scripts/organ-analysis/tests/`. Run those with the
+pipeline environment using the command in that directory's README; they are
+not part of this stdlib-only suite.
+
 ## What they deliberately do not cover
 
 - **No GPU.** Nothing here trains, exports, or touches CUDA.

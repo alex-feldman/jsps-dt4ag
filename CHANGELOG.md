@@ -14,6 +14,27 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.1] - 2026-10-16
+
+Experimental organ-analysis preview. This prerelease adds a separate CPU
+post-processing command; it does not complete the v0.3.0 batching milestone.
+The earlier unreleased reconstruction features listed below are also present
+in this source snapshot.
+
+### Added
+
+- `pipeline/scripts/organ-analysis/analyze_organs.py`: explicit JSON-configured
+  leaf-instance lifting and confirmed-apex geodesic skeletonization from an
+  existing Gaussian PLY, cameras, plant masks and per-photo leaf instances.
+  Supports leaf-only inspection followed by checked skeleton-only reuse, or
+  one full analysis. No SAM model or training is launched.
+- Source/code hashes, effective parameters, failure records, a losslessly
+  checked semantic evidence JSON, and a self-contained Canvas inspection viewer.
+  Unknown petiole paths and small residual clusters remain explicit.
+- Focused CPU fixtures and a real-data Welzo regression against the preserved
+  label arrays, source-instance associations and full skeleton JSON. This is
+  exploratory geometry, not biological accuracy validation.
+
 ## [Unreleased]
 
 ### Added

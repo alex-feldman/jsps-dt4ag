@@ -4,6 +4,11 @@ Turn a set of photographs into a 3D Gaussian splat. Built for time-series
 digital-twin work on plants, but **object-agnostic**: it reconstructs arbitrary
 scenes and contains no subject-specific logic.
 
+An optional experimental post-processing command now supplies plant-specific
+leaf labeling and provisional skeleton extraction from an existing model and
+masks: [`pipeline/scripts/organ-analysis/`](pipeline/scripts/organ-analysis/README.md).
+It runs on CPU and does not change the reconstruction stages.
+
 ### [See a reconstruction in your browser](https://alex-feldman.github.io/jsps-dt4ag/)
 
 No install needed to look. The demo page renders finished splats interactively.

@@ -67,6 +67,17 @@ anything by hand.
 
 ---
 
+## v0.3.0-alpha.1: experimental organ-analysis preview
+
+Adds a separate CPU command for leaf-label lifting and provisional skeleton
+extraction from an existing reconstruction and masks. Inputs and apex choice
+are explicit, outputs preserve provenance/uncertainty, and a real Welzo run
+must match the saved baseline. This preview does not claim that the collection
+batching and run-record milestone below is complete, or that a phytomer
+representation has been selected. See `pipeline/scripts/organ-analysis/`.
+
+---
+
 ## v0.3.0 — run a whole collection, and know what every run did
 
 Not started. Two halves of one story: driving many captures without a hand-written

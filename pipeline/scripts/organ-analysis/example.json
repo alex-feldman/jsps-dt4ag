@@ -1,0 +1,15 @@
+{
+  "capture_id": "example-capture",
+  "inputs": {
+    "ply": "/path/to/export.ply",
+    "transforms": "/path/to/colmap/transforms.json",
+    "dataparser_transforms": "/path/to/run/dataparser_transforms.json",
+    "frame_map": "/path/to/frame_map.json",
+    "images": "/path/to/original/images",
+    "plant_masks": "/path/to/production/plant-masks",
+    "leaf_instances": "/path/to/leaf_instances",
+    "image_extension": ".jpg",
+    "mask_extension": ".png"
+  },
+  "plots": false
+}
