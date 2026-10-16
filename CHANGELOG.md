@@ -14,6 +14,19 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.2] - 2026-10-16
+
+### Added
+
+- `identify_branches.py`: additive leaf-free terminal-subtree review from an
+  existing organ asset, with source IDs, main/leaf-path protection, leaf-nearby
+  and uncertain-base guards, JSON/CSV evidence, amber candidate overlays and a
+  reversible display-only preview. No candidate is deleted by detection.
+- A separately callable pure pruning function for explicit candidate selections,
+  refusing protected paths and preserving its source graph. Fixtures cover
+  shared leaf-carrying axes, terminal guards, multi-tip subtrees and source
+  immutability. Real Welzo candidate detection was inspected in a browser.
+
 ## [0.3.0-alpha.1] - 2026-10-16
 
 Experimental organ-analysis preview. This prerelease adds a separate CPU

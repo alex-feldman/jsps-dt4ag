@@ -54,6 +54,35 @@ All numerical options are in the optional `parameters` object; `analyze_organs.D
 
 This does not establish biological classification accuracy, petiole completeness, metric scale or population generalization. Leaf-free paths may be ties, tendrils, missed tissue or artifacts. A zero petiole length at the chosen apex follows from the endpoint construction; other zero-length fallbacks are missing extraction evidence. Preserve originals and human review.
 
+## Identify leaf-free branch candidates
+
+After an organ-analysis run completes, run this CPU-only review command against
+its output folder. It does not rerun masks, training, leaf labeling or skeletons:
+
+```text
+python pipeline/scripts/organ-analysis/identify_branches.py --asset /path/to/completed-organ-output --output /path/to/new-branch-review
+```
+
+It protects the main axis and paths to saved leaf endpoints, then identifies
+the remaining terminal subtrees as candidates. Shared axes carrying leaves
+farther downstream are preserved. Terminals near leaf centers and uncertain
+nearest-base connections are flagged as guarded: their candidate branches stay
+visible but are not eligible for the pruning helper.
+
+Open `viewer.html` for amber candidate edges and B-number labels. Dashed edges
+have leaf-proximity/base uncertainty. The checkbox preview without candidates
+changes only the display. `branch-candidates.json` and `.csv` retain original
+node/edge IDs, attachment/terminal nodes, guard evidence, lengths in scene units
+and blank human dispositions. The source graph/labels are preserved exactly in
+this additive review folder. `review-provenance.json` links it to the input.
+
+`branches.prune_candidates(graph, report, selected_ids)` is a pure Python helper
+that returns a derivative graph for an explicit selection without changing the
+input. It refuses mismatched graphs, unknown candidates and protected/guarded
+paths. Candidate detection and the viewer do not call this helper or delete
+anything. A leaf-free endpoint is a candidate, not proof of a string or false
+organ: tendrils and missed tissue can satisfy the same criterion.
+
 ## Verification and design
 
 `DESIGN.md` describes the algorithms and provenance. Run focused tests in the existing environment:

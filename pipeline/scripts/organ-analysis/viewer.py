@@ -3,7 +3,7 @@ import json
 import numpy as np
 
 
-def write_viewer(out, bundle):
+def write_viewer(out, bundle, candidates=None):
     with np.load(out/'leaf_ids2.npz') as arrays:
         points = {}
         for leaf in bundle['leaves']:
@@ -12,7 +12,8 @@ def write_viewer(out, bundle):
             positions = np.linspace(0,len(selected)-1,min(300,len(selected)),dtype=int)
             points[str(leaf['id'])] = selected[positions].tolist()
     graph = bundle['source_graph'] or {'skeleton_nodes':[],'skeleton_edges':[],'leaves':[]}
-    data = {'capture':bundle['capture_id'],'points':points,'graph':graph,'leaves':bundle['leaves']}
+    data = {'capture':bundle['capture_id'],'points':points,'graph':graph,'leaves':bundle['leaves'],
+            'branchCandidates':candidates}
     payload = json.dumps(data,allow_nan=False).replace('<','\\u003c')
     page = '''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -24,7 +25,12 @@ aside{padding:18px;overflow:auto;background:#19212b;overflow-wrap:anywhere}p{lin
 </style><canvas id="view" aria-label="Provisional organ points and skeleton"></canvas><aside>
 <h1 id="title"></h1><p>Drag to rotate; wheel to zoom. Reset uses dataparser z as approximate up, not gravity.</p>
 <button id="reset">Reset view</button><p><label><input id="points" type="checkbox" checked>Leaf points</label></p>
-<p><label><input id="edges" type="checkbox" checked>Skeleton</label></p><div id="legend"></div>
+<p><label><input id="edges" type="checkbox" checked>Skeleton</label></p>
+<section id="candidates" hidden><h2>Leaf-free branch candidates</h2>
+<p><label><input id="highlightCandidates" type="checkbox" checked>Highlight candidates</label></p>
+<p><label><input id="hideCandidates" type="checkbox">Preview without candidates</label></p>
+<p>Amber paths have no saved leaf-tip association. Dashed portions have nearby-leaf or uncertain-base evidence and need extra review. Any candidate may still be a tendril or missing tissue. The preview changes only this display; original data remain intact.</p>
+<p><a href="branch-candidates.csv" download style="color:#ffd166">Candidate table (CSV)</a></p><div id="candidateList"></div></section><div id="legend"></div>
 <p>Red: candidate main axis. Gray: unresolved other paths. Colored dots: at most 300 centers per leaf cluster.
 These are Gaussian centers and graph lines, not rendered splats or measured organs. Zero-length fallback paths do not mean absent petioles.
 No tag/string removal, gravity alignment, metric scale, or biological acceptance is implied.</p></aside>
@@ -33,6 +39,11 @@ const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
 const colors=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7'];
 document.getElementById('title').textContent=D.capture+' organ evidence';
 const nodes=new Map(D.graph.skeleton_nodes.map(n=>[n.id,n.xyz]));
+const candidateEdges=new Set(),candidateTerminals=[],guardedEdges=new Set(D.branchCandidates?.uncertainty_guard_edge_ids||[]);
+if(D.branchCandidates){document.getElementById('candidates').hidden=false;
+for(const c of D.branchCandidates.candidates){for(const e of c.edge_ids)candidateEdges.add(e);
+for(const n of c.terminal_node_ids)candidateTerminals.push([n,c.review_label]);
+const row=document.createElement('p');row.textContent=c.review_label+': '+c.edge_ids.length+' edges, '+c.terminal_node_ids.length+' terminal(s)'+(c.eligible_for_pruning?'':' · guarded: near a leaf or uncertain base');document.getElementById('candidateList').append(row)}}
 for(const leaf of D.leaves){const row=document.createElement('p');row.style.color=colors[leaf.id%colors.length];
 const status=leaf.association_support==='small_unreviewed_cluster'?'small unreviewed cluster':leaf.geometry_status==='unresolved_no_path'?'petiole path unresolved':'candidate geometry';
 row.textContent='Cluster '+leaf.id+' · '+leaf.point_count+' centers · '+status+(leaf.annotation?' · '+JSON.stringify(leaf.annotation,null,1):'');document.getElementById('legend').append(row)}
@@ -45,19 +56,25 @@ const X=Math.cos(yaw)*x-Math.sin(yaw)*y,Y=Math.sin(yaw)*x+Math.cos(yaw)*y;
 const up=Math.cos(pitch)*z-Math.sin(pitch)*Y,depth=Math.cos(pitch)*Y+Math.sin(pitch)*z;
 const s=Math.min(canvas.clientWidth,canvas.clientHeight)*.78/span*zoom;
 return[canvas.clientWidth/2+X*s,canvas.clientHeight/2-up*s,depth]}
-function draw(){ctx.fillStyle='#10151b';ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight);
-if(document.getElementById('edges').checked)for(const e of D.graph.skeleton_edges){const a=project(nodes.get(e.a)),b=project(nodes.get(e.b));
-ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineWidth=e.main?3:1.5;ctx.strokeStyle=e.main?'#ff514b':'#8796a3';ctx.stroke()}
+function draw(){ctx.font='12px system-ui';ctx.lineWidth=1;ctx.setLineDash([]);ctx.fillStyle='#10151b';ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight);
+if(document.getElementById('edges').checked)for(const e of D.graph.skeleton_edges){
+const candidate=candidateEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'));
+if(candidate&&document.getElementById('hideCandidates').checked)continue;
+const highlighted=candidate&&document.getElementById('highlightCandidates').checked;
+const a=project(nodes.get(e.a)),b=project(nodes.get(e.b));
+ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineWidth=e.main?3:highlighted?2.5:1.5;ctx.strokeStyle=e.main?'#ff514b':highlighted?'#ffd166':'#8796a3';ctx.setLineDash(highlighted&&guardedEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'))?[5,3]:[]);ctx.stroke();ctx.setLineDash([])}
 if(document.getElementById('points').checked){const pts=[];for(const[id,arr]of Object.entries(D.points))for(const p of arr)pts.push([...project(p),Number(id)]);
 pts.sort((a,b)=>a[2]-b[2]);for(const p of pts){ctx.beginPath();ctx.arc(p[0],p[1],2.2,0,Math.PI*2);ctx.fillStyle=colors[p[3]%colors.length];ctx.fill()}}
-for(const l of D.graph.leaves){const p=project(l.insertion_xyz);ctx.beginPath();ctx.arc(p[0],p[1],4.5,0,Math.PI*2);ctx.fillStyle=colors[l.leaf_id%colors.length];ctx.fill();ctx.strokeStyle='white';ctx.stroke();ctx.fillStyle='white';ctx.fillText(String(l.leaf_id),p[0]+7,p[1]-6)}}
+for(const l of D.graph.leaves){const p=project(l.insertion_xyz);ctx.beginPath();ctx.arc(p[0],p[1],4.5,0,Math.PI*2);ctx.fillStyle=colors[l.leaf_id%colors.length];ctx.fill();ctx.strokeStyle='white';ctx.stroke();ctx.fillStyle='white';ctx.fillText(String(l.leaf_id),p[0]+7,p[1]-6)}
+if(document.getElementById('edges').checked&&document.getElementById('highlightCandidates').checked&&!document.getElementById('hideCandidates').checked)
+for(const[n,label]of candidateTerminals){const p=project(nodes.get(n));ctx.fillStyle='#ffd166';ctx.font='bold 13px system-ui';ctx.fillText(label,p[0]+6,p[1]-5)}}
 function fit(){const d=devicePixelRatio||1;canvas.width=Math.round(canvas.clientWidth*d);canvas.height=Math.round(canvas.clientHeight*d);ctx.setTransform(d,0,0,d,0,0);draw()}
 canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)};
 canvas.onpointermove=e=>{if(!drag)return;yaw+=(e.clientX-drag[0])*.008;pitch=Math.max(-1.45,Math.min(1.45,pitch+(e.clientY-drag[1])*.008));drag=[e.clientX,e.clientY];draw()};
 canvas.onpointerup=canvas.onpointercancel=()=>drag=null;
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.35,Math.min(8,zoom*Math.exp(-e.deltaY*.001)));draw()},{passive:false});
 document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.28;zoom=1;draw()};
-for(const id of['points','edges'])document.getElementById(id).onchange=draw;
+for(const id of['points','edges','highlightCandidates','hideCandidates'])document.getElementById(id).onchange=draw;
 addEventListener('resize',fit);fit();
 </script></html>'''
     with (out/'viewer.html').open('x') as f:

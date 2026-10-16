@@ -11,7 +11,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-VERSION = '0.3.0-alpha.1'
+VERSION = '0.3.0-alpha.2'
 DEFAULTS = {'opacity_cutoff':0.3,'RD':8,'RM':4,'ZTOL':0.006,'MAXR':8,'MIN_G':15,
             'JOIN':0.35,'MERGE':0.5,'TOUCH':0.004,'TOUCH_SHARE':0.1,
             'LINK':0.009,'BIN':0.008,'LINP':0.55,'GREEN':0.03,'TIPGAP':0.006}
