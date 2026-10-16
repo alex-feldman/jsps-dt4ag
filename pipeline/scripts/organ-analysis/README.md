@@ -85,7 +85,12 @@ Design direction: favor anatomy-informed base/apex decisions and eventually a
 plant described by botanical nodes with attached leaves. Botanical nodes remain
 distinct from today's geometric graph samples. Considering established MTG or
 Helios formats is a preference, not an adoption decision or completion gate.
-Detailed node/phytomer conventions remain proposed pending Alex's approval.
+Stable anatomical IDs, separate base-to-apex ranks starting at zero when the
+basal node is known, and explicit internode endpoints with below-node phytomer
+grouping are approved design directions, not implemented behavior. Species-specific
+leaf/branch cardinality remains unresolved; no generic zero-to-many leaf default
+is approved. Distinguish buds, developed branches, petioles and observation loss
+when investigating that question.
 
 The longer-term plant-plus-environment direction includes local temperature,
 light and physiological modeling. Environmental fields versus point, surface,

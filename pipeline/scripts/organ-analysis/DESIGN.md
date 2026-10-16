@@ -300,9 +300,13 @@ node-first plant semantics with leaves attached. Botanical nodes and phytomers
 remain distinct from current geometric graph samples and leaf segmentation
 labels. Existing coordinates, topology and provenance are retained for future
 mapping. Considering established MTG/OpenAlea or Helios formats is a preference,
-not an adoption decision or a requirement for this feature. Detailed botanical
-node and phytomer conventions are proposed and await Alex's approval; no
-semantic IDs, adapter, or node-first model is implemented here.
+not an adoption decision or a requirement for this feature. Alex approved stable anatomical IDs, separate base-to-apex ranks starting at
+zero when the basal node is known, and explicit internode endpoints with
+below-node phytomer grouping. Species-specific leaf/branch cardinality remains
+unresolved; zero-to-many leaves is not an approved default. An axillary bud and
+a developed branch need distinct treatment in that investigation, alongside
+petioles and observation loss. No semantic IDs, adapter or node-first model is
+implemented here.
 
 ### Future plant-plus-environment direction
 
