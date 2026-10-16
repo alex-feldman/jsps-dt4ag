@@ -42,6 +42,31 @@ def load_ply(path):
         return data
 
 
+def dataparser_frame(t, d):
+    """Pose transform into the exported model's dataparser frame, and its scale.
+
+    t is the parsed COLMAP transforms.json, d the run's dataparser_transforms.json. The saved
+    transform already includes transforms.json's applied_transform, which the poses also
+    carry, so it is removed here."""
+    T, A = np.eye(4), np.eye(4)
+    T[:3, :] = np.array(d['transform'])
+    A[:3, :] = np.array(t.get('applied_transform', np.eye(4)[:3]))
+    T = T @ np.linalg.inv(A)
+    scale = float(d['scale'])
+    if not np.isfinite(T).all() or not np.isfinite(scale) or scale <= 0:
+        raise ValueError('Invalid camera transform/scale')
+    return T, scale
+
+
+def camera_to_world(T, scale, frame):
+    """OpenCV-convention camera-to-world matrix (x right, y down, z forward) of one
+    transforms.json frame in the dataparser frame."""
+    c2w = T @ np.array(frame['transform_matrix'])
+    c2w[:3, 3] *= scale
+    c2w[:3, 1:3] *= -1
+    return c2w
+
+
 class Geometry:
     def __init__(self, inputs):
         self.inputs = inputs
@@ -69,21 +94,13 @@ class Geometry:
         for key in ['k2','k3','k4','p1','p2']:
             if t.get(key, 0) or any(fr.get(key, 0) for fr in t['frames']):
                 raise ValueError('Unsupported nonzero distortion: ' + key)
-        T, A = np.eye(4), np.eye(4)
-        T[:3, :] = np.array(d['transform'])
-        A[:3, :] = np.array(t.get('applied_transform', np.eye(4)[:3]))
-        T = T @ np.linalg.inv(A)
-        scale = float(d['scale'])
-        if not np.isfinite(T).all() or not np.isfinite(scale) or scale <= 0:
-            raise ValueError('Invalid camera transform/scale')
+        T, scale = dataparser_frame(t, d)
         out = []
         for fr in t['frames']:
             for key in ['fl_x','fl_y','cx','cy','w','h','k1']:
                 if key in fr and fr[key] != t.get(key, 0):
                     raise ValueError('Per-frame intrinsics/distortion are not supported')
-            c2w = T @ np.array(fr['transform_matrix'])
-            c2w[:3, 3] *= scale
-            c2w[:3, 1:3] *= -1
+            c2w = camera_to_world(T, scale, fr)
             stem = Path(fr['file_path']).stem
             K = np.array([[t['fl_x'],0,t['cx']],[0,t['fl_y'],t['cy']],[0,0,1.0]])
             if not np.isfinite(c2w).all() or not np.isfinite(K).all() or t['fl_x'] <= 0 or t['fl_y'] <= 0:

@@ -1,0 +1,28 @@
+{
+  "capture_id": "example-capture",
+  "inputs": {
+    "transforms": "/path/to/colmap/transforms.json",
+    "dataparser_transforms": "/path/to/run/dataparser_transforms.json",
+    "cluster_report": "/path/to/cluster-plants-report"
+  },
+  "plants": [
+    {"name": "plant-a", "ply": "/path/to/cluster-plants-derivatives/plant-a.ply",
+     "rows": "/path/to/cluster-plants-derivatives/plant-a_rows.npy"},
+    {"name": "plant-b", "clusters": [1, 2]}
+  ],
+  "detached": [
+    {"name": "c6", "clusters": [6]}
+  ],
+  "soil": {
+    "colmap_sparse": "/path/to/colmap/sparse/0",
+    "soil_masks": "/path/to/soil/masks",
+    "plant_masks": "/path/to/production/plant/masks",
+    "frame_map": "/path/to/frame_map.json",
+    "mask_extension": ".png",
+    "base_plant": "plant-a"
+  },
+  "prefer_soil": false,
+  "parameters": {
+    "slice": 0.02
+  }
+}

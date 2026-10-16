@@ -132,6 +132,82 @@ Synthetic tests check the following:
 
 Single linkage chains: two plants that touch, or a line of floaters between them, merge at a small radius. The join radii and direct gaps are reported so that this is visible rather than hidden in a label. A sparsely photographed plant fragments at a radius suited to the walked-around target. HDBSCAN was tried on the Welzo neighbor as a density-based second opinion. It agreed with the fixed-radius structure and does not rescue such fragmentation, so it is not part of the command. A different linkage, radius rule, opacity rule or faint-attachment rule changes the separation and needs new regression evidence like the above.
 
+## Plant orientation: up, plant axes and detached clusters
+
+`plant_orientation.py` (the library) and `orient_plants.py` (the command) estimate the scene's up direction, each plant's vertical axis and radius profile, and whether a small detached cluster stacks inside one plant's column. Alex decided on 2026-10-17 that up and plant axes belong in the pipeline whether or not detached clusters exist, so that later stages (skeleton root, apex rules) have a principled vertical. The README owns the command, config and outputs. `plant_orientation.DEFAULTS` owns the settings.
+
+**The numeric settings are experimental defaults.** They were set on 2026-10-17 from the Welzo M1 captures and are not tuned or validated across captures. Each run records the values it used. **No agent visual judgment selects anything here.** Every status, choice and assignment follows from code and recorded settings; images and overlays are not read. The stage reports and records; like plant clustering, it never edits a derivative.
+
+### Up, method A: camera ring (always available)
+
+Camera centers and image-up vectors come from `transforms.json` mapped into the dataparser frame. The mapping is the one `Geometry.cameras` uses; `geometry.dataparser_frame` and `geometry.camera_to_world` were factored out of it unchanged. Image up is minus the OpenCV camera y axis.
+
+The normal of the SVD plane through the centers is the candidate up. Its sign is chosen to agree with the mean image-up vector. With nerfstudio's `orientation_method: up` that mean is dataparser +z by construction, so A's sign agrees with dataparser z, while its direction comes from the camera layout.
+
+The ring is refused, with a reason and never a guess, when any of these holds:
+- fewer than `min_cameras` (8) cameras;
+- planarity, the RMS distance from the plane divided by the mean in-plane distance from the centroid, above `max_planarity` (0.25);
+- an ambiguous sign: the absolute cosine between the mean image-up and the normal is below `min_sign_cos` (0.1). This guard was added to the specification so that a sign is never taken from a near-perpendicular vote.
+
+### Up, method B: soil plane (optional)
+
+This is the October 2 pilot's method (`clutter_lift.py` in the Welzo clutter investigation, `posthoc-clutter-lifting-design.md`), ported:
+- **Coordinates.** Raw COLMAP `points3D.bin` coordinates are mapped with the saved dataparser transform, then scaled including translation. Raw points lack `applied_transform`, which the saved transform already contains.
+- **Votes.** Each point is voted on at its own feature-track observations (`images.bin` keypoints), not at every pixel it projects behind. A point is soil when it has at least `soil_min_hits` (2) hits and a hit share of at least `soil_hit_share` (0.6) among tracked views that have a soil mask. A view votes at most once per point.
+- **Masks.** Production plant masks are subtracted from soil masks in memory; the originals stay untouched. SAM2-HQ filled one pilot soil mask across leaves.
+- **Neighborhood.** Points within `soil_local_radius` (0.3) of a base estimate are kept, and exact duplicate coordinates are merged for fitting only.
+- **Fit.** Deterministic three-point RANSAC (seed 42, 1,000 trials, tolerance 0.004), then SVD of the largest consensus. At least 30 candidates and 30 inliers are required.
+
+The command differs from the pilot in two places:
+- **Base.** The base estimate is the lowest slice axis point of `base_plant`, computed under camera-ring up. The pilot used its skeleton root. Without camera-ring up, method B does not run.
+- **Sign.** The normal points toward the base plant's mean opacity-kept center. The pilot pointed it toward leaf cluster 4.
+
+The binary readers are local, so neither nerfstudio nor torch is imported.
+
+The soil plane is a bed-orientation cue, not gravity. On October 2 the rockwool plug around the stem was excluded by the soil prompt, so bed level and stem-emergence level are different references.
+
+### Choice
+
+- If B exists and the angle between A and B is at most `max_up_angle_deg` (10), B is used and both are reported.
+- If the angle is larger, `up_disagreement` is set. A is used unless the config sets `prefer_soil`, in which case B is used.
+- If B is absent or refused, A is used and B's status is recorded.
+- If A is refused, no up is chosen. The command writes the refusal and exits with code 3; it does not fall back to dataparser z or to B alone.
+
+### Plant axis
+
+Opacity-kept centers (sigmoid(opacity) above `opacity_cutoff`) are projected on up. They are cut into `slice`-thick (0.02) bins starting at the lowest center. A bin with at least `min_slice_points` (30) centers gives:
+- the component-wise median of its horizontal coordinates, in a deterministic basis perpendicular to up;
+- the `radius_percentile` (95th) distance from that median, the radius.
+
+The axis polyline places each median at its bin's center height. Bins below the minimum are skipped and counted as gaps. The height range runs from the lowest kept bin's floor to the highest kept bin's ceiling. Straightness is the largest horizontal deviation of the bin medians from a least-squares line in height; the RMS deviation and the line's tilt from up are reported as well.
+
+### Detached-cluster assignment
+
+For each detached cluster:
+1. Take its median height along up and its median horizontal position.
+2. For every plant, look up the axis position and radius R at that height: linear interpolation between bin centers, or the nearest bin, flagged, outside them. Compute r, the horizontal distance from the cluster to the axis.
+3. Assign to plant P when all three hold:
+   - r_P / R_P is at most `assign_max_ratio` (1.0);
+   - the cluster's height is within P's height range widened by `height_margin_slices` (1) slices;
+   - every other plant Q has r_Q / R_Q of at least `other_min_ratio` (2.0).
+
+Otherwise the cluster is `unassigned`, and so is any cluster when some plant has no axis. Every ratio, lookup and test result is written.
+
+### Checks and changing it
+
+The synthetic tests cover:
+- a tilted camera ring, whose normal and sign are recovered (sign from image-up);
+- the ring's refusals (too few cameras, non-ring, ambiguous sign);
+- a tilted synthetic soil plane with outliers, recovered and signed toward the plant;
+- the vote rule and its refusals;
+- the binary COLMAP readers and one-vote-per-view track voting;
+- the choice rule (agreement, disagreement with and without `prefer_soil`, refused A);
+- a vertical cylinder giving a straight axis with the expected radius;
+- a blob inside one plant's column assigned, and blobs between plants or above them unassigned;
+- the command end to end, including a refused-up run and config refusals.
+
+Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
+
 ## Plant asset package and single-leaf export
 
 `plant_asset.py` owns the versioned contract and its validator; `package_plant_asset.py` emits it; `export_leaf.py` and the viewer's leaf control export one leaf. The README owns commands, the decisions file and the field table.

@@ -2,7 +2,7 @@
 
 Lift existing per-photo leaf instances onto an exported Gaussian splat, then extract a provisional leaf-associated skeleton. This is a separate post-reconstruction command. It does not retrain the model, generate masks, install packages, select MTG, or reconstruct missing tissue.
 
-When an export holds more than one plant, separate them first with `cluster_plants.py` ([below](#cluster-plants-and-write-per-plant-derivatives)). It needs only the PLY. It reports 3D clusters and their separations, and writes a derivative PLY for each plant you select explicitly.
+When an export holds more than one plant, separate them first with `cluster_plants.py` ([below](#cluster-plants-and-write-per-plant-derivatives)). It needs only the PLY. It reports 3D clusters and their separations, and writes a derivative PLY for each plant you select explicitly. `orient_plants.py` ([below](#orient-plants-up-direction-plant-axes-and-detached-clusters)) then estimates the scene's up direction and each plant's vertical axis, and tests detached clusters against those axes.
 
 Run with the pipeline's existing Python environment, which supplies NumPy, SciPy, NetworkX and Pillow. Optional static plots also require Matplotlib. No Torch/CUDA model is loaded. The output viewer uses plain HTML/JavaScript Canvas 2D and needs no external libraries or server.
 
@@ -134,6 +134,53 @@ Limits:
 - Non-plant objects attached to a plant (clips, tags, strings) stay in its cluster.
 
 On the 74,180-row October 15 Welzo export, the command took about 8.5 s and peaked at 260 MiB under `ulimit -v 2500000`. Its M1 and neighbor derivatives were byte-identical to the separations made by hand on October 15. Run it under a hard memory cap anyway. `guarded_query_pairs` estimates the pair count and refuses an over-budget radius query for code that still needs one.
+
+## Orient plants: up direction, plant axes and detached clusters
+
+`orient_plants.py` computes three things and records them; it edits no derivative and needs no GPU:
+1. **Up direction** of the scene, in the export's dataparser frame.
+2. **Each plant's vertical axis** and horizontal radius profile.
+3. **Detached-cluster assignment**: which plant, if any, a small detached cluster belongs to by vertical stacking.
+
+Every choice follows from the recorded settings. No visual judgment selects anything. `plant_orientation.DEFAULTS` owns the setting names and values. They are experimental defaults, not universal tuning; `DESIGN.md` explains each rule.
+
+### Inputs
+
+Copy `plant-orientation-example.json`. Relative paths resolve against the JSON file.
+- `inputs.transforms` and `inputs.dataparser_transforms`: the COLMAP `transforms.json` and the trained run's `dataparser_transforms.json`. Every frame's camera counts.
+- `inputs.cluster_report` (optional): a completed `cluster_plants.py` output folder. Its `labels.npz` and hashed source PLY supply clusters by ID. The report's opacity cutoff must equal this run's.
+- `plants`: one entry per plant, each with a unique `name` and exactly one of:
+  - `ply`, a per-plant derivative, optionally with `rows` (its `{name}_rows.npy`, source rows of the report's PLY);
+  - `clusters`, IDs in the cluster report.
+- `detached` (optional): a list in the same form, or `"auto"`. Auto takes every report cluster smaller than `detached_max_share` of the largest, excluding clusters a plant names or whose rows a plant's `rows` contain. A plant given as a PLY without `rows` cannot exclude its own clusters, so prefer an explicit list.
+- `soil` (optional; enables method B): `colmap_sparse` (folder with `points3D.bin` and `images.bin`), `soil_masks`, `plant_masks` (production masks, subtracted from soil masks in memory), `frame_map` (frame stem to source name, as for organ analysis), optional `mask_extension` (default `.png`) and `base_plant` (required with more than one plant). `transforms.json` frames must carry `colmap_im_id`. A view without a soil mask is unknown, not a negative.
+- `prefer_soil` (default false): what to use when the two up estimates disagree.
+- `parameters`: overrides of `plant_orientation.DEFAULTS`.
+
+### Run
+
+```text
+python pipeline/scripts/organ-analysis/orient_plants.py --config /path/to/orientation.json --output /path/to/new-orientation --validate-only
+python pipeline/scripts/organ-analysis/orient_plants.py --config /path/to/orientation.json --output /path/to/new-orientation
+```
+
+The output directory must be new; `--validate-only` creates nothing. Exit code 0 means complete. Exit code 3 means up was refused: `orientation.json` then records why and holds no axes or assignments. Exit code 2 means invalid input or a failed run, which keeps its failure record.
+
+### Outputs
+
+- `orientation.json` (`schema: plant-orientation`, `schema_version` 1):
+  - `up_camera_ring` and `up_soil_plane`: each method's normal, status, refusal reason and diagnostics (planarity, singular values, vote and inlier counts, base and sign references, angle to dataparser z);
+  - `up`: the chosen vector, method, `angle_a_b_deg`, `up_disagreement` and the reason;
+  - `plants.{name}.axis`: slices (height, point count, median horizontal position, 3D axis point, radius), `polyline`, `radius_profile`, `height_range` and `straightness`;
+  - `detached.{name}`: median height and horizontal position, and per plant `r`, `R`, `ratio`, how the axis was looked up and the height-range test. Also the `assignment` (a plant name or `unassigned`) and its reason.
+  - Also the effective `parameters`, `horizontal_basis`, input and code hashes, repository revision and version.
+- `input-manifest.json` and `run-record.json`, as for the other stages, with per-step wall time and peak RSS.
+
+Limits:
+- Up is a geometric estimate, not measured gravity. The camera ring gives the operator's walking plane. The soil plane gives a local bed plane, and a raised plug or tilted bed separates it from the stem-emergence level.
+- Units are scale-free.
+- A plant axis is a sequence of slice medians: leaves, tendrils and a neighbor's overlap all move it.
+- An `unassigned` cluster is not evidence that it belongs to no plant.
 
 ## Plant asset package
 
