@@ -14,6 +14,19 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.3] - 2026-10-16
+
+### Added
+
+- Unique IDs for every source-graph endpoint, including branch suffixes such as
+  `b5-a`, and additive human review with retained leaf-connected branches kept
+  out of the candidate set. IDs remain stable when a group is retained.
+- `review_branches.py`: records explicit dispositions, can flag an incoming
+  path for review even when it overlaps a saved leaf route, and optionally
+  exports a separate graph pruned only at explicitly confirmed-false groups.
+  The original graph and raw labels remain unchanged. The viewer distinguishes
+  confirmed-cleanup preview, candidate preview and endpoint labels.
+
 ## [0.3.0-alpha.2] - 2026-10-16
 
 ### Added

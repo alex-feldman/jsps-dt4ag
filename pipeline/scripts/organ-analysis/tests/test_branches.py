@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from branches import identify_candidates, prune_candidates, graph_digest, edge_key
+from branches import identify_candidates, prune_candidates, graph_digest, edge_key, apply_review
 
 
 def fixture(extra=None):
@@ -95,6 +95,34 @@ class BranchTests(unittest.TestCase):
         graph['skeleton_edges'].append({'a':4,'b':6,'main':False})
         with self.assertRaisesRegex(ValueError,'tree'):
             identify_candidates(graph,points,labels,.01)
+
+    def test_every_endpoint_has_unique_stable_id(self):
+        graph,points,labels=fixture(({7:[1,2,1]},[(5,7)]))
+        report=identify_candidates(graph,points,labels,.01)
+        endpoints=report['endpoint_records']
+        self.assertEqual(len(endpoints),5)
+        self.assertEqual(len({e['endpoint_id'] for e in endpoints}),5)
+        self.assertEqual({e['endpoint_id'] for e in endpoints if e['review_group']=='B1'},{'b1-a','b1-b'})
+
+    def test_retained_leaf_connected_branch_not_candidate_and_id_stable(self):
+        graph,points,labels=fixture()
+        report=identify_candidates(graph,points,labels,.01)
+        reviewed=apply_review(graph,report,{'candidate_dispositions':{'B1':'retain_leaf_connected'}})
+        self.assertEqual(reviewed['candidates'],[])
+        self.assertEqual(reviewed['retained_branches'][0]['review_label'],'B1')
+        self.assertEqual(next(e for e in reviewed['endpoint_records'] if e['source_node_id']==6)['endpoint_id'],'b1-a')
+        self.assertIn('5-6',reviewed['protected_edge_ids'])
+        self.assertEqual(report['candidates'][0]['human_disposition'],None)
+
+    def test_human_upstream_candidate_can_overlap_saved_leaf_route(self):
+        graph,points,labels=fixture(({7:[1,1,1]},[(3,7)]))
+        report=identify_candidates(graph,points,labels,.01)
+        reviewed=apply_review(graph,report,{'candidate_dispositions':{'B1':'confirmed_false'},'upstream_candidate_labels':['B2']})
+        extra=reviewed['extra_review_paths'][0]
+        self.assertEqual(extra['edge_ids'],['1-3'])
+        self.assertTrue(extra['intersects_saved_leaf_path'])
+        self.assertFalse(extra['eligible_for_pruning'])
+        self.assertEqual(reviewed['candidates'][0]['status'],'human_confirmed_false')
 
 
 if __name__=='__main__':unittest.main()

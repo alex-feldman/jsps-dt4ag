@@ -124,12 +124,87 @@ def identify_candidates(graph, points, labels, tip_gap):
     # Short stable review labels, with the full edge-derived identity retained.
     for i,c in enumerate(candidates,1):
         c['review_label']='B'+str(i)
-    return {'schema':'leaf-free-branch-candidates-v1','source_graph_sha256':graph_digest(graph),
+    report = {'schema':'leaf-free-branch-candidates-v1','source_graph_sha256':graph_digest(graph),
             'tip_gap_scene_units':tip_gap,'protected_edge_ids':sorted(protected|guarded),
             'known_leaf_path_edge_ids':sorted(protected),'uncertainty_guard_edge_ids':sorted(guarded-protected),
             'leaf_support_records':associations,'terminal_leaf_proximity':endpoint_support,'candidates':candidates,
                    'limits':['Candidate topology is not confirmed clutter','Tendrils or missed tissue can be candidates',
                       'Nearest-base guards preserve uncertainty, not measured attachment','No graph or point was deleted']}
+    report['endpoint_records']=endpoint_records(graph,report)
+    return report
+
+
+def endpoint_records(graph,report):
+    """Every degree-one node gets a unique, source-scoped review identity."""
+    degree={n['id']:0 for n in graph['skeleton_nodes']}
+    for e in graph['skeleton_edges']:
+        degree[e['a']]+=1;degree[e['b']]+=1
+    named={}
+    def suffix(i):
+        result=''
+        while True:
+            result=chr(97+i%26)+result
+            i=i//26-1
+            if i<0:return result
+    for branch in report['candidates']+report.get('retained_branches',[]):
+        for i,node in enumerate(sorted(branch['terminal_node_ids'])):
+            if node in named:raise ValueError('Endpoint assigned to multiple review groups')
+            named[node]={'endpoint_id':branch['review_label'].lower()+'-'+suffix(i),'source_node_id':node,
+                         'review_group':branch['review_label'],'status':branch['status'],
+                         'human_disposition':branch.get('human_disposition')}
+    for node,deg in degree.items():
+        if deg==1 and node not in named:
+            named[node]={'endpoint_id':'e'+str(node),'source_node_id':node,'review_group':None,
+                         'status':'noncandidate_endpoint','human_disposition':None}
+    if any(degree[n]!=1 for n in named):raise ValueError('Review endpoint is not a tree endpoint')
+    return [named[n] for n in sorted(named)]
+
+
+def apply_review(graph,report,decisions):
+    if graph_digest(graph)!=report['source_graph_sha256']:
+        raise ValueError('Review belongs to a different graph')
+    result=copy.deepcopy(report)
+    by_label={c['review_label']:c for c in result['candidates']}
+    dispositions=decisions.get('candidate_dispositions',{})
+    if set(dispositions)-set(by_label):raise ValueError('Unknown review label')
+    retained=[]
+    for label,decision in dispositions.items():
+        if decision not in ['confirmed_false','retain_leaf_connected','unclear']:
+            raise ValueError('Unknown human disposition')
+        branch=by_label[label]
+        branch['human_disposition']=decision
+        if decision=='retain_leaf_connected':
+            branch['status']='retained_leaf_connected'
+            branch['eligible_for_pruning']=False
+            retained.append(branch)
+            result['protected_edge_ids']=sorted(set(result['protected_edge_ids'])|set(branch['edge_ids']))
+        elif decision=='confirmed_false':
+            branch['status']='human_confirmed_false'
+    result['candidates']=[c for c in result['candidates'] if c not in retained]
+    result['retained_branches']=retained
+    tree=nx.Graph()
+    positions={n['id']:n['xyz'] for n in graph['skeleton_nodes']}
+    for e in graph['skeleton_edges']:tree.add_edge(e['a'],e['b'])
+    def match(xyz):
+        matches=[n for n,p in positions.items() if p==xyz]
+        if len(matches)!=1:raise ValueError('Ambiguous main-path coordinate')
+        return matches[0]
+    main=[match(p) for p in graph['main_stem']]
+    extra=[]
+    for label in decisions.get('upstream_candidate_labels',[]):
+        if label not in by_label:raise ValueError('Unknown upstream candidate label')
+        path=nx.shortest_path(tree,main[0],by_label[label]['attachment_node_id'])
+        start=max(i for i,n in enumerate(path) if n in set(main))
+        path=path[start:]
+        edges=[edge_key(a,b) for a,b in zip(path,path[1:])]
+        extra.append({'review_label':label.lower()+'-stem','node_ids':path,'edge_ids':edges,
+                      'status':'human_requested_upstream_candidate','human_disposition':'candidate_only',
+                      'intersects_saved_leaf_path':bool(set(edges)&set(result['known_leaf_path_edge_ids'])),
+                      'eligible_for_pruning':False})
+    result['extra_review_paths']=extra
+    result['human_review_source']=decisions.get('source','user-supplied review')
+    result['endpoint_records']=endpoint_records(graph,result)
+    return result
 
 
 def prune_candidates(graph, report, candidate_ids):

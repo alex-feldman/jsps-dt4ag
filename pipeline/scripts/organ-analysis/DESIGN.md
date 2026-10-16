@@ -39,6 +39,17 @@ The HTML highlights candidates in amber, labels their terminals, and offers a di
 
 Regression fixtures cover leaf-carrying shared axes, leaf proximity, nearest-base uncertainty, merged multi-terminal candidate subtrees, graph/report identity, preserved originals and pure-function pruning. A real cucumber review checks graph/NPZ hashes and inspects the candidate overlay alongside the user's marked screenshot. The screenshot's boxes are human visual guidance, not calibrated 3D node selections or truth segmentation.
 
+`branches.endpoint_records` assigns every degree-one node a unique ID, using
+stable source-node order for group suffixes, including groups later retained.
+`apply_review` copies the report, records explicit user dispositions and moves
+leaf-connected groups out of the candidate set without renumbering. Incoming
+review paths are traced back to the last shared main-axis node. They remain
+separate from leaf-free candidates and are not deletion-authorized when they
+intersect the recorded leaf support. `review_branches.py` writes another fresh
+review directory and can export a separate confirmed-only derivative graph;
+raw source evidence remains intact. No source-photo or Gaussian-rendering
+feature is part of this update.
+
 Focused tests cover malformed/truncated PLY, camera-frame mapping, unsupported distortion, missing/wrong-size masks, explicit apex requirement, output protection and reused-label integrity. A synthetic tiny scene exercises the public command, leaf-only/skeleton-stage flow and checked failure path. The real Welzo run must reproduce the baseline arrays, leaf memberships and graph; inspect a generated overlay/viewer in a real browser. A raw hand-check can inspect graph endpoints in `skeleton.json` and source-instance membership in `leaf_ids2.json`, independently of the wrapper's status.
 
 Any new camera model, visibility rule, threshold, topology repair or organ heuristic changes the analysis and requires new regression/evidence. Do not tune per reconstruction arm or silently replace source scripts inside a frozen experiment. New datasets need their own review, apex choice and parameter checks. Metric scale, measured radii, missing petiole centerlines, MTG serialization and Helios generation are outside this command's claims.

@@ -85,6 +85,32 @@ organ: tendrils and missed tissue can satisfy the same criterion.
 
 ## Verification and design
 
+### Record endpoint review
+
+Every graph endpoint has a unique source-scoped ID: a group's sorted terminal
+node IDs become `b5-a`, `b5-b`, etc.; other degree-one nodes use `e{node_id}`.
+Group IDs are retained across review and are not renumbered after rejection.
+
+```text
+python pipeline/scripts/organ-analysis/review_branches.py --review /path/to/branch-review --decisions /path/to/decisions.json --output /path/to/new-reviewed-output
+```
+
+The decisions JSON contains `candidate_dispositions` mapping existing B labels
+to `confirmed_false`, `retain_leaf_connected`, or `unclear`; an optional `source`
+records review provenance. `upstream_candidate_labels` optionally flags the
+path from the main axis to a group's attachment. Such paths may overlap saved
+leaf routes, so they are review-only and never automatically pruned.
+
+Retained groups are removed from the candidate set and kept in a separate
+retained-branches table. The viewer labels every endpoint and marks incoming
+review-only paths purple; these stay in cleanup previews when leaf support is
+unresolved. `endpoints.csv` maps human-readable IDs back to source node IDs.
+Optional `--export-confirmed-pruned` creates `skeleton-confirmed-pruned.json`
+for explicitly confirmed-false, unguarded selections; it never overwrites the
+source graph or alters leaf masks/point labels. The viewer's confirmed-cleanup
+preview corresponds to these confirmed branches, while candidate preview may
+also hide unconfirmed groups for inspection only.
+
 `DESIGN.md` describes the algorithms and provenance. Run focused tests in the existing environment:
 
 ```text
