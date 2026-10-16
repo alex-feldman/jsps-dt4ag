@@ -111,6 +111,11 @@ in this source snapshot.
 
 ### Added
 
+- Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
+  and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the
+  explicit COLMAP image-sequence mode, camera review before training, and the
+  unverified direct-video route.
+
 - Add the MIT license, copyright 2026 Alexander Feldman.
 
 - **`pipeline/scripts/reconstruction-compare/`**: `compare_masked_reconstructions.py` renders two masked

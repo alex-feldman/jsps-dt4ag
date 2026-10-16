@@ -520,13 +520,13 @@ class Dt4agConfig:
         SUBSTRING test, and it inspects ONLY the last component of
         ``images_subpath``.
 
-        **Under the canonical layout this can never return "video"**, because
-        that last component is always the literal ``images``, which cannot
-        contain "frames". That is not an oversight to route around: video input
-        is not a supported path in v0.2.0 (``LAYOUT.md`` describes a capture as
-        photographs, and ``[nerfstudio] scene_type = video`` is unexercised).
-        Set ``[colmap] data_type = video`` explicitly if you are experimenting.
-        Real support is a v1.0 item; see ``ROADMAP.md``.
+        **Under the canonical layout this cannot infer "video"**, because the
+        last component is the literal ``images``. Set ``[colmap] data_type``
+        explicitly for an extracted, ordered video-frame sequence. The explicit
+        ``video`` value was exercised on such a sequence in October 2026. It is
+        passed to COLMAP and does not decode a movie. The separate
+        ``[nerfstudio] scene_type = video`` route remains unverified; see
+        ``QUICKSTART.md`` and ``ROADMAP.md``.
 
         The heuristic still fires for a non-canonical ``images_subpath`` ending
         in something like ``capture-a-frames``, which is how the pre-2026-08-18

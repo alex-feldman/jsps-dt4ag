@@ -7,9 +7,9 @@ is test output.
 ## The one concept: a capture
 
 A **capture** is the atomic unit that reconstructs together: one object, at one
-point in time, photographed from however many cameras. One capture in, one
-reconstruction out. There is no smaller unit the pipeline can act on and no
-larger one it understands.
+point in time, represented by still photographs or by frames sampled from a
+video. One capture in, one reconstruction out. There is no smaller unit the
+pipeline can act on and no larger one it understands.
 
 Everything *above* a capture is your organisational choice and the pipeline
 treats it as an opaque relative path. This is deliberate. Real collections
@@ -37,6 +37,8 @@ data_root/
         images/<camera>/*.jpg    the photographs
         masks/<camera>/*.png     optional, one per photograph, same relative path
         masks_<variant>/...      optional further mask sets, same shape as masks/
+        source/                   optional preserved source video; user-owned
+        provenance/               optional extraction and source manifest; user-owned
         capture.ini              optional provenance (see below)
 
   derived/                       pipeline-owned, disposable, rebuildable
@@ -55,6 +57,10 @@ data_root/
 `<collection path…>` is the same relative path in the `datasets/`, `derived/`,
 `colmap/` and `outputs/` trees, so a capture's inputs, intermediates and
 training outputs are all findable from any one of them.
+
+The optional `source/` and `provenance/` directories are user-owned records;
+the pipeline ignores them. Only image files under the configured
+`images_subpath` enter reconstruction.
 
 **Several mask sets on one capture.** A capture may hold `masks_<variant>/`
 siblings beside `masks/`, each the same parallel tree: different prompts,
@@ -162,8 +168,12 @@ One nearby rule IS a substring test and is easy to confuse with this one: the
 `[colmap] data_type = auto` heuristic treats a directory whose name contains
 `frames` as video. It inspects only the last component of `images_subpath`,
 which under this layout is always `images`, so **`auto` can never infer video
-for a canonical capture**. Video input is not supported in v0.2.0; it is a v1.0
-item (`ROADMAP.md`). Set `data_type` explicitly to experiment.
+for a canonical capture**. For an extracted, ordered video-frame sequence, set
+`data_type` explicitly if using COLMAP's video matching mode. That setting
+selects COLMAP behavior on the image sequence; it does not read or decode the
+source movie. The extracted-frame workflow is in `QUICKSTART.md`. Direct
+`[nerfstudio] scene_type = video` ingestion remains unverified and is tracked in
+`ROADMAP.md`.
 
 **An explicitly configured `images_subpath` bypasses discovery entirely** and
 works against any layout, with or without an `images/` level. So the convention is

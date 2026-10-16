@@ -15,13 +15,14 @@ unversioned on a removable drive.
   `uv.lock` at the repository root via `uv sync --frozen`.
 - **Nobody but its author has installed it from scratch**, which is the open
   question the alpha exists to answer.
-- **It accepts raw photographs plus separate mask files** and composites them
-  itself (`[dataset] use_masks`, since v0.2.0). One capture can carry several
-  mask sets as `masks_<variant>/` siblings, selected by name with `[dataset]
-  mask_variant` and never guessed between. It does not *create* masks;
-  producing them is a separate concern with its own repository (and a variant
-  is produced by passing that tool's `--masks` explicitly).
-- **There is no LICENSE or citation file yet.** See "Known gaps" below.
+- **It accepts still photographs or extracted video frames, with optional
+  separate mask files**, and composites supplied masks itself (`[dataset]
+  use_masks`, since v0.2.0). One capture can carry several mask sets as
+  `masks_<variant>/` siblings, selected by name with `[dataset] mask_variant`
+  and never guessed between. It does not *create* masks or decode movies.
+  Producing masks is a separate concern with its own repository; extracting
+  video frames is an external preparation step documented in `QUICKSTART.md`.
+- **There is no `CITATION.cff` file yet; the repository has an MIT `LICENSE`.** See "Known gaps" below.
 
 ## What is here
 
@@ -53,6 +54,9 @@ unversioned on a removable drive.
   separate repository of its own. Note that `scripts/mask-analysis/compare_masks.py`
   is a duplicate of the copy in that repository; which one is canonical is
   not yet decided.
+- **Video decoding and frame sampling.** Prepare and review a normal image
+  capture before running this pipeline. Follow the video-derived sequence
+  workflow in `QUICKSTART.md`.
 
 ## Installing and running it
 
@@ -159,7 +163,7 @@ Two caveats worth knowing rather than rediscovering:
 - **The notebook carries scratch cells** (repeated `!ls` variations) and an
   empty `TODO` cell in the middle of the pipeline.
 - **The masking script fails silently.** See `scripts/rgb-mask/README.md`.
-- **No LICENSE or citation file yet**, and no evaluation step: the pipeline ends
+- **No `CITATION.cff` file yet**, and no evaluation step: the pipeline ends
   at export. (`ns-eval` has to be run by hand.)
 - **COLMAP and ffmpeg are still outside the lockfile.** They are binaries and
   cannot come from uv. See the COLMAP recipe in `QUICKSTART.md`.

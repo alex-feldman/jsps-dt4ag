@@ -157,16 +157,20 @@ Not started.
 - [ ] The published documentation describes a pipeline someone has actually run
       from it, start to finish, without the author present
 - [ ] A dataset and its reconstruction are published together, each citable
-- [ ] **Video input is supported end to end.** A capture can be a video rather
-      than a directory of photographs: frames extracted, the canonical layout
-      populated from them, and masks applied to the extracted frames. Today the
-      plumbing exists but is unexercised and half-blind: `[nerfstudio]
-      scene_type = video` and `[colmap] data_type = video` are settable and
-      never tested, and the `auto` heuristic that infers video from a directory
-      named `frames` cannot fire under the canonical layout, where that
-      component is always `images` (`pipeline/LAYOUT.md`). Either make it work
-      or delete the half-support, because a settable option that is neither
-      tested nor reachable is worse than an absent one
+- [x] **Video-derived frame sequences run through the image pipeline.** The
+      documented workflow samples and reviews frames outside the pipeline,
+      stores them in the canonical `images/` layout, then runs the ordinary
+      image stages. This route was exercised on a real capture in October 2026.
+      Explicit `[colmap] data_type = video` was tested on that extracted image
+      sequence; it selects COLMAP's mode and does not decode the source movie.
+      See `pipeline/QUICKSTART.md`.
+- [ ] **Direct video-file ingestion is supported end to end.** A video file is
+      passed to the pipeline, which coordinates extraction, camera solving,
+      optional masks and reconstruction. `[nerfstudio] scene_type = video` is
+      settable but has not been verified with this pipeline's existing-COLMAP
+      reuse workflow. Keep this criterion open until that route is tested or
+      the setting is removed. The legacy `data_type = auto` heuristic cannot
+      infer video under the canonical `images/` layout (`pipeline/LAYOUT.md`).
 
 **Acceptance:** the repository stands on its own as a research artefact.
 

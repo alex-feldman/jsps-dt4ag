@@ -65,11 +65,16 @@ limit.
 
 ## What this repository does not do
 
-**The pipeline begins at MASKED images and does not create masks.** Mask
-generation lives in a separate repository (`samask`) and mask application is a
-manual pre-step. Point it at raw photographs and it will happily reconstruct
-the background along with the subject, which is a supported thing to do; you
-then crop or delete those splats yourself.
+**The pipeline consumes images and does not create masks or decode video.**
+Segmentation lives in the separate `samask` repository. When mask files are
+supplied, `[dataset] use_masks = true` makes the pipeline composite them as
+alpha before the stages. A movie can be used by first extracting a curated,
+reviewed set of ordered
+frames into a normal capture `images/` directory, then running the image
+pipeline. Keep the extraction interval and timestamp provenance with the
+capture. See the [video-derived image sequence workflow](pipeline/QUICKSTART.md#video-derived-image-sequences)
+for the verified steps and timestamp limits. Raw images can also be
+reconstructed with `use_masks = false`, including their background.
 
 The datasets are not here either: roughly 99 GB of images, COLMAP workspaces
 and training outputs live outside version control.

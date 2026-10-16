@@ -665,12 +665,11 @@ in about 20 minutes. The zip's `README.txt` repeats all of this.
 `sudo apt install unzip`, or use the environment you just built:
 `uv run --frozen python -m zipfile -e <zip> <destination>`.
 
-**Your own images work too**, with two caveats. There is no reference value to
-compare against, so a different PSNR means different data rather than a broken
-install. And read section 7 first: the pipeline starts at **masked** images, so
-raw photos reconstruct the background along with the subject, which is a
-supported thing to do but gives you far more gaussians and something to crop
-afterwards.
+**Your own still photos or video-derived frames work too.** There is no
+reference score for your capture, and the pipeline reads image files rather
+than a movie. Masks are optional: without them, the reconstruction includes
+background from the photos. See section 7 for the video-frame workflow and the
+optional mask pre-step.
 
 ### What makes a capture reconstructable, and what no setting can fix
 
@@ -975,32 +974,30 @@ Growing means alive.
 
 ## 7. Where this pipeline starts, and what it does NOT do
 
-**The pipeline begins at photographs plus masks. It does not create masks.**
+**The pipeline starts from an image sequence. Masks are optional. It does not
+decode a movie or generate masks.**
 
-Its four stages are `colmap`, `process`, `train`, `export`. Masking is not a
-stage: it is a pre-step that runs before them, compositing each mask into its
-photograph's alpha channel, after which every stage is unchanged and unaware. If
-you point it at raw photos with `use_masks = false` it will happily reconstruct
-them, background and all.
+Its four stages are `colmap`, `process`, `train`, and `export`. When masks are
+enabled, the runner first composites each mask into the corresponding image's
+alpha channel. The later stages do not know whether those images were
+photographed individually or extracted from a video.
 
-The full capture-to-splat workflow is six steps. This repository automates the
-last five:
+For a video-derived capture, the workflow before the pipeline is:
 
 ```
-  1. capture photos                         you
-  2. generate masks (SAM3)                  samask, a SEPARATE repository
-  ----------------------------------------- the pipeline starts here ---
-  3. composite masks as an alpha channel    run_pipeline.py, pre-step
-  4. COLMAP structure-from-motion           run_pipeline.py
-  5. ns-process-data                        run_pipeline.py
-  6. ns-train splatfacto + ns-export        run_pipeline.py
+source movie
+    -> choose and extract reviewed frames             you, using FFmpeg or another decoder
+    -> optionally make and review masks                samask, a SEPARATE repository
+    ----------------------------------------------- the image pipeline starts here
+    -> optionally composite masks as alpha             run_pipeline.py, pre-step
+    -> COLMAP -> ns-process-data -> ns-train -> ns-export
 ```
 
-Step 3 was manual until v0.2.0 and is now automatic. Set `[dataset] use_masks =
-true`, put the masks in `<capture>/masks/` mirroring `<capture>/images/`, and the
-runner composites them, reusing an existing complete set rather than rebuilding
-it. See `LAYOUT.md` for the directory rule and `MASKING.md` for why alpha
-compositing rather than a mask file.
+Mask compositing was manual until v0.2.0 and is now automatic. Set
+`[dataset] use_masks = true`, put the masks in `{capture}/masks/` mirroring
+`{capture}/images/`, and the runner composites them, reusing an existing
+complete set rather than rebuilding it. See `LAYOUT.md` for the directory rule
+and `MASKING.md` for why alpha compositing rather than a mask file.
 
 To keep more than one mask set for a capture (another prompt, another tool,
 leaf against whole plant), put each further set in `<capture>/masks_<variant>/`
@@ -1011,13 +1008,108 @@ other one's composites. samask has no variant concept and writes `masks/` by
 default, so generate a variant by passing its `--masks <capture>/masks_<variant>`
 explicitly, or the pipeline will refuse with "no masks_<variant> directory".
 
-Only mask *generation* is still by hand. It needs the `samask` repository, which
-at the time of writing is **not self-contained**: a fresh clone cannot run it.
-Closing that last gap is tracked and is blocked on samask becoming installable.
+Mask generation remains external. It needs the `samask` repository, which at
+the time of writing is **not self-contained**: a fresh clone cannot run it.
+Video decoding and frame sampling are also preparation steps outside this
+pipeline; the preceding section gives the verified image-sequence route.
 
 If you already have premade masked images, point `[dataset] images_subpath` at
 them, leave `use_masks = false`, and ignore all of the above. That is what
 v0.1.0 required of everyone and it still works.
+
+### Video-derived image sequences
+
+The supported video workflow is to make a stable image capture first, then run
+the normal image pipeline. Store still frames under a new capture's `images/`
+directory. Keep the source movie outside `images/`; the pipeline will not decode
+a movie or extract frames for this workflow.
+
+Create fresh directories for the capture and review output first. Keep the
+contact sheets outside `images/`:
+
+```bash
+mkdir -p /path/to/new-capture/images /path/to/new-capture/provenance /path/to/review
+```
+
+1. Record stream metadata with `ffprobe`. The FFmpeg prefix from section 3
+   also provides `ffprobe`. Write its output into the new capture's empty
+   `provenance/` directory:
+
+   ```bash
+   ffprobe -v error -show_format -show_streams -of json \
+       /path/to/source.mp4 \
+       > /path/to/new-capture/provenance/ffprobe.json
+   ```
+
+   Make a coarse contact sheet before choosing the usable segment and sampling
+   interval. This example samples every five seconds, scales each preview to
+   320 pixels wide, and writes one 5-by-4 sheet for every 20 samples:
+
+   ```bash
+   ffmpeg -n -hide_banner -hwaccel none -threads 2 \
+       -i /path/to/source.mp4 -map 0:v:0 -an \
+       -vf "fps=1/5,scale=320:-1,tile=5x4" -filter_threads 1 \
+       -fps_mode passthrough /path/to/review/contact-%02d.jpg
+   ```
+
+   `-n` refuses to overwrite an existing sheet. This preview decodes the video
+   and uses FFmpeg's default pixel autorotation; it can take time on high
+   resolution footage. For a long clip, review every numbered sheet. The
+   overview helps choose a segment and sampling plan; it is not the final
+   reconstruction frame set.
+2. Choose sampling from camera movement, overlap, blur and scene motion.
+   Do not extract every decoded frame by default. There is no universal
+   frame-rate or overlap threshold that guarantees a successful solve.
+3. Extract to a new, empty `images/` directory. This example samples at 2 fps
+   (one frame every 0.5 seconds); choose a rate only after reviewing the footage:
+
+   ```bash
+   ffmpeg -n -hide_banner -hwaccel none -threads 2 \
+       -i /path/to/source.mp4 -map 0:v:0 -an \
+       -vf "fps=2,showinfo" -filter_threads 1 -fps_mode passthrough \
+       /path/to/data/datasets/capture/images/frame_%06d.png
+   ```
+
+   `-n` refuses to overwrite existing outputs. Use ordered, zero-padded names
+   and do not mix source movies, previews, manifests or unrelated images into
+   `images/`. FFmpeg's default pixel autorotation is enabled by this example;
+   record whether you change it. Save the exact command, source hash, stream,
+   selected range, sampling interval, frame count and a frame manifest. The
+   `fps` filter's output-grid timestamps are not an exact mapping to original
+   source-frame PTS. Keep an explicit source-frame/PTS mapping if that precision
+   is required.
+4. Review the extracted set for consistent orientation and dimensions, blur,
+   duplicate views, abrupt zoom/exposure changes, moving subjects and adequate
+   camera motion. Freeze the reviewed set; a changed sampling plan is a new
+   versioned capture or derivative.
+5. Set `[dataset] images_subpath` and `image_extensions` for the extracted
+   files. For ordered video frames, set `[colmap] data_type = video` explicitly
+   if using COLMAP's video matching mode. The `auto` heuristic does not infer
+   it from a canonical `images/` directory. This setting is passed to COLMAP
+   for the image sequence; it does not decode the movie.
+6. Keep `[nerfstudio] scene_type = images` and `video_path` empty. The separate
+   `scene_type = video` branch is a different route and has not been validated
+   end to end with this pipeline's existing COLMAP workflow. Do a pipeline
+   `--dry-run` and confirm it points at the extracted images.
+7. Before training, inspect the sparse camera solution and registered-frame
+   coverage. Review the camera path for continuity, unexpected jumps or
+   disconnected views, and confirm that views cover the intended scene.
+   Registration count and reprojection error alone do not establish correct
+   alignment. Use this camera review as a gate before the more expensive
+   training stage.
+
+If masks are used, they must correspond one-to-one with the extracted images.
+Use distinct configured image and mask suffixes; the config loader refuses an
+extension configured for both. The mask filename and directory layout rules
+are the same as for still-photo captures. With `use_masks = false`, the pipeline
+trains on the unmasked frames and retains their visible background.
+
+A run with `[train] eval_mode = all` trains on every frame that COLMAP
+registered. It has no held-out views, so it cannot make a held-out
+generalization claim. The default split and its evaluation meaning are
+documented in section 6. A valid PLY export confirms that the file was written
+and passed structural checks; it does not establish scene coverage or visual
+usefulness.
 
 ### A note on background removal
 

@@ -153,6 +153,10 @@ directory inside the capture rather than the capture itself
 | `mask_variant` | no | empty | Which of a capture's mask sets to read: empty for `<capture>/masks/`, `X` for `<capture>/masks_X/`. A single directory name, never a path (`/` and `..` are refused). Also keys the composite directory, so two variants never share composites. Recorded in the run log's `mask_variant` column and the archived per-run config. Requires the canonical layout; on a legacy capture it is refused rather than left inert. Set with `use_masks = false` it is accepted with a note in the run log. |
 | `masked_images_parent_subpath` | no | `<derived_dirname>/masked` | The PARENT composites are written under; the pipeline appends `<mask_variant>/<capture_rel>` to it (the variant segment only when set). Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. Replaces `masked_images_subpath`, which named the composite directory itself; that key is refused when non-empty, since renaming it mechanically would move the composites. |
 
+The configured `image_extensions` and `mask_extensions` must be disjoint.
+`Dt4agConfig.load_config` refuses a suffix assigned to both, because a file
+cannot be treated as both an SfM photograph and its separate mask.
+
 **There is no key for where the masks are.** It is derived from the layout:
 `<capture>/masks/` when `images_subpath` ends in `images`, mirroring it, and
 beside each photograph otherwise. Both real arrangements follow from that one
@@ -193,7 +197,7 @@ Feeds `colmap automatic_reconstructor`.
 
 | Key | Required | Default | Controls |
 |---|---|---|---|
-| `data_type` | no | `auto` | `auto`, `individual` or `video`. `auto` reproduces the old heuristic: a directory name containing `frames` means video, anything else means individual images. |
+| `data_type` | no | `auto` | `auto`, `individual` or `video`. `video` selects COLMAP's video matching mode for an already-extracted image sequence; it does not decode a movie. `auto` uses the legacy directory-name heuristic and cannot infer video under the canonical `images/` layout. |
 | `single_camera` | no | `1` | `--single_camera`. |
 | `single_camera_per_folder` | no | `1` | `--single_camera_per_folder`. |
 | `dense` | no | `0` | `--dense`. Sparse only by default. |
@@ -206,7 +210,7 @@ Feeds `ns-process-data`.
 | Key | Required | Default | Controls |
 |---|---|---|---|
 | `scene_type` | no | `images` | `images` or `video`. |
-| `video_path` | conditional | empty | Required when `scene_type = video`. |
+| `video_path` | conditional | empty | Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow. |
 | `skip_colmap` | no | `true` | Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM. |
 | `colmap_model_path` | no | `sparse/0` | `--colmap-model-path`. |
 
