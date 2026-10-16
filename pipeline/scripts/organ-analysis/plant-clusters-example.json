@@ -1,0 +1,28 @@
+{
+  "capture_id": "example-capture",
+  "inputs": {
+    "ply": "/path/to/export.ply"
+  },
+  "parameters": {
+    "radius_mult": 6,
+    "min_cluster_size": 300
+  },
+  "source_ply_sha256": "<sha256 of the export, copied from a first cluster-only run's clusters.json>",
+  "expected_cluster_sizes": {
+    "c0": 1000,
+    "c3": 400
+  },
+  "derivatives": [
+    {
+      "name": "plant-a",
+      "clusters": [0, 3],
+      "basis": "<who decided, and on what evidence; for example photo-instance agreement reviewed by a named person>"
+    },
+    {
+      "name": "plant-b",
+      "clusters": [1, 2],
+      "expand_unclustered_within": 0.3,
+      "basis": "<decision and evidence>"
+    }
+  ]
+}

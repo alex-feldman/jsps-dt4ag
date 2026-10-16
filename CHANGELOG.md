@@ -14,6 +14,18 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.5] - 2026-10-16
+
+### Added
+
+- `cluster_plants.py` and `plant_clusters.py`: memory-lean separation of plants in a multi-plant export.
+  - **Clustering.** Single-linkage clustering of opacity-kept Gaussian centers at a radius given in multiples of the median nearest-neighbor spacing. A radius sweep, exact pairwise join radii (opacity-kept and over all rows) and direct gaps all come from one Delaunay-based minimum spanning tree. No step builds a list of all pairs within a large radius.
+  - **Guard.** A sampled pair-count guard refuses over-budget radius queries.
+  - **Derivatives.** Given an explicit selection with a recorded basis (cluster IDs, opacity-kept rows, optional nearby unclustered centers), the command writes per-plant derivative PLYs. They are byte-for-byte row copies with every property, and faint Gaussians are attached by nearest kept center.
+  - **No automatic choice.** The command never picks a target cluster.
+  - **Provenance.** It records hashes, settings and per-step peak memory, and it refuses existing outputs.
+  - **Verification.** On the October 15 Welzo M1 export it reproduced the benchmarked clustering and gaps, and wrote M1 and neighbor derivatives byte-identical to the separations made by hand, at a 260 MiB peak. Synthetic tests compare it against brute-force radius graphs and minimax distances.
+
 ## [0.3.0-alpha.4] - 2026-10-16
 
 ### Added

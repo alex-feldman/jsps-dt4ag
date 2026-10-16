@@ -62,3 +62,72 @@ failure and graph invariance. Test answers are cleared afterward.
 Focused tests cover malformed/truncated PLY, camera-frame mapping, unsupported distortion, missing/wrong-size masks, explicit apex requirement, output protection and reused-label integrity. A synthetic tiny scene exercises the public command, leaf-only/skeleton-stage flow and checked failure path. The real Welzo run must reproduce the baseline arrays, leaf memberships and graph; inspect a generated overlay/viewer in a real browser. A raw hand-check can inspect graph endpoints in `skeleton.json` and source-instance membership in `leaf_ids2.json`, independently of the wrapper's status.
 
 Any new camera model, visibility rule, threshold, topology repair or organ heuristic changes the analysis and requires new regression/evidence. Do not tune per reconstruction arm or silently replace source scripts inside a frozen experiment. New datasets need their own review, apex choice and parameter checks. Metric scale, measured radii, missing petiole centerlines, MTG serialization and Helios generation are outside this command's claims.
+
+## Plant clustering and separation
+
+`plant_clusters.py` (the library) and `cluster_plants.py` (the command) separate plants in a multi-plant export before organ analysis. The README owns the command, config and outputs. `plant_clusters.DEFAULTS` owns the settings.
+
+### Why it is built this way
+
+The October 2026 Welzo M1 separation clustered centers with a radius graph: `cKDTree.query_pairs` at r, then connected components. That is affordable when r is a few times the point spacing. A later connection check asked whether any chain of points joined M1 to its neighbor across gaps up to 0.4 scene units. It called `query_pairs` at r = 0.4 over all 74,180 rows. That radius is about 100 times the spacing and comparable to the plant itself. Inside such a radius the pair count grows with the square of the number of points: an exact recount gives 383 million pairs, 6.1 GB as an int64 list. `query_pairs` grows its buffer by doubling and then copies it out, and the process reached 11.7 to 14.5 GB RSS. Windows free memory fell to 730 MiB, and a concurrent GPU job's host guard stopped that job. The lesson is twofold. Never materialize all pairs within a radius that is large relative to the spacing. And a memory budget written in a brief is not enforcement; a hard cap is.
+
+### Method
+
+1. Exact duplicate centers are merged first. This is exact for single linkage, because duplicates join at distance 0.
+2. The unique edges of a 3D `scipy.spatial.Delaunay` triangulation (about 7 per point) form the candidate graph.
+   - The Euclidean minimum spanning tree (MST) is a subgraph of the Delaunay triangulation, so no short link is lost.
+   - Points qhull leaves outside every simplex get k-NN fallback edges.
+   - Inputs with four or fewer points, and degenerate inputs (for example coplanar) up to `COMPLETE_GRAPH_LIMIT` points, use the complete graph, which is also exact. Larger degenerate inputs are refused, not joggled: joggling would triangulate perturbed points.
+3. `scipy.sparse.csgraph.minimum_spanning_tree` gives N - 1 edges. Memory is O(N) throughout.
+
+Every question is then answered from that one tree:
+- **Clusters at radius r.** Deleting tree edges longer than r gives exactly the connected components of the radius-r graph. A radius sweep therefore only thresholds one array.
+- **Join radius.** `join_heights` replays the tree edges in increasing length with union-find, tracking every row of every group. The join radius of two groups is the first length at which a row of one and a row of the other share a component. That is the minimax chain distance between them, exact at any radius. Computing it over all rows includes chains through faint Gaussians.
+- **Direct gap.** `pairwise_gaps` builds a `cKDTree` per cluster and queries the other clusters with k = 1.
+- **Guard.** `guarded_query_pairs` remains for callers that still need a pair list. It estimates the pair count from a 1,000-point sample (mean neighbor count times N / 2) and raises `PairBudgetExceeded` above a budget (default 4 million).
+
+The radius is a multiple of the median nearest-neighbor spacing d1, because scenes have no metric scale. Cluster numbering is by decreasing size and carries no identity meaning.
+
+Derivatives are explicit selections:
+- **What a selection can name.** It can name cluster IDs and/or opacity-kept source rows. It can optionally add unclustered centers within a stated distance of the selected centers.
+- **Faint Gaussians.** A faint Gaussian (sigmoid(opacity) at or below the cutoff) is attached when its nearest opacity-kept center is within the clustering radius and selected. That is the rule of the October 15 derivatives.
+- **How rows are copied.** Rows are copied by index from a read-only memmap with the header's dtype, so every property is kept. The header is unchanged except the vertex count. The written file is re-read with `geometry.load_ply` and compared byte for byte with the source rows.
+- **Identity stays outside.** The command records each selection's `basis` but never forms one. Identity remains a human or evidence decision.
+
+### Provenance and verification
+
+The method was proposed after the incident and benchmarked on 2026-10-16 against the October 15 Welzo M1 separation. It ran as a standalone `lean_cluster.py` under `ulimit -v 2500000`. It reproduced all 116 compared reference values with no tuning:
+- d1;
+- the radius sweep;
+- all 4,795 components at 6 x d1;
+- the ten named clusters, as a partition and in their numbering;
+- every gap of M1 (c0) to the other clusters, opacity-kept and over all rows;
+- the neighbor's internal merge radii.
+
+It peaked at 236 MiB. The original radius-graph clustering step, re-measured under the same cap, took 1,451 MiB, and its forest was exact only up to 0.0777. The benchmark also turned earlier bounds into exact values. M1 joins its neighbor at 0.3107 over all rows, equal to the direct gap. The neighbor's c5 joins at 0.10147 opacity-kept. The guard's estimate was within 0.99 to 1.06 of exact `count_neighbors` counts.
+
+This module is that code, with three changes:
+- capture-specific constants removed and settings made explicit;
+- the derivative writer of the October 15 scripts added;
+- `join_heights` changed to track every row of a group. The benchmark tracked each group by its first row, which is exact only for joins at or above the clustering radius.
+
+The release check ran `cluster_plants.py` on the same export into a fresh directory, under the same cap. Of 215 comparisons with the benchmark and the October 15 files, 214 matched exactly:
+- sweep, partitions and numbering, spanning-tree statistics;
+- all opacity-kept gaps and join radii;
+- 44 of 45 all-row join radii;
+- the all-row gaps from M1's component.
+
+The M1 (c0 + c6) and neighbor (seven clusters plus unclustered centers within 0.3) derivatives had row sets and file bytes identical to the October 15 files. The one difference is the all-row c1-c9 join: 0.01412 here against the benchmark's 0.02078. A direct radius graph, which does not use the tree, confirmed 0.01412: c1 and c9 connect at that radius and not just below it, while their first rows do not. The benchmark value was the representative-row approximation. The run peaked at 260 MiB in about 8.5 s.
+
+Synthetic tests check the following:
+- components against a brute-force radius graph;
+- join radii against brute-force minimax distances;
+- known gaps and join radii, including a chain of faint points and the degenerate fallback;
+- duplicate merging;
+- the guard's refusal and its exactness at full sampling;
+- byte-identical row copies with mixed property types;
+- refusal of existing outputs, foreign source hashes, size mismatches, faint rows given as kept rows, unknown clusters and selections without a basis.
+
+### Limits and changing it
+
+Single linkage chains: two plants that touch, or a line of floaters between them, merge at a small radius. The join radii and direct gaps are reported so that this is visible rather than hidden in a label. A sparsely photographed plant fragments at a radius suited to the walked-around target. HDBSCAN was tried on the Welzo neighbor as a density-based second opinion. It agreed with the fixed-radius structure and does not rescue such fragmentation, so it is not part of the command. A different linkage, radius rule, opacity rule or faint-attachment rule changes the separation and needs new regression evidence like the above.
