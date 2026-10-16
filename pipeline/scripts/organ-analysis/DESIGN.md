@@ -206,6 +206,19 @@ The synthetic tests cover:
 - a blob inside one plant's column assigned, and blobs between plants or above them unassigned;
 - the command end to end, including a refused-up run and config refusals.
 
+**Pilot regression (2026-10-17).** The port was given the pilot's base (skeleton root) and sign reference (leaf cluster 4) on the October 2 capture. It reproduced the pilot's `analysis-full` outputs exactly:
+- point IDs, mapped coordinates (zero difference), hits, seen counts, and the soil and local flags;
+- the deduplicated fit points and the inlier set, with counts 933, 479, 467 and 234;
+- the normal (0.137, -0.359, 0.923), 22.6 degrees from dataparser z, and the root's 0.029 offset above the plane.
+
+With the command's own base (the lowest axis slice), the local set has 487 points, 474 after deduplication, with 247 inliers. The normal moves 2.8 degrees.
+
+**Camera rings on the Welzo captures (2026-10-17).** At the default `max_planarity` of 0.25, method A refuses both captures:
+- October 2: planarity 0.59 over 24 cameras, singular values 1.47, 1.32 and 1.10;
+- October 15: planarity 0.43 over 61 cameras, singular values 4.73, 4.42 and 2.75.
+
+In both captures the cameras spread over a dome, not a ring. The default was not changed to pass them; how to treat such layouts is an open decision.
+
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 
 ## Plant asset package and single-leaf export
