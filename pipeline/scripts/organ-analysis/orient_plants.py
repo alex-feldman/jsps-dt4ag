@@ -16,7 +16,7 @@ from analyze_organs import VERSION, read, write, sha, source_revision
 import plant_clusters as pc
 import plant_orientation as po
 
-CONFIG_KEYS = {'capture_id', 'inputs', 'plants', 'detached', 'soil', 'prefer_soil', 'parameters'}
+CONFIG_KEYS = {'capture_id', 'inputs', 'plants', 'detached', 'soil', 'parameters'}
 INPUT_KEYS = {'transforms', 'dataparser_transforms', 'cluster_report'}
 ITEM_KEYS = {'name', 'ply', 'clusters', 'rows'}
 SOIL_KEYS = {'colmap_sparse', 'soil_masks', 'plant_masks', 'frame_map', 'mask_extension', 'base_plant'}
@@ -108,16 +108,13 @@ def spec_from(path):
             soil['base_plant'] = plants[0]['name']
         if soil['base_plant'] not in [p['name'] for p in plants]:
             raise ValueError('soil.base_plant must be one of the plants')
-    if not isinstance(spec.get('prefer_soil', False), bool):
-        raise ValueError('prefer_soil must be boolean')
     params = dict(po.DEFAULTS)
     given = spec.get('parameters', {})
     if not isinstance(given, dict) or set(given) - set(params):
         raise ValueError('Unknown orientation parameter: ' + str(sorted(set(given) - set(params)) if isinstance(given, dict) else given))
     params.update(given)
     po.check_parameters(params)
-    spec.update(inputs=inputs, plants=plants, detached=detached, soil=soil, prefer_soil=spec.get('prefer_soil', False),
-                parameters=params)
+    spec.update(inputs=inputs, plants=plants, detached=detached, soil=soil, parameters=params)
     return spec, files
 
 
@@ -226,7 +223,7 @@ def run(spec, meter):
     hashes = {}
     with meter.step('cameras'):
         stems, C, U = po.camera_poses(spec['inputs']['transforms'], spec['inputs']['dataparser_transforms'])
-        up_a = po.camera_ring_up(C, U, params)
+        up_c = po.camera_mean_up(U)
     with meter.step('load_points'):
         clusters = Clusters(spec['inputs']['cluster_report']) if 'cluster_report' in spec['inputs'] else None
         if clusters is not None:
@@ -250,51 +247,53 @@ def run(spec, meter):
                     n: int(np.isin(rows, r).sum()) for n, r in plant_rows.items() if r is not None}
     result = {'schema': 'plant-orientation', 'schema_version': 1, 'version': VERSION, 'capture_id': spec['capture_id'],
               'units': 'scale_free_scene_units', 'frame': 'dataparser (exported model) frame',
-              'parameters': params, 'prefer_soil': spec['prefer_soil'],
+              'parameters': params,
               'selection': 'algorithmic: every choice follows from the recorded settings; no visual judgment selects anything',
-              'up_camera_ring': dict(up_a, frames=stems), 'up_soil_plane': None,
+              'principle': 'the ground plane is orthogonal to up: the soil plane is the primary up; the camera mean '
+                           'image-up is a fallback and cross-check only',
+              'up_camera_mean_image_up': dict(up_c, frames=stems), 'up_soil_plane': None,
               'plants': {n: dict(plant_info[n]) for n in plant_pts}, 'detached_selection': auto,
-              'detached': {}}
+              'detached': {}, 'cross_check_camera_mean_image_up': None}
     up_b = None
     if spec['soil'] is not None:
         with meter.step('soil_plane'):
             soil = spec['soil']
-            if up_a['status'] != 'ok':
+            if up_c['status'] != 'ok':
                 up_b = {'method': 'soil_plane', 'status': 'not_run', 'normal': None,
-                        'reason': 'the base estimate needs a plant axis, which needs camera-ring up'}
+                        'reason': 'the first base estimate needs the camera mean image-up, which is unavailable'}
             else:
-                base_axis = po.plant_axis(plant_pts[soil['base_plant']], up_a['normal'], params)
-                if base_axis['status'] != 'ok':
-                    up_b = {'method': 'soil_plane', 'status': 'not_run', 'normal': None,
-                            'reason': 'base plant has no axis: ' + base_axis['reason']}
-                else:
-                    SX, ids, hits, seen, views = soil_inputs(soil, spec['inputs']['transforms'],
-                                                            spec['inputs']['dataparser_transforms'], hashes)
-                    base = np.array(base_axis['polyline'][0])
-                    toward = plant_pts[soil['base_plant']].mean(0)
-                    up_b, _, _ = po.soil_plane_up(SX, hits, seen, base, toward, params)
-                    up_b.update(base_plant=soil['base_plant'], base_rule='lowest slice axis point of the base plant under camera-ring up',
-                                sign_rule='toward the mean opacity-kept center of the base plant',
-                                soil_mask_views=views, colmap_sparse=soil['colmap_sparse'],
-                                mask_rule='soil mask > 127 minus plant mask > 127, in memory; originals untouched')
-                    if up_b['status'] == 'ok':
-                        up_b['angle_to_camera_ring_deg'] = po.angle_deg(up_b['normal'], up_a['normal'])
+                SX, ids, hits, seen, views = soil_inputs(soil, spec['inputs']['transforms'],
+                                                        spec['inputs']['dataparser_transforms'], hashes)
+                up_b = po.soil_plane_iterative(SX, hits, seen, plant_pts[soil['base_plant']], up_c['normal'], params)
+                up_b.update(base_plant=soil['base_plant'], soil_mask_views=views, colmap_sparse=soil['colmap_sparse'],
+                            mask_rule='soil mask > 127 minus plant mask > 127, in memory; originals untouched')
         result['up_soil_plane'] = up_b
-    choice = po.choose_up(up_a, up_b, spec['prefer_soil'], params)
+    choice = po.choose_up(up_c, up_b, params)
     result['up'] = choice
     if choice['up'] is None:
         result['status'] = 'refused'
         return result, hashes
+
+    def axes_and_assignments(up):
+        axes = {n: po.plant_axis(X, up, params) for n, X in plant_pts.items()}
+        assigned = {n: dict(det_info[n], **(po.assign_detached(Y, axes, up, params) if len(Y)
+                    else {'assignment': 'unassigned', 'reason': 'no opacity-kept points'})) for n, Y in det_pts.items()}
+        return axes, assigned
+
     with meter.step('axes'):
         up = np.array(choice['up'])
         e1, e2 = po.horizontal_basis(up)
         result['horizontal_basis'] = {'e1': po.floats(e1), 'e2': po.floats(e2)}
-        axes = {n: po.plant_axis(X, up, params) for n, X in plant_pts.items()}
+        axes, result['detached'] = axes_and_assignments(up)
         for n in axes:
             result['plants'][n]['axis'] = axes[n]
-        for n, Y in det_pts.items():
-            result['detached'][n] = dict(det_info[n], **(po.assign_detached(Y, axes, up, params) if len(Y)
-                                         else {'assignment': 'unassigned', 'reason': 'no opacity-kept points'}))
+        if choice['method'] == 'soil_plane' and up_c['status'] == 'ok':
+            axes_c, det_c = axes_and_assignments(np.array(up_c['normal']))
+            result['cross_check_camera_mean_image_up'] = {
+                'status': 'cross-check only; not used for any result above',
+                'up': up_c['normal'],
+                'plants': {n: {k: a.get(k) for k in ['status', 'height_range', 'straightness', 'gaps']} for n, a in axes_c.items()},
+                'detached': det_c}
     result['status'] = 'complete'
     return result, hashes
 

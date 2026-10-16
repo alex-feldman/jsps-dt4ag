@@ -142,6 +142,8 @@ On the 74,180-row October 15 Welzo export, the command took about 8.5 s and peak
 2. **Each plant's vertical axis** and horizontal radius profile.
 3. **Detached-cluster assignment**: which plant, if any, a small detached cluster belongs to by vertical stacking.
 
+**The ground plane is orthogonal to up by definition**, so detected soil is the primary up. The cameras' mean image-up assumes the photographer held the camera upright on average; it is only a fallback and a cross-check.
+
 Every choice follows from the recorded settings. No visual judgment selects anything. `plant_orientation.DEFAULTS` owns the setting names and values. They are experimental defaults, not universal tuning; `DESIGN.md` explains each rule.
 
 ### Inputs
@@ -153,8 +155,7 @@ Copy `plant-orientation-example.json`. Relative paths resolve against the JSON f
   - `ply`, a per-plant derivative, optionally with `rows` (its `{name}_rows.npy`, source rows of the report's PLY);
   - `clusters`, IDs in the cluster report.
 - `detached` (optional): a list in the same form, or `"auto"`. Auto takes every report cluster smaller than `detached_max_share` of the largest, excluding clusters a plant names or whose rows a plant's `rows` contain. A plant given as a PLY without `rows` cannot exclude its own clusters, so prefer an explicit list.
-- `soil` (optional; enables method B): `colmap_sparse` (folder with `points3D.bin` and `images.bin`), `soil_masks`, `plant_masks` (production masks, subtracted from soil masks in memory), `frame_map` (frame stem to source name, as for organ analysis), optional `mask_extension` (default `.png`) and `base_plant` (required with more than one plant). `transforms.json` frames must carry `colmap_im_id`. A view without a soil mask is unknown, not a negative.
-- `prefer_soil` (default false): what to use when the two up estimates disagree.
+- `soil` (optional, but needed for the primary up; without it the run falls back to the camera mean image-up and says so): `colmap_sparse` (folder with `points3D.bin` and `images.bin`), `soil_masks`, `plant_masks` (production masks, subtracted from soil masks in memory), `frame_map` (frame stem to source name, as for organ analysis), optional `mask_extension` (default `.png`) and `base_plant` (required with more than one plant). `transforms.json` frames must carry `colmap_im_id`. A view without a soil mask is unknown, not a negative.
 - `parameters`: overrides of `plant_orientation.DEFAULTS`.
 
 ### Run
@@ -164,20 +165,22 @@ python pipeline/scripts/organ-analysis/orient_plants.py --config /path/to/orient
 python pipeline/scripts/organ-analysis/orient_plants.py --config /path/to/orientation.json --output /path/to/new-orientation
 ```
 
-The output directory must be new; `--validate-only` creates nothing. Exit code 0 means complete. Exit code 3 means up was refused: `orientation.json` then records why and holds no axes or assignments. Exit code 2 means invalid input or a failed run, which keeps its failure record.
+The output directory must be new; `--validate-only` creates nothing. Exit code 0 means complete. Exit code 3 means no up exists: there is no usable soil plane and no camera mean image-up (no frames, or image-up vectors that cancel). `orientation.json` then records why and holds no axes or assignments. Exit code 2 means invalid input or a failed run, which keeps its failure record.
 
 ### Outputs
 
 - `orientation.json` (`schema: plant-orientation`, `schema_version` 1):
-  - `up_camera_ring` and `up_soil_plane`: each method's normal, status, refusal reason and diagnostics (planarity, singular values, vote and inlier counts, base and sign references, angle to dataparser z);
-  - `up`: the chosen vector, method, `angle_a_b_deg`, `up_disagreement` and the reason;
+  - `up_soil_plane`: the soil normal, status, refusal reason and diagnostics. These cover vote, neighborhood and inlier counts, base and sign references, angle to dataparser z, every base/refit `iterations` entry, and `converged`.
+  - `up_camera_mean_image_up`: the mean direction, its spread (`angular_rms_deg`, maximum, median) and its angle to dataparser z.
+  - `up`: the chosen vector and `method`. Its `status` is `primary` (soil), `fallback` (camera mean image-up) or `refused`. Also `angle_b_c_deg`, `up_disagreement` (above `disagreement_deg`; reported, never a switch) and the reason.
   - `plants.{name}.axis`: slices (height, point count, median horizontal position, 3D axis point, radius), `polyline`, `radius_profile`, `height_range` and `straightness`;
   - `detached.{name}`: median height and horizontal position, and per plant `r`, `R`, `ratio`, how the axis was looked up and the height-range test. Also the `assignment` (a plant name or `unassigned`) and its reason.
+  - `cross_check_camera_mean_image_up`, when soil is primary: plant height ranges, straightness and detached assignments recomputed under the camera mean image-up. It is a cross-check only; no result above uses it.
   - Also the effective `parameters`, `horizontal_basis`, input and code hashes, repository revision and version.
 - `input-manifest.json` and `run-record.json`, as for the other stages, with per-step wall time and peak RSS.
 
 Limits:
-- Up is a geometric estimate, not measured gravity. The camera ring gives the operator's walking plane. The soil plane gives a local bed plane, and a raised plug or tilted bed separates it from the stem-emergence level.
+- Up is a geometric estimate, not measured gravity. The soil plane is a bed-orientation cue: a tilted bed or plug makes it differ from gravity. A raised plug also separates bed level from the stem-emergence level. The camera mean image-up is only as upright as the photographer held the camera.
 - Units are scale-free.
 - A plant axis is a sequence of slice medians: leaves, tendrils and a neighbor's overlap all move it.
 - An `unassigned` cluster is not evidence that it belongs to no plant.

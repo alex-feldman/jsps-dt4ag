@@ -21,7 +21,6 @@
     "mask_extension": ".png",
     "base_plant": "plant-a"
   },
-  "prefer_soil": false,
   "parameters": {
     "slice": 0.02
   }

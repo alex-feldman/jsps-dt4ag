@@ -74,8 +74,8 @@ def write_colmap(directory, points, images):
                 f.write(struct.pack('<ddq', x, y, -1))
 
 
-class CameraRing(unittest.TestCase):
-    def test_tilted_ring_recovers_normal_and_sign(self):
+class CameraMeanUp(unittest.TestCase):
+    def test_mean_image_up_of_a_tilted_ring_and_its_spread(self):
         n = po.unit([0.3, -0.2, 0.9])
         frames = ring_frames(n, wobble=0.01)
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,31 +83,23 @@ class CameraRing(unittest.TestCase):
             t.write_text(json.dumps({'frames': frames}))
             d.write_text(json.dumps({'transform': np.eye(4)[:3].tolist(), 'scale': 2.0}))
             stems, C, U = po.camera_poses(t, d)
-        rec = po.camera_ring_up(C, U, P)
+        rec = po.camera_mean_up(U)
         self.assertEqual(rec['status'], 'ok')
-        self.assertLess(po.angle_deg(rec['normal'], n), 1.0)
-        self.assertLess(rec['planarity'], 0.05)
         self.assertEqual(stems[0], 'frame_00001')
-        # The sign follows the image-up vectors, not the SVD's arbitrary sign.
-        rec2 = po.camera_ring_up(C, -U, P)
-        self.assertLess(po.angle_deg(rec2['normal'], -n), 1.0)
+        # The cameras look down at the center, so each image-up leans inward; the mean is the normal.
+        self.assertLess(po.angle_deg(rec['normal'], n), 1.0)
+        lean = np.degrees(np.arctan(0.3))
+        self.assertAlmostEqual(rec['angular_rms_deg'], lean, delta=1.0)
+        self.assertLess(po.angle_deg(po.camera_mean_up(-U)['normal'], -n), 1.0)
 
-    def test_refusals(self):
-        n = np.array([0, 0, 1.0])
-        frames = ring_frames(n, count=6)
-        C = np.array([np.array(f['transform_matrix'])[:3, 3] for f in frames])
-        U = np.array([np.array(f['transform_matrix'])[:3, 1] for f in frames])
-        self.assertEqual(po.camera_ring_up(C, U, P)['status'], 'refused')
+    def test_layout_never_refuses_only_degenerate_sets(self):
         rng = np.random.default_rng(3)
-        S = rng.standard_normal((40, 3))
-        rec = po.camera_ring_up(S, np.tile([0, 0, 1.0], (40, 1)), P)
-        self.assertEqual(rec['status'], 'refused')
-        self.assertIn('not ring-like', rec['reason'])
-        frames = ring_frames(n, count=12)
-        C = np.array([np.array(f['transform_matrix'])[:3, 3] for f in frames])
-        rec = po.camera_ring_up(C, np.tile([1.0, 0, 0], (12, 1)), P)
-        self.assertEqual(rec['status'], 'refused')
-        self.assertIn('ambiguous', rec['reason'])
+        U = np.tile([0, 0, 1.0], (40, 1)) + 0.2 * rng.standard_normal((40, 3))
+        rec = po.camera_mean_up(U)  # any camera layout: centers are not used at all
+        self.assertEqual(rec['status'], 'ok')
+        self.assertGreater(rec['angular_rms_deg'], 5)
+        self.assertEqual(po.camera_mean_up(np.zeros((0, 3)))['status'], 'refused')
+        self.assertEqual(po.camera_mean_up(np.array([[0, 0, 1.0], [0, 0, -1.0]]))['status'], 'refused')
 
 
 class SoilPlane(unittest.TestCase):
@@ -166,27 +158,74 @@ class SoilPlane(unittest.TestCase):
                                    {'transform': [[0, -1, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0]], 'scale': 2.0}), [[2, 2, 0]])
 
 
+def tilted_scene(tilt_deg=25.0, seed=11):
+    """A plant cylinder standing on a soil plane, both tilted tilt_deg from dataparser z."""
+    n = po.unit([np.sin(np.radians(tilt_deg)), 0, np.cos(np.radians(tilt_deg))])
+    R = rotation_to(n)
+    rng = np.random.default_rng(seed)
+    plant = cylinder((0, 0), 0.01, 0.4, 0.06, 3000, seed) @ R.T
+    soil = np.stack([rng.uniform(-.6, .6, 3000), rng.uniform(-.6, .6, 3000), rng.normal(0, .0005, 3000)], 1) @ R.T
+    return n, plant, soil
+
+
+class SoilIteration(unittest.TestCase):
+    def test_converges_to_the_soil_normal_from_a_tilted_bootstrap(self):
+        n, plant, S = tilted_scene()
+        hits, seen = np.full(len(S), 3), np.full(len(S), 3)
+        rec = po.soil_plane_iterative(S, hits, seen, plant, [0, 0, 1.0], P)
+        self.assertEqual(rec['status'], 'ok')
+        self.assertTrue(rec['converged'])
+        its = rec['iterations']
+        self.assertGreaterEqual(len(its), 2)
+        self.assertLessEqual(len(its), P['max_soil_iterations'])
+        self.assertEqual(its[0]['base_along'], 'camera_mean_image_up')
+        self.assertTrue(its[-1]['inlier_set_unchanged'])
+        self.assertFalse(its[0]['inlier_set_unchanged'])
+        self.assertLess(po.angle_deg(rec['normal'], n), 1.0)  # signed toward the plant
+        self.assertAlmostEqual(its[0]['angle_to_bootstrap_deg'], 25.0, delta=1.0)
+        # The result does not depend on the bootstrap direction once converged.
+        rec2 = po.soil_plane_iterative(S, hits, seen, plant, po.unit([-0.2, 0.1, 1.0]), P)
+        self.assertTrue(rec2['converged'])
+        self.assertLess(po.angle_deg(rec2['normal'], rec['normal']), 0.5)
+
+    def test_iteration_cap_and_refusal_are_recorded(self):
+        n, plant, S = tilted_scene()
+        hits, seen = np.full(len(S), 3), np.full(len(S), 3)
+        rec = po.soil_plane_iterative(S, hits, seen, plant, [0, 0, 1.0], dict(P, max_soil_iterations=1))
+        self.assertEqual(rec['status'], 'ok')
+        self.assertFalse(rec['converged'])
+        self.assertIn('not converged', rec['note'])
+        rec = po.soil_plane_iterative(S, np.zeros(len(S), int), seen, plant, [0, 0, 1.0], P)
+        self.assertEqual(rec['status'], 'refused')
+        self.assertFalse(rec['converged'])
+        self.assertEqual(len(rec['iterations']), 1)
+
+
 class Choice(unittest.TestCase):
-    def test_agreement_disagreement_and_preference(self):
-        a = {'status': 'ok', 'normal': [0, 0, 1.0]}
+    def test_soil_primary_disagreement_reported_and_fallback(self):
+        c_up = {'status': 'ok', 'normal': [0, 0, 1.0]}
         near = {'status': 'ok', 'normal': po.floats(po.unit([0, np.sin(np.radians(8)), np.cos(np.radians(8))]))}
         far = {'status': 'ok', 'normal': po.floats(po.unit([0, np.sin(np.radians(20)), np.cos(np.radians(20))]))}
-        c = po.choose_up(a, near, False, P)
-        self.assertEqual(c['method'], 'soil_plane')
+        c = po.choose_up(c_up, near, P)
+        self.assertEqual((c['method'], c['status']), ('soil_plane', 'primary'))
         self.assertFalse(c['up_disagreement'])
-        self.assertAlmostEqual(c['angle_a_b_deg'], 8.0, places=6)
-        c = po.choose_up(a, far, False, P)
+        self.assertAlmostEqual(c['angle_b_c_deg'], 8.0, places=6)
+        c = po.choose_up(c_up, far, P)
         self.assertTrue(c['up_disagreement'])
-        self.assertEqual(c['method'], 'camera_ring')
-        c = po.choose_up(a, far, True, P)
-        self.assertTrue(c['up_disagreement'])
+        self.assertEqual(c['method'], 'soil_plane')  # reported, never switched
+        self.assertEqual(c['up'], far['normal'])
+        c = po.choose_up(c_up, None, P)
+        self.assertEqual((c['method'], c['status']), ('camera_mean_image_up', 'fallback'))
+        self.assertIn('no soil inputs', c['reason'])
+        c = po.choose_up(c_up, {'status': 'refused', 'normal': None, 'reason': '12 inliers < min_inliers 30'}, P)
+        self.assertEqual(c['status'], 'fallback')
+        self.assertIn('min_inliers', c['reason'])
+        c = po.choose_up({'status': 'refused', 'normal': None, 'reason': 'no cameras'}, far, P)
         self.assertEqual(c['method'], 'soil_plane')
-        c = po.choose_up(a, None, False, P)
-        self.assertEqual(c['method'], 'camera_ring')
-        c = po.choose_up(a, {'status': 'refused', 'normal': None, 'reason': 'x'}, True, P)
-        self.assertEqual(c['method'], 'camera_ring')
-        c = po.choose_up({'status': 'refused', 'normal': None, 'reason': 'not ring-like'}, far, True, P)
+        self.assertIsNone(c['angle_b_c_deg'])
+        c = po.choose_up({'status': 'refused', 'normal': None, 'reason': 'no cameras'}, None, P)
         self.assertIsNone(c['up'])
+        self.assertEqual(c['status'], 'refused')
 
 
 class AxisAndAssignment(unittest.TestCase):
@@ -231,10 +270,10 @@ class AxisAndAssignment(unittest.TestCase):
 class Command(unittest.TestCase):
     """The public command on a synthetic tilted scene with two plants, a detached blob and soil."""
 
-    def scene(self, tmp, normal, soil=True, count=12, detached='list'):
+    def scene(self, tmp, normal, soil=True, count=12, camera_up=None):
         tmp = Path(tmp)
         R = rotation_to(normal)
-        frames = ring_frames(normal, count=count, radius=1.5)
+        frames = ring_frames(normal if camera_up is None else camera_up, count=count, radius=1.5)
         w, h = 40, 30
         (tmp / 't.json').write_text(json.dumps({'frames': frames, 'w': w, 'h': h}))
         (tmp / 'd.json').write_text(json.dumps({'transform': np.eye(4)[:3].tolist(), 'scale': 1.0}))
@@ -271,7 +310,7 @@ class Command(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return cli.main([str(a) for a in args])
 
-    def test_end_to_end(self):
+    def test_end_to_end_soil_primary(self):
         n = po.unit([0.2, 0.1, 0.97])
         with tempfile.TemporaryDirectory() as tmp:
             cfg, _ = self.scene(tmp, n)
@@ -282,27 +321,53 @@ class Command(unittest.TestCase):
             res = json.loads((out / 'orientation.json').read_text())
             rec = json.loads((out / 'run-record.json').read_text())
             self.assertEqual(rec['status'], 'complete')
-            self.assertLess(po.angle_deg(res['up_camera_ring']['normal'], n), 0.5)
-            self.assertEqual(res['up_soil_plane']['status'], 'ok')
-            self.assertLess(po.angle_deg(res['up_soil_plane']['normal'], n), 0.5)
-            self.assertEqual(res['up']['method'], 'soil_plane')
+            self.assertLess(po.angle_deg(res['up_camera_mean_image_up']['normal'], n), 0.5)
+            b = res['up_soil_plane']
+            self.assertEqual(b['status'], 'ok')
+            self.assertTrue(b['converged'])
+            self.assertLess(po.angle_deg(b['normal'], n), 0.5)
+            self.assertEqual((res['up']['method'], res['up']['status']), ('soil_plane', 'primary'))
+            self.assertFalse(res['up']['up_disagreement'])
             self.assertEqual(res['detached']['blob']['assignment'], 'A')
+            self.assertEqual(res['cross_check_camera_mean_image_up']['detached']['blob']['assignment'], 'A')
             self.assertLess(res['plants']['A']['axis']['straightness']['max_horizontal_deviation'], 0.01)
             self.assertIn('orientation.json', rec['output_sha256'])
             with self.assertRaises(ValueError):
                 self.run_cli('--config', cfg, '--output', out)
 
-    def test_refused_up_and_config_refusals(self):
+    def test_disagreement_is_reported_not_switched(self):
+        n = po.unit([np.sin(np.radians(20)), 0, np.cos(np.radians(20))])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, _ = self.scene(tmp, n, camera_up=[0, 0, 1.0])
+            out = Path(tmp) / 'out'
+            self.assertEqual(self.run_cli('--config', cfg, '--output', out), 0)
+            res = json.loads((out / 'orientation.json').read_text())
+            self.assertEqual(res['up']['method'], 'soil_plane')
+            self.assertTrue(res['up']['up_disagreement'])
+            self.assertAlmostEqual(res['up']['angle_b_c_deg'], 20.0, delta=1.0)
+            self.assertLess(po.angle_deg(res['up']['up'], n), 0.5)
+            self.assertEqual(res['detached']['blob']['assignment'], 'A')
+            self.assertIsNotNone(res['cross_check_camera_mean_image_up'])
+
+    def test_fallback_refusal_and_config_refusals(self):
         n = np.array([0, 0, 1.0])
         with tempfile.TemporaryDirectory() as tmp:
             cfg, base = self.scene(tmp, n, soil=False, count=6)
             out = Path(tmp) / 'out'
+            self.assertEqual(self.run_cli('--config', cfg, '--output', out), 0)
+            res = json.loads((out / 'orientation.json').read_text())
+            self.assertEqual((res['up']['method'], res['up']['status']), ('camera_mean_image_up', 'fallback'))
+            self.assertIsNone(res['cross_check_camera_mean_image_up'])
+            self.assertEqual(res['detached']['blob']['assignment'], 'A')
+            (Path(tmp) / 't.json').write_text(json.dumps({'frames': [], 'w': 40, 'h': 30}))
+            out = Path(tmp) / 'out2'
             self.assertEqual(self.run_cli('--config', cfg, '--output', out), 3)
             res = json.loads((out / 'orientation.json').read_text())
             self.assertEqual(res['status'], 'refused')
             self.assertIsNone(res['up']['up'])
             self.assertEqual(res['detached'], {})
             for bad in [dict(base, extra=1),
+                        dict(base, prefer_soil=True),
                         dict(base, plants=[{'name': 'A', 'clusters': [0]}]),
                         dict(base, plants=[{'name': 'A', 'ply': 'a.ply'}, {'name': 'A', 'ply': 'b.ply'}]),
                         dict(base, detached='auto'),

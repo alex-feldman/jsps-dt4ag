@@ -138,18 +138,15 @@ Single linkage chains: two plants that touch, or a line of floaters between them
 
 **The numeric settings are experimental defaults.** They were set on 2026-10-17 from the Welzo M1 captures and are not tuned or validated across captures. Each run records the values it used. **No agent visual judgment selects anything here.** Every status, choice and assignment follows from code and recorded settings; images and overlays are not read. The stage reports and records; like plant clustering, it never edits a derivative.
 
-### Up, method A: camera ring (always available)
+**Principle (Alex, 2026-10-17).** The ground plane is orthogonal to up by definition, so the detected soil plane (B) is the primary up. The cameras' mean image-up (C) assumes the camera was held upright on average, so it is not assumed. It serves as a fallback when no usable soil plane exists, and as a cross-check otherwise. A first design used the normal of the camera-center plane ("camera ring"). That design was removed after it refused both Welzo captures, whose cameras spread over a dome; see "Checks" below.
 
-Camera centers and image-up vectors come from `transforms.json` mapped into the dataparser frame. The mapping is the one `Geometry.cameras` uses; `geometry.dataparser_frame` and `geometry.camera_to_world` were factored out of it unchanged. Image up is minus the OpenCV camera y axis.
+### Up, method C: camera mean image-up (fallback and cross-check)
 
-The normal of the SVD plane through the centers is the candidate up. Its sign is chosen to agree with the mean image-up vector. With nerfstudio's `orientation_method: up` that mean is dataparser +z by construction, so A's sign agrees with dataparser z, while its direction comes from the camera layout.
+Image-up vectors come from `transforms.json` mapped into the dataparser frame. The mapping is the one `Geometry.cameras` uses; `geometry.dataparser_frame` and `geometry.camera_to_world` were factored out of it unchanged. Image up is minus the OpenCV camera y axis.
 
-The ring is refused, with a reason and never a guess, when any of these holds:
-- fewer than `min_cameras` (8) cameras;
-- planarity, the RMS distance from the plane divided by the mean in-plane distance from the centroid, above `max_planarity` (0.25);
-- an ambiguous sign: the absolute cosine between the mean image-up and the normal is below `min_sign_cos` (0.1). This guard was added to the specification so that a sign is never taken from a near-perpendicular vote.
+C is the normalized mean of the unit image-up vectors. It never refuses because of camera layout. Its quality figure is the spread of the individual vectors about the mean: angular RMS, maximum and median in degrees. It is unavailable only with no frames or with vectors that cancel. With nerfstudio's `orientation_method: up`, C equals dataparser +z by construction, and it did on both Welzo captures.
 
-### Up, method B: soil plane (optional)
+### Up, method B: soil plane (primary)
 
 This is the October 2 pilot's method (`clutter_lift.py` in the Welzo clutter investigation, `posthoc-clutter-lifting-design.md`), ported:
 - **Coordinates.** Raw COLMAP `points3D.bin` coordinates are mapped with the saved dataparser transform, then scaled including translation. Raw points lack `applied_transform`, which the saved transform already contains.
@@ -158,20 +155,26 @@ This is the October 2 pilot's method (`clutter_lift.py` in the Welzo clutter inv
 - **Neighborhood.** Points within `soil_local_radius` (0.3) of a base estimate are kept, and exact duplicate coordinates are merged for fitting only.
 - **Fit.** Deterministic three-point RANSAC (seed 42, 1,000 trials, tolerance 0.004), then SVD of the largest consensus. At least 30 candidates and 30 inliers are required.
 
-The command differs from the pilot in two places:
-- **Base.** The base estimate is the lowest slice axis point of `base_plant`, computed under camera-ring up. The pilot used its skeleton root. Without camera-ring up, method B does not run.
+The command differs from the pilot in three places:
+- **Base.** The base estimate is the axis point of the lowest slice (at least `min_slice_points` centers) of `base_plant`. The pilot used its skeleton root.
+- **Iteration, so B's result does not depend on C.** C only bootstraps the neighborhood:
+  1. The first base is taken along C. The command selects, fits and signs the plane.
+  2. The base is recomputed along that soil normal, and the neighborhood is reselected and refitted.
+  3. This repeats until the deduplicated inlier coordinates equal the previous iteration's, at most `max_soil_iterations` (5) fits.
+
+  Every iteration is recorded: base, the direction used, counts, normal, angle to the previous normal and to C, and whether the inlier set changed. `converged` says whether the set stopped changing. Without convergence the last fit is used and a note says so. A synthetic test checks that two different bootstrap directions converge to the same normal.
 - **Sign.** The normal points toward the base plant's mean opacity-kept center. The pilot pointed it toward leaf cluster 4.
 
 The binary readers are local, so neither nerfstudio nor torch is imported.
 
-The soil plane is a bed-orientation cue, not gravity. On October 2 the rockwool plug around the stem was excluded by the soil prompt, so bed level and stem-emergence level are different references.
+The soil plane is a bed-orientation cue, and it can differ from gravity when the bed or plug is tilted. On October 2 the rockwool plug around the stem was excluded by the soil prompt, so bed level and stem-emergence level are different references.
 
 ### Choice
 
-- If B exists and the angle between A and B is at most `max_up_angle_deg` (10), B is used and both are reported.
-- If the angle is larger, `up_disagreement` is set. A is used unless the config sets `prefer_soil`, in which case B is used.
-- If B is absent or refused, A is used and B's status is recorded.
-- If A is refused, no up is chosen. The command writes the refusal and exits with code 3; it does not fall back to dataparser z or to B alone.
+- If B exists and meets its minimums, B is used (`status: primary`). The B-versus-C angle is reported. Above `disagreement_deg` (10), `up_disagreement` is set, but the choice never switches away from B.
+- If B is absent, refused or not run, C is used (`status: fallback`), and the reason names B's state.
+- If neither exists, no up is chosen. The command writes the refusal and exits with code 3; it does not fall back to dataparser z.
+- When B is primary, plant axes and detached assignments are also computed under C and written as `cross_check_camera_mean_image_up`. No result uses them.
 
 ### Plant axis
 
@@ -196,28 +199,31 @@ Otherwise the cluster is `unassigned`, and so is any cluster when some plant has
 ### Checks and changing it
 
 The synthetic tests cover:
-- a tilted camera ring, whose normal and sign are recovered (sign from image-up);
-- the ring's refusals (too few cameras, non-ring, ambiguous sign);
+- the camera mean image-up of a tilted ring and its spread, and refusal only for an empty or cancelling set;
 - a tilted synthetic soil plane with outliers, recovered and signed toward the plant;
 - the vote rule and its refusals;
 - the binary COLMAP readers and one-vote-per-view track voting;
-- the choice rule (agreement, disagreement with and without `prefer_soil`, refused A);
+- soil iteration from a 25-degree-off bootstrap: convergence, the iteration record, and independence from the bootstrap direction, plus the cap and a refused fit;
+- the choice rule: soil primary, disagreement reported and not switched, fallback to C with the reason, and no up;
 - a vertical cylinder giving a straight axis with the expected radius;
 - a blob inside one plant's column assigned, and blobs between plants or above them unassigned;
-- the command end to end, including a refused-up run and config refusals.
+- the command end to end:
+  - soil primary with the C cross-check;
+  - a 20-degree soil-versus-camera disagreement that keeps soil;
+  - the fallback to C;
+  - a no-up refusal (exit 3);
+  - config refusals, including the removed `prefer_soil`.
 
 **Pilot regression (2026-10-17).** The port was given the pilot's base (skeleton root) and sign reference (leaf cluster 4) on the October 2 capture. It reproduced the pilot's `analysis-full` outputs exactly:
 - point IDs, mapped coordinates (zero difference), hits, seen counts, and the soil and local flags;
 - the deduplicated fit points and the inlier set, with counts 933, 479, 467 and 234;
 - the normal (0.137, -0.359, 0.923), 22.6 degrees from dataparser z, and the root's 0.029 offset above the plane.
 
-With the command's own base (the lowest axis slice), the local set has 487 points, 474 after deduplication, with 247 inliers. The normal moves 2.8 degrees.
+**Removed camera-ring method (2026-10-17).** The first design's camera-ring normal refused both Welzo captures at its planarity limit of 0.25:
+- October 2: planarity 0.59 over 24 cameras;
+- October 15: planarity 0.43 over 61 cameras.
 
-**Camera rings on the Welzo captures (2026-10-17).** At the default `max_planarity` of 0.25, method A refuses both captures:
-- October 2: planarity 0.59 over 24 cameras, singular values 1.47, 1.32 and 1.10;
-- October 15: planarity 0.43 over 61 cameras, singular values 4.73, 4.42 and 2.75.
-
-In both captures the cameras spread over a dome, not a ring. The default was not changed to pass them; how to treat such layouts is an open decision.
+In both, the cameras spread over a dome. Alex then set the ground-plane principle above.
 
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 

@@ -18,10 +18,7 @@ from geometry import camera_to_world, dataparser_frame
 # pilot and October 15 separation). They are not universal tuning; a run records the values used.
 DEFAULTS = {
     'opacity_cutoff': 0.3,         # sigmoid(opacity) must exceed this (organ-analysis rule)
-    'min_cameras': 8,              # camera ring: fewer registered cameras is refused
-    'max_planarity': 0.25,         # camera ring: RMS distance from the plane / ring radius
-    'min_sign_cos': 0.1,           # camera ring: |cos| of mean image-up to the normal, below which the sign is ambiguous
-    'soil_min_hits': 2,            # soil: mask hits at a point's own track observations
+    'soil_min_hits': 2,           # soil: mask hits at a point's own track observations
     'soil_hit_share': 0.6,         # soil: hits / available tracked views
     'soil_local_radius': 0.3,      # soil: distance from the base estimate
     'ransac_seed': 42,
@@ -29,7 +26,8 @@ DEFAULTS = {
     'plane_tol': 0.004,            # RANSAC inlier distance
     'min_plane_points': 30,        # soil candidates (after coordinate deduplication)
     'min_inliers': 30,
-    'max_up_angle_deg': 10.0,      # A versus B agreement threshold
+    'max_soil_iterations': 5,      # soil: base/plane refits until the inlier set stops changing
+    'disagreement_deg': 10.0,      # soil normal versus camera mean image-up: reported above this, never switched
     'slice': 0.02,                 # axis slice thickness along up
     'min_slice_points': 30,
     'radius_percentile': 95.0,
@@ -38,7 +36,7 @@ DEFAULTS = {
     'other_min_ratio': 2.0,        # r/R at least this for every other plant
     'height_margin_slices': 1,     # height-range margin, in slices
 }
-INTEGER_KEYS = {'min_cameras', 'soil_min_hits', 'ransac_seed', 'ransac_trials', 'min_plane_points', 'min_inliers',
+INTEGER_KEYS = {'max_soil_iterations', 'soil_min_hits', 'ransac_seed', 'ransac_trials', 'min_plane_points', 'min_inliers',
                 'min_slice_points', 'height_margin_slices'}
 
 
@@ -49,7 +47,7 @@ def check_parameters(params):
                 raise ValueError('Expected nonnegative or positive integer ' + key)
         elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError('Expected positive number ' + key)
-    for key in ['opacity_cutoff', 'soil_hit_share', 'detached_max_share', 'min_sign_cos']:
+    for key in ['opacity_cutoff', 'soil_hit_share', 'detached_max_share']:
         if not params[key] < 1:
             raise ValueError('Expected fraction in (0,1): ' + key)
     if not params['radius_percentile'] <= 100:
@@ -77,7 +75,7 @@ def floats(v):
     return [float(x) for x in np.asarray(v).ravel()]
 
 
-# ----------------------------------------------------------------------------- up, method A
+# ----------------------------------------------------------------------------- up, method C (fallback)
 
 def camera_poses(transforms, dataparser):
     """(frame stems, centers (N,3), image-up vectors (N,3)) of every transforms.json frame in the
@@ -95,37 +93,26 @@ def camera_poses(transforms, dataparser):
     return stems, np.array(C).reshape(-1, 3), np.array(U).reshape(-1, 3)
 
 
-def camera_ring_up(C, U, params):
-    """Method A: normal of the SVD plane through the camera centers, signed by the mean image-up.
-    Returns a record whose status is 'ok' or 'refused' with a reason; never a guess."""
-    rec = {'method': 'camera_ring', 'cameras': int(len(C)), 'normal': None}
-    if len(C) < params['min_cameras']:
-        return dict(rec, status='refused', reason='%d cameras; at least min_cameras = %d required'
-                    % (len(C), params['min_cameras']))
-    center = C.mean(0)
-    _, sv, vt = np.linalg.svd(C - center, full_matrices=False)
-    n = vt[2]
-    dist = (C - center) @ n
-    inplane = (C - center) - dist[:, None] * n
-    ring_radius = float(np.linalg.norm(inplane, axis=1).mean())
-    rms = float(np.sqrt(np.mean(dist ** 2)))
-    planarity = rms / ring_radius if ring_radius > 0 else math.inf
-    mean_up = U.mean(0)
-    mean_up_norm = float(np.linalg.norm(mean_up))
-    cos = float(np.dot(n, mean_up) / mean_up_norm) if mean_up_norm > 0 else 0.0
-    rec.update(centroid=floats(center), singular_values=floats(sv), ring_radius=ring_radius,
-               rms_distance_from_plane=rms, max_distance_from_plane=float(np.abs(dist).max()),
-               planarity=planarity, mean_image_up=floats(mean_up), mean_image_up_length=mean_up_norm,
-               sign_cos=abs(cos))
-    if not planarity <= params['max_planarity']:
-        return dict(rec, status='refused', reason='cameras are not ring-like: planarity %.4g > max_planarity %.4g'
-                    % (planarity, params['max_planarity']))
-    if abs(cos) < params['min_sign_cos']:
-        return dict(rec, status='refused', reason='sign ambiguous: mean image-up is nearly in the ring plane '
-                    '(|cos| %.4g < min_sign_cos %.4g)' % (abs(cos), params['min_sign_cos']))
-    n = n if cos > 0 else -n
-    rec.update(status='ok', normal=floats(n), angle_to_mean_image_up_deg=angle_deg(n, mean_up),
-               angle_to_dataparser_z_deg=angle_deg(n, [0, 0, 1]))
+def camera_mean_up(U):
+    """Method C: the normalized mean of the cameras' unit image-up vectors. It assumes the
+    photographer held the camera roughly upright on average, so it is a fallback and a cross-check,
+    never the primary up. It does not refuse for camera layout; the spread of the individual
+    vectors about the mean is its quality figure. Only an empty or cancelling set gives no vector."""
+    rec = {'method': 'camera_mean_image_up', 'cameras': int(len(U)), 'normal': None}
+    if not len(U):
+        return dict(rec, status='refused', reason='no cameras')
+    Uu = U / np.linalg.norm(U, axis=1, keepdims=True)
+    mean = Uu.mean(0)
+    length = float(np.linalg.norm(mean))
+    rec['mean_resultant_length'] = length
+    if length < 1e-6:
+        return dict(rec, status='refused', reason='image-up vectors cancel; no mean direction')
+    n = mean / length
+    ang = np.degrees(np.arccos(np.clip(Uu @ n, -1, 1)))
+    rec.update(status='ok', normal=floats(n), angular_rms_deg=float(np.sqrt(np.mean(ang ** 2))),
+               angular_max_deg=float(ang.max()), angular_median_deg=float(np.median(ang)),
+               angle_to_dataparser_z_deg=angle_deg(n, [0, 0, 1]),
+               quality='angular RMS of the individual image-up vectors about the mean (degrees)')
     return rec
 
 
@@ -252,24 +239,79 @@ def soil_plane_up(SX, hits, seen, base, toward, params):
     return rec, soil, local
 
 
-def choose_up(a, b, prefer_soil, params):
-    """Choice rule: B when it exists and agrees with A within max_up_angle_deg; on disagreement
-    A unless prefer_soil. Every case is recorded; nothing is picked silently."""
-    ok_a = a is not None and a['status'] == 'ok'
+def lowest_axis_point(X, up, params):
+    """Base estimate: the axis point of the lowest slice that has min_slice_points centers
+    (the median horizontal position of the plant's lowest kept centers along up)."""
+    ax = plant_axis(X, up, params)
+    if ax['status'] != 'ok':
+        return None, ax
+    return np.array(ax['polyline'][0]), ax
+
+
+def soil_plane_iterative(SX, hits, seen, plant_X, bootstrap_up, params):
+    """Method B made independent of the bootstrap direction. Iteration 1 takes its base along
+    bootstrap_up (camera mean image-up); each later iteration takes the base along the previous
+    soil normal, reselects the neighborhood and refits. Stops when the inlier set (deduplicated
+    coordinates) equals the previous one, or after max_soil_iterations fits. The sign points toward
+    the plant's mean opacity-kept center. Returns the final fit's record with every iteration."""
+    toward = plant_X.mean(0)
+    up, previous, iterations, rec = np.asarray(bootstrap_up, float), None, [], None
+    for k in range(params['max_soil_iterations']):
+        base, ax = lowest_axis_point(plant_X, up, params)
+        if base is None:
+            rec = {'method': 'soil_plane', 'status': 'refused', 'normal': None,
+                   'reason': 'iteration %d: base plant has no axis (%s)' % (k + 1, ax['reason'])}
+            break
+        rec, soil, local = soil_plane_up(SX, hits, seen, base, toward, params)
+        it = {'iteration': k + 1, 'base_along': 'camera_mean_image_up' if k == 0 else 'previous soil normal',
+              'up_used_for_base': floats(up), 'base': rec['base'], 'local_points': rec['local_points'],
+              'candidate_points_deduplicated': rec['candidate_points_deduplicated'],
+              'inliers': rec.get('inliers'), 'status': rec['status'], 'normal': rec['normal']}
+        if rec['status'] != 'ok':
+            iterations.append(it)
+            rec = dict(rec, reason='iteration %d: %s' % (k + 1, rec['reason']))
+            break
+        P = np.unique(SX[local], axis=0)
+        _, _, inl = ransac_plane(P, params)
+        current = P[inl]
+        same = previous is not None and current.shape == previous.shape and bool(np.array_equal(current, previous))
+        it.update(inlier_set_unchanged=same, base_offset_above_plane=rec['base_offset_above_plane'],
+                  angle_to_previous_normal_deg=angle_deg(rec['normal'], up) if k else None,
+                  angle_to_bootstrap_deg=angle_deg(rec['normal'], bootstrap_up))
+        iterations.append(it)
+        if same:
+            break
+        previous, up = current, np.array(rec['normal'])
+    converged = bool(iterations and iterations[-1].get('inlier_set_unchanged'))
+    rec = dict(rec, iterations=iterations, converged=converged, max_iterations=params['max_soil_iterations'],
+               sign_rule='toward the mean opacity-kept center of the base plant',
+               base_rule='lowest slice axis point of the base plant; first along camera mean image-up, then along the previous soil normal',
+               convergence_rule='stop when the deduplicated inlier coordinates equal the previous iteration\'s')
+    if rec['status'] == 'ok' and not converged:
+        rec['note'] = 'not converged within max_soil_iterations; the last fit is reported and used'
+    return rec
+
+
+def choose_up(c, b, params):
+    """Choice rule: the soil plane B is primary whenever it exists and meets its minimums. The
+    camera mean image-up C is a cross-check (angle, disagreement flag above disagreement_deg; never
+    a switch) and the fallback when B is absent or refused. Every case is recorded."""
+    ok_c = c is not None and c['status'] == 'ok'
     ok_b = b is not None and b['status'] == 'ok'
-    rec = {'angle_a_b_deg': angle_deg(a['normal'], b['normal']) if ok_a and ok_b else None,
-           'up_disagreement': False, 'prefer_soil': bool(prefer_soil), 'threshold_deg': params['max_up_angle_deg']}
-    if ok_a and ok_b:
-        if rec['angle_a_b_deg'] <= params['max_up_angle_deg']:
-            return dict(rec, method='soil_plane', up=b['normal'], reason='A and B agree within the threshold; B used')
-        rec['up_disagreement'] = True
-        if prefer_soil:
-            return dict(rec, method='soil_plane', up=b['normal'], reason='up_disagreement; prefer_soil is set, so B used')
-        return dict(rec, method='camera_ring', up=a['normal'], reason='up_disagreement; prefer_soil is not set, so A used')
-    if ok_a:
+    rec = {'angle_b_c_deg': angle_deg(b['normal'], c['normal']) if ok_b and ok_c else None,
+           'up_disagreement': False, 'disagreement_threshold_deg': params['disagreement_deg']}
+    if ok_b:
+        rec['up_disagreement'] = bool(rec['angle_b_c_deg'] is not None and rec['angle_b_c_deg'] > params['disagreement_deg'])
+        why = ('; soil normal and camera mean image-up differ by more than the threshold (reported, not switched)'
+               if rec['up_disagreement'] else '')
+        return dict(rec, method='soil_plane', status='primary', up=b['normal'], reason='soil plane used (primary)' + why)
+    if ok_c:
         why = 'no soil inputs' if b is None else 'soil plane %s: %s' % (b['status'], b.get('reason'))
-        return dict(rec, method='camera_ring', up=a['normal'], reason='A used; ' + why)
-    return dict(rec, method=None, up=None, reason='no up: camera ring %s (%s)' % (a['status'], a.get('reason')))
+        return dict(rec, method='camera_mean_image_up', status='fallback', up=c['normal'],
+                    reason='fallback to camera mean image-up; ' + why)
+    return dict(rec, method=None, status='refused', up=None,
+                reason='no up: soil plane %s; camera mean image-up %s (%s)'
+                % ('absent' if b is None else b['status'], c['status'], c.get('reason')))
 
 
 # ----------------------------------------------------------------------------- plant axis
