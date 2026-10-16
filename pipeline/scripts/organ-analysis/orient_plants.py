@@ -173,30 +173,42 @@ def soil_inputs(soil, transforms, dataparser, hashes):
         if stem not in fmap:
             raise ValueError('Frame %s is missing from the soil frame map' % stem)
         name_by_id[fr['colmap_im_id']] = fmap[stem]
-    masks, views = {}, []
+    names, views = set(), {}
     w, h = t['w'], t['h']
     for name in sorted(fmap.values()):
         p = Path(soil['soil_masks']) / (name + soil['mask_extension'])
         if not p.exists():
+            views[name] = {'name': name, 'soil_mask': 'absent (unknown, not a negative)'}
             continue
         q = Path(soil['plant_masks']) / (name + soil['mask_extension'])
         if not q.exists():
             raise ValueError('Plant mask needed to clean soil mask is missing: ' + str(q))
         hashes[str(p)], hashes[str(q)] = sha(p), sha(q)
-        with Image.open(p) as im:
-            m = np.array(im.convert('L')) > 127
-        with Image.open(q) as im:
-            plant = np.array(im.convert('L')) > 127
-        if m.shape != (h, w) or plant.shape != (h, w):
-            raise ValueError('Soil/plant mask size differs from the camera domain: ' + name)
-        masks[name] = m & ~plant
-        views.append({'name': name, 'soil_pixels': int(m.sum()), 'soil_pixels_after_plant_removal': int(masks[name].sum())})
-    if not masks:
+        names.add(name)
+    if not names:
         raise ValueError('No soil mask matches a frame-map source name')
+
+    def load(name):
+        """One view's soil mask minus its plant mask; only this view is held in memory."""
+        with Image.open(Path(soil['soil_masks']) / (name + soil['mask_extension'])) as im:
+            m = np.array(im.convert('L')) > 127
+        with Image.open(Path(soil['plant_masks']) / (name + soil['mask_extension'])) as im:
+            m_plant = np.array(im.convert('L')) > 127
+        if m.shape != (h, w) or m_plant.shape != (h, w):
+            raise ValueError('Soil/plant mask size differs from the camera domain: ' + name)
+        soil_px = int(m.sum())
+        m &= ~m_plant
+        del m_plant
+        views[name] = {'name': name, 'soil_pixels': soil_px, 'soil_pixels_after_plant_removal': int(m.sum())}
+        return m
+
     sparse = Path(soil['colmap_sparse'])
     points = po.read_points3d_binary(sparse / 'points3D.bin')
     images = po.read_images_binary(sparse / 'images.bin')
-    ids, hits, seen = po.soil_votes(points, images, name_by_id, masks)
+    ids, hits, seen = po.soil_votes(points, images, name_by_id, names, load)
+    for name in names - {v for v in views if 'soil_pixels' in views[v]}:
+        load(name)  # a view no track reaches: record its pixel counts too
+    views = [views[k] for k in sorted(views)]
     SX = po.colmap_to_dataparser(np.array([points[i][0] for i in ids.tolist()]).reshape(-1, 3), d)
     return SX, ids, hits, seen, views
 

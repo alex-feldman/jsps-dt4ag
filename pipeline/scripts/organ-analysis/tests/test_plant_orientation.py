@@ -149,7 +149,10 @@ class SoilPlane(unittest.TestCase):
         np.testing.assert_allclose(ims[1][1][1], [8.2, 1.0])
         m = np.zeros((10, 10), bool)
         m[:5, :5] = True
-        ids, hits, seen = po.soil_votes(pts, ims, {1: 'A', 2: 'B', 3: 'C'}, {'A': m, 'B': m, 'C': m})
+        loaded = []
+        ids, hits, seen = po.soil_votes(pts, ims, {1: 'A', 2: 'B', 3: 'C'}, {'A', 'B', 'C', 'D'},
+                                        lambda name: loaded.append(name) or m)
+        self.assertEqual(loaded, ['A', 'B', 'C'])  # one view at a time; a view no track reaches is not loaded
         np.testing.assert_array_equal(ids, [7, 9])
         # Point 7: A hit, B hit once (one vote per view). Point 9: A miss; C out of bounds is not a view.
         np.testing.assert_array_equal(hits, [2, 0])

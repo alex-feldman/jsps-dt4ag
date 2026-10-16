@@ -164,27 +164,44 @@ def colmap_to_dataparser(xyz, d):
     return (xyz @ T[:3, :3].T + T[:3, 3]) * float(d['scale'])
 
 
-def soil_votes(points, images, name_by_image_id, soil_masks):
+def soil_votes(points, images, name_by_image_id, mask_names, load_mask):
     """Soil votes at each point's own feature-track observations, as in the October 2 pilot.
-    soil_masks maps a source name to a boolean mask (plant pixels already removed). A view
-    without a soil mask is unknown, not a negative. Each view votes at most once per point."""
+
+    mask_names is the set of source names that have a soil mask; load_mask(name) returns that
+    boolean mask (plant pixels already removed). Masks are loaded one view at a time, so memory
+    holds a single mask. A view without a soil mask is unknown, not a negative. Each view votes at
+    most once per point: its first in-bounds observation in track order, exactly the pilot's loop."""
     ids = list(points)
-    hits, seen = np.zeros(len(ids), int), np.zeros(len(ids), int)
+    rows, order, names, xs, ys = [], [], [], [], []
     for row, pid in enumerate(ids):
         _, image_ids, idxs = points[pid]
-        voted = set()
-        for iid, j in zip(image_ids.tolist(), idxs.tolist()):
+        for k, (iid, j) in enumerate(zip(image_ids.tolist(), idxs.tolist())):
             name = name_by_image_id.get(iid)
-            if name not in soil_masks or name in voted:
+            if name not in mask_names:
                 continue
-            m = soil_masks[name]
             x, y = images[iid][1][j]
-            x, y = int(x), int(y)
-            if not (0 <= x < m.shape[1] and 0 <= y < m.shape[0]):
-                continue
-            voted.add(name)
-            seen[row] += 1
-            hits[row] += int(m[y, x])
+            rows.append(row), order.append(k), names.append(name), xs.append(int(x)), ys.append(int(y))
+    rows, order, xs, ys = (np.array(v, dtype=np.int64) for v in (rows, order, xs, ys))
+    names = np.array(names, dtype=object)
+    view = np.full(len(rows), -1, np.int64)
+    hit = np.zeros(len(rows), np.int64)
+    for v, name in enumerate(sorted(mask_names)):
+        sel = np.flatnonzero(names == name)
+        if not len(sel):
+            continue
+        m = load_mask(name)
+        ok = (xs[sel] >= 0) & (xs[sel] < m.shape[1]) & (ys[sel] >= 0) & (ys[sel] < m.shape[0])
+        sel = sel[ok]
+        view[sel] = v
+        hit[sel] = m[ys[sel], xs[sel]]
+        del m
+    keep = np.flatnonzero(view >= 0)
+    keep = keep[np.lexsort((order[keep], view[keep], rows[keep]))]
+    first = np.ones(len(keep), bool)
+    first[1:] = (rows[keep][1:] != rows[keep][:-1]) | (view[keep][1:] != view[keep][:-1])
+    keep = keep[first]
+    hits = np.bincount(rows[keep], weights=hit[keep], minlength=len(ids)).astype(int)
+    seen = np.bincount(rows[keep], minlength=len(ids)).astype(int)
     return np.array(ids, dtype=np.int64), hits, seen
 
 
