@@ -91,6 +91,18 @@ Every graph endpoint has a unique source-scoped ID: a group's sorted terminal
 node IDs become `b5-a`, `b5-b`, etc.; other degree-one nodes use `e{node_id}`.
 Group IDs are retained across review and are not renumbered after rejection.
 
+Branch-review viewers list every endpoint with category and optional notes.
+Choices are not reviewed, unclear, leaf, false-branch, tip/apex, tendril,
+stem/base, string/support and other. Earlier confirmed-false groups and retained
+leaf-connected groups are prefilled from human dispositions; algorithmic
+guesses are not marked as reviewed. Browser-local autosave checks graph and
+source-node identity. Saving failure is visible and does not block CSV export.
+Use the sticky Download endpoint review CSV button before returning results:
+it includes all endpoints, coordinates, original decisions and current human
+fields, even when the review is incomplete. Browser storage is profile-local
+convenience, not a file the analysis agent can directly read. The annotations
+never modify geometry, candidate classification or pruning by themselves.
+
 ```text
 python pipeline/scripts/organ-analysis/review_branches.py --review /path/to/branch-review --decisions /path/to/decisions.json --output /path/to/new-reviewed-output
 ```

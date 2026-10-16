@@ -50,6 +50,15 @@ review directory and can export a separate confirmed-only derivative graph;
 raw source evidence remains intact. No source-photo or Gaussian-rendering
 feature is part of this update.
 
+The endpoint form keeps browser answers separate from raw graph fields. It
+prefills only prior explicit human dispositions, whitelists stored categories,
+and verifies graph plus endpoint source-node identity on reload. Notes and
+categories autosave to browser localStorage with a visible failure status. CSV
+export includes every source endpoint and original raw coordinates/decisions,
+with CSV quoting for commas and quotes; partial review is allowed. Browser
+checks exercise actual form events, reload, download Blob content, storage
+failure and graph invariance. Test answers are cleared afterward.
+
 Focused tests cover malformed/truncated PLY, camera-frame mapping, unsupported distortion, missing/wrong-size masks, explicit apex requirement, output protection and reused-label integrity. A synthetic tiny scene exercises the public command, leaf-only/skeleton-stage flow and checked failure path. The real Welzo run must reproduce the baseline arrays, leaf memberships and graph; inspect a generated overlay/viewer in a real browser. A raw hand-check can inspect graph endpoints in `skeleton.json` and source-instance membership in `leaf_ids2.json`, independently of the wrapper's status.
 
 Any new camera model, visibility rule, threshold, topology repair or organ heuristic changes the analysis and requires new regression/evidence. Do not tune per reconstruction arm or silently replace source scripts inside a frozen experiment. New datasets need their own review, apex choice and parameter checks. Metric scale, measured radii, missing petiole centerlines, MTG serialization and Helios generation are outside this command's claims.

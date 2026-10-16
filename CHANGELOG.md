@@ -14,6 +14,17 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.4] - 2026-10-16
+
+### Added
+
+- Per-endpoint review dropdowns and notes, prefilled only from existing human
+  dispositions. Browser-local saving is scoped to the source graph and checked
+  source node IDs, with a visible unavailable-state fallback. A persistent CSV
+  download control exports all endpoints and raw IDs/coordinates, including
+  partial reviews. Browser checks exercised reload persistence, CSV quoting,
+  storage failure and unchanged geometry.
+
 ## [0.3.0-alpha.3] - 2026-10-16
 
 ### Added
