@@ -3,8 +3,9 @@ import json
 import numpy as np
 
 
-def write_viewer(out, bundle, candidates=None):
-    with np.load(out/'leaf_ids2.npz') as arrays:
+def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=None):
+    """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export."""
+    with np.load(labels_path or out/'leaf_ids2.npz') as arrays:
         points = {}
         for leaf in bundle['leaves']:
             selected = arrays['X'][arrays['label']==leaf['id']]
@@ -13,7 +14,7 @@ def write_viewer(out, bundle, candidates=None):
             points[str(leaf['id'])] = selected[positions].tolist()
     graph = bundle['source_graph'] or {'skeleton_nodes':[],'skeleton_edges':[],'leaves':[]}
     data = {'capture':bundle['capture_id'],'points':points,'graph':graph,'leaves':bundle['leaves'],
-            'branchCandidates':candidates}
+            'branchCandidates':candidates,'plantAsset':plant_asset}
     payload = json.dumps(data,allow_nan=False).replace('<','\\u003c')
     page = '''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -24,12 +25,17 @@ aside{padding:18px;overflow:auto;background:#19212b;overflow-wrap:anywhere}p{lin
 .review-toolbar{position:sticky;top:-18px;background:#19212b;padding:10px 0;z-index:2;border-bottom:1px solid #526171}
 .endpoint-row{padding:10px 0;border-bottom:1px solid #34404c}.endpoint-row label{display:block;margin:4px 0}
 .endpoint-row select,.endpoint-row input{width:100%;box-sizing:border-box;padding:6px;background:#10151b;color:#edf2f7;border:1px solid #526171}
+#leafChoice{display:block;width:100%;box-sizing:border-box;margin-top:4px}
 @media(max-width:700px){body{grid-template-columns:1fr;grid-template-rows:65% 35%}}
 </style><canvas id="view" aria-label="Provisional organ points and skeleton"></canvas><aside>
 <h1 id="title"></h1><div class="review-toolbar" id="reviewToolbar" hidden><button id="exportReview">Download endpoint review CSV</button><p id="saveStatus" role="status"></p></div>
 <p>Drag to rotate; wheel to zoom. Reset uses dataparser z as approximate up, not gravity.</p>
 <button id="reset">Reset view</button><p><label><input id="points" type="checkbox" checked>Leaf points</label></p>
 <p><label><input id="edges" type="checkbox" checked>Skeleton</label></p>
+<section id="leafSelection" hidden><h2>Select one leaf</h2>
+<p>Click a leaf's points or choose it below. The download holds that leaf's full point coordinates with their original row IDs, its petiole polyline and status, and its attachment record, in the plant-asset leaf-export format. Cyan dashed lines are inferred-petiole connections: synthetic, not recovered tissue. Nothing else is changed.</p>
+<p><label>Leaf <select id="leafChoice"><option value="">No leaf selected</option></select></label></p>
+<p id="leafSummary" role="status"></p><p><button id="exportLeaf" disabled>Download selected leaf (JSON)</button></p></section>
 <details id="endpointReviewPanel" hidden open><summary>Review every endpoint</summary>
 <p>Choose a category for each endpoint. Your earlier confirmed decisions are prefilled. Notes are optional. This records annotations only; it does not delete geometry. Download CSV to send the review back.</p>
 <div id="endpointReviewRows"></div></details>
@@ -84,8 +90,20 @@ const row=document.createElement('p');row.textContent=c.review_label+': '+c.edge
 for(const c of D.branchCandidates.retained_branches||[]){const row=document.createElement('p');row.textContent=c.review_label+': retained, ends in a leaf';row.style.color='#6fdfa6';document.getElementById('candidateList').append(row)}
 for(const path of D.branchCandidates.extra_review_paths||[]){for(const e of path.edge_ids)extraEdges.add(e);const row=document.createElement('p');row.textContent=path.review_label+': incoming path flagged for review; shares saved leaf route; kept in preview';row.style.color='#d4a1ff';document.getElementById('candidateList').append(row)}}
 for(const leaf of D.leaves){const row=document.createElement('p');row.style.color=colors[leaf.id%colors.length];
-const status=leaf.association_support==='small_unreviewed_cluster'?'small unreviewed cluster':leaf.geometry_status==='unresolved_no_path'?'petiole path unresolved':'candidate geometry';
+const status=leaf.geometry_status==='inferred-petiole'?'inferred-petiole (synthetic)':leaf.geometry_status==='human_reviewed_existing_route'?'human-reviewed extracted route':leaf.association_support==='small_unreviewed_cluster'?'small unreviewed cluster':leaf.geometry_status==='unresolved_no_path'?'petiole path unresolved':'candidate geometry';
 row.textContent='Cluster '+leaf.id+' · '+leaf.point_count+' centers · '+status+(leaf.annotation?' · '+JSON.stringify(leaf.annotation,null,1):'');document.getElementById('legend').append(row)}
+const PA=D.plantAsset,leafChoice=document.getElementById('leafChoice'),leafSummary=document.getElementById('leafSummary'),exportLeaf=document.getElementById('exportLeaf');
+let selectedLeaf=null,press=null;
+function describeLeaf(doc){const p=doc.petiole,l=doc.leaf;return l.id+' · '+l.role+' · '+l.point_geometry.point_count+' centers · petiole: '+(doc.petiole_status==='inferred-petiole'?'inferred-petiole (synthetic connection, not measured)':doc.petiole_status==='extracted'?'extracted ('+p.geometry_status+')':'none'+(l.petiole_unresolved_reason?' ('+l.petiole_unresolved_reason+')':l.role==='combined-apex-region'?' (combined apex region)':''))}
+function selectLeaf(id){const key=id==null||id===''?null:String(id);selectedLeaf=PA&&key!==null&&PA.exports[key]?key:null;
+if(PA){leafChoice.value=selectedLeaf??'';leafSummary.textContent=selectedLeaf?describeLeaf(PA.exports[selectedLeaf]):'No leaf selected.';exportLeaf.disabled=!selectedLeaf}draw();return selectedLeaf}
+function leafExportText(id){return JSON.stringify(PA.exports[String(id)])+'\\n'}
+if(PA){document.getElementById('leafSelection').hidden=false;leafSummary.textContent='No leaf selected.';
+for(const[id,doc]of Object.entries(PA.exports)){const option=document.createElement('option');option.value=id;option.textContent=doc.leaf.id+' ('+doc.leaf.role+(doc.petiole_status==='inferred-petiole'?', inferred petiole':'')+')';leafChoice.append(option)}
+leafChoice.onchange=()=>selectLeaf(leafChoice.value);
+exportLeaf.onclick=()=>{if(!selectedLeaf)return;const blob=new Blob([leafExportText(selectedLeaf)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+link.href=url;link.download=(PA.plant_id+'-leaf-'+selectedLeaf).replace(/[^a-zA-Z0-9_-]/g,'_')+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+window.plantAssetViewer={selectLeaf,leafExportText,selected:()=>selectedLeaf}}
 const all=Object.values(D.points).flat().concat([...nodes.values()]);
 const lo=[0,1,2].map(k=>Math.min(...all.map(p=>p[k]))),hi=[0,1,2].map(k=>Math.max(...all.map(p=>p[k])));
 const center=lo.map((v,k)=>(v+hi[k])/2),span=Math.max(1e-9,...lo.map((v,k)=>hi[k]-v));
@@ -103,19 +121,25 @@ if(confirmedEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'))&&document.getElement
 const highlighted=candidate&&document.getElementById('highlightCandidates').checked;
 const extra=extraEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'))&&document.getElementById('highlightCandidates').checked;
 const a=project(nodes.get(e.a)),b=project(nodes.get(e.b));
-ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineWidth=e.main?3:highlighted||extra?2.5:1.5;ctx.strokeStyle=e.main?'#ff514b':extra?'#d4a1ff':highlighted?'#ffd166':'#8796a3';ctx.setLineDash(extra||highlighted&&guardedEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'))?[5,3]:[]);ctx.stroke();ctx.setLineDash([])}
+ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineWidth=e.main?3:highlighted||extra?2.5:1.5;ctx.strokeStyle=e.main?'#ff514b':extra?'#d4a1ff':highlighted?'#ffd166':'#8796a3';ctx.setLineDash(extra||highlighted&&guardedEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'))?[5,3]:[]);
+if(e.classification==='inferred-petiole'){ctx.strokeStyle='#55e6ed';ctx.lineWidth=2.5;ctx.setLineDash([7,5])}ctx.stroke();ctx.setLineDash([])}
 if(document.getElementById('points').checked){const pts=[];for(const[id,arr]of Object.entries(D.points))for(const p of arr)pts.push([...project(p),Number(id)]);
-pts.sort((a,b)=>a[2]-b[2]);for(const p of pts){ctx.beginPath();ctx.arc(p[0],p[1],2.2,0,Math.PI*2);ctx.fillStyle=colors[p[3]%colors.length];ctx.fill()}}
-for(const l of D.graph.leaves){const p=project(l.insertion_xyz);ctx.beginPath();ctx.arc(p[0],p[1],4.5,0,Math.PI*2);ctx.fillStyle=colors[l.leaf_id%colors.length];ctx.fill();ctx.strokeStyle='white';ctx.stroke();ctx.fillStyle='white';ctx.fillText(String(l.leaf_id),p[0]+7,p[1]-6)}
+pts.sort((a,b)=>a[2]-b[2]);for(const p of pts){const dim=selectedLeaf!==null&&String(p[3])!==selectedLeaf;ctx.globalAlpha=dim?.18:1;ctx.beginPath();ctx.arc(p[0],p[1],selectedLeaf!==null&&!dim?3.2:2.2,0,Math.PI*2);ctx.fillStyle=colors[p[3]%colors.length];ctx.fill()}ctx.globalAlpha=1}
+if(selectedLeaf!==null){const doc=PA.exports[selectedLeaf];if(doc.petiole){const line=doc.petiole.polyline.map(project),inferred=doc.petiole_status==='inferred-petiole';ctx.beginPath();line.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+ctx.lineWidth=4;ctx.strokeStyle=inferred?'#55e6ed':'#ffe066';ctx.setLineDash(inferred?[7,5]:[]);ctx.stroke();ctx.setLineDash([]);const a=project(doc.attachment.xyz);ctx.beginPath();ctx.arc(a[0],a[1],7,0,Math.PI*2);ctx.lineWidth=2;ctx.strokeStyle='#ffe066';ctx.stroke();ctx.lineWidth=1}}
+for(const l of D.graph.leaves){const p=project(l.insertion_xyz);ctx.beginPath();ctx.arc(p[0],p[1],4.5,0,Math.PI*2);ctx.fillStyle=colors[l.leaf_id%colors.length];ctx.fill();ctx.strokeStyle='white';ctx.stroke();ctx.fillStyle='white';ctx.fillText(String(l.leaf_id)+(l.classification==='inferred-petiole'?' [inferred]':l.source_endpoint_id?' ['+l.source_endpoint_id+']':''),p[0]+7,p[1]-6)}
 if(document.getElementById('edges').checked&&document.getElementById('endpointLabels').checked){
 const labels=D.branchCandidates?.endpoint_records;
 if(labels)for(const e of labels){const p=project(nodes.get(e.source_node_id));ctx.fillStyle=e.status==='retained_leaf_connected'?'#6fdfa6':e.review_group?'#ffd166':'#e2e8ef';ctx.font='bold 13px system-ui';ctx.fillText(e.endpoint_id,p[0]+6,p[1]-5)}
 else if(document.getElementById('highlightCandidates').checked&&!document.getElementById('hideCandidates').checked)
 for(const[n,label]of candidateTerminals){const p=project(nodes.get(n));ctx.fillStyle='#ffd166';ctx.font='bold 13px system-ui';ctx.fillText(label,p[0]+6,p[1]-5)}}}
 function fit(){const d=devicePixelRatio||1;canvas.width=Math.round(canvas.clientWidth*d);canvas.height=Math.round(canvas.clientHeight*d);ctx.setTransform(d,0,0,d,0,0);draw()}
-canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)};
+canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];press=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)};
+function pickLeaf(e){if(!document.getElementById('points').checked)return;const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;let best=null,front=-Infinity;
+for(const[id,arr]of Object.entries(D.points)){if(!PA.exports[id])continue;for(const p of arr){const q=project(p);if((q[0]-x)**2+(q[1]-y)**2<=64&&q[2]>front){front=q[2];best=id}}}if(best!==null)selectLeaf(best)}
 canvas.onpointermove=e=>{if(!drag)return;yaw+=(e.clientX-drag[0])*.008;pitch=Math.max(-1.45,Math.min(1.45,pitch+(e.clientY-drag[1])*.008));drag=[e.clientX,e.clientY];draw()};
-canvas.onpointerup=canvas.onpointercancel=()=>drag=null;
+canvas.onpointerup=e=>{const click=press&&Math.hypot(e.clientX-press[0],e.clientY-press[1])<4;drag=null;press=null;if(click&&PA)pickLeaf(e)};
+canvas.onpointercancel=()=>{drag=null;press=null};
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.35,Math.min(8,zoom*Math.exp(-e.deltaY*.001)));draw()},{passive:false});
 document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.28;zoom=1;draw()};
 for(const id of['points','edges','highlightCandidates','hideCandidates','hideConfirmed','endpointLabels'])document.getElementById(id).onchange=draw;

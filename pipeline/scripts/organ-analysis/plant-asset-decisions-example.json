@@ -1,0 +1,23 @@
+{
+  "schema": "plant-asset-decisions",
+  "schema_version": 1,
+  "plant_id": "example-plant",
+  "source": "<who reviewed, when, and on what evidence>",
+  "source_graph_sha256": "<source_graph_sha256 from branch-candidates.json>",
+  "rejected_endpoints": [
+    {"endpoint_id": "e99", "reason": "<why this endpoint's path is false>"}
+  ],
+  "leaves": {
+    "0": {"role": "true-leaf", "petiole": {"source": "algorithm"}},
+    "1": {"role": "true-leaf", "petiole": {"source": "endpoint", "endpoint_id": "b5-c", "geometry_status": "extracted; human-corrected"},
+          "attachment": {"biological_insertion_status": "<optional note>"}},
+    "2": {"role": "cotyledon", "petiole": {"source": "inferred", "method": "nearest-point-mean-reference-angle",
+                                            "reference_leaf_ids": [0, 1], "human_review": "<optional acceptance record>"}},
+    "3": {"role": "combined-apex-region", "petiole": null},
+    "5": {"role": "true-leaf", "petiole": null, "petiole_unresolved_reason": "<why no petiole is assigned>"}
+  },
+  "cotyledon_pairs": [],
+  "pair_insertions": null,
+  "review_summary": null,
+  "additional_limits": []
+}

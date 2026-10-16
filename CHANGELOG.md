@@ -14,6 +14,29 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.6] - 2026-10-16
+
+### Added
+
+- `plant_asset.py`: a versioned, capture-scoped plant-asset contract
+  (`schema: plant-asset`, `schema_version: 1`) with a validator, also callable
+  as `validate_plant_asset.py`. The whole `plant-asset/` folder is the object:
+  relative paths, scoped organ IDs, extracted versus inferred status, original
+  filtered-array row IDs, source hashes, scale-free units and nulls for unknown
+  scale, radii and surfaces. Inferred geometry cannot be relabeled extracted or
+  measured.
+- `package_plant_asset.py`: emits that package from a checked branch-review
+  folder, the endpoint review CSV and an explicit `plant-asset-decisions` file,
+  reusing the reviewed pilot's cleanup, petiole and inference logic. Output is
+  byte-reproducible and checked after relocation. Regenerating the Welzo M1
+  pilot reproduced every leaf array, row ID, graph edge and petiole/attachment
+  coordinate exactly; the intentional differences are listed in `DESIGN.md`.
+- Single-leaf export: `export_leaf.py` writes one leaf's points, petiole and
+  attachment to a self-contained folder, and `plant_asset.load_leaf_export`
+  reloads it. The offline viewer selects a leaf by click or list and downloads
+  the same record as JSON. Checked in headless Chrome on Welzo leaf 2 (B2 route)
+  and inferred cotyledons 5 and 7.
+
 ## [0.3.0-alpha.5] - 2026-10-16
 
 ### Added

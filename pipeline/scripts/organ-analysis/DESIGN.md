@@ -131,3 +131,38 @@ Synthetic tests check the following:
 ### Limits and changing it
 
 Single linkage chains: two plants that touch, or a line of floaters between them, merge at a small radius. The join radii and direct gaps are reported so that this is visible rather than hidden in a label. A sparsely photographed plant fragments at a radius suited to the walked-around target. HDBSCAN was tried on the Welzo neighbor as a density-based second opinion. It agreed with the fixed-radius structure and does not rescue such fragmentation, so it is not part of the command. A different linkage, radius rule, opacity rule or faint-attachment rule changes the separation and needs new regression evidence like the above.
+
+## Plant asset package and single-leaf export
+
+`plant_asset.py` owns the versioned contract and its validator; `package_plant_asset.py` emits it; `export_leaf.py` and the viewer's leaf control export one leaf. The README owns commands, the decisions file and the field table.
+
+### Origin
+
+The contract generalizes the reviewed Welzo M1 (October 2 capture) pilot `plant-asset/`. That pilot was assembled by four capture-specific scripts beside its review outputs: endpoint-CSV cleanup, a leaf-1 correction, inferred petioles plus packaging, and a final leaf-2 correction. Their decisions were hard-coded, such as node IDs, the endpoint for each leaf, and which leaves to infer. The emitter reads those decisions from a `plant-asset-decisions` file bound to the source graph digest, and reuses the scripts' logic:
+
+- Endpoint review retains the union of root paths to every endpoint not explicitly rejected, so rejecting a tip removes only edges no retained endpoint needs.
+- An algorithm petiole is the reviewed-graph path from the terminal nearest the saved blade base back to the main axis. The saved gap must still match, so a tip removed by review is refused rather than silently replaced.
+- An endpoint petiole walks from the reviewed endpoint to the first main-axis node, which is the insertion.
+- The inference is the pilot's construction unchanged. It takes the leaf point nearest the stem, averages the initial angles of two extracted petioles against centered root-to-apex tangents, and solves for an attachment on the existing stem with an exact angle, choosing the solution nearest along the stem. Stem points never move. When the decisions name the reference leaves, they are used; otherwise the two nearest extracted petioles along the stem.
+
+Regenerating the Welzo pilot from its review folder, endpoint CSV and transcribed decisions reproduced every leaf array and row ID, the 63-node reviewed graph, all petiole and attachment geometry with zero float deviation, the six internode lengths and the 62-edge classification. The intentional differences from the pilot are these. The schema `welzo-organ-asset-pilot-v1` became `plant-asset` with `schema_version` 1. `unassigned_extracted_graph` became `reviewed_graph`, with a hash and edge counts. `generator` and `point_labels` were added. Every extracted petiole now records its source endpoint and blade gap, where the pilot did so only for leaf 2. Inferred petioles add `source_node_ids: null`, `method_id`, `reference_selection` and the recorded human review. Records are listed by cluster ID, and the equal-arc tie between leaves 2 and 6 is ordered by cluster ID. That swaps them in `ordered_attachment_ids` and in the endpoints of internodes 2 to 4; both attachments are the same point. Leaf NPZ bytes differ because of the deterministic writer, while their arrays are identical. The branch report, the decisions file and the earlier rejection record were added to the evidence. The graph records for endpoint-sourced leaves use one generic `base_rule` and `review_status`.
+
+### Rules and their reasons
+
+- **Whole folder, relative paths.** Every path the contract reads is a relative POSIX path that must resolve inside the folder, so a copied folder validates unchanged. Absolute input paths are kept only as `source_files` provenance and are never read.
+- **Extracted versus inferred.** An inferred petiole must carry `inferred-petiole`, `geometry_status: inferred`, an inferred attachment, no source nodes and an inference record whose anchor is the cited leaf row. An extracted one must lie on reviewed-graph edges and sit on a cited stem node. No status may claim measurement; "not measured" disclaimers are allowed. Leaf exports repeat the check on reload, so an inferred petiole cannot be relabeled extracted.
+- **Exclusive edges.** Each reviewed edge belongs to the main axis, one extracted petiole, or nothing. A shared extracted edge is refused rather than counted twice.
+- **Row IDs.** Leaf NPZs hold the complete cluster from the opacity-filtered analysis array, with `source_point_row_ids` into `point_labels`. They are not raw PLY vertex indices.
+- **Deterministic files.** Leaf NPZs are written with fixed entry order and zip timestamps, and JSON with fixed formatting, so the same inputs give byte-identical packages.
+- **Ties.** Attachments with equal arc length are ordered by cluster ID. This order carries no biological meaning, and the zero interval between them is marked unresolved. The pilot happened to order a tie by packaging sequence.
+- **Scale and unknowns.** Units stay scale-free; `metric_scale`, radii and surface meshes are `null` in version 1.
+
+A new field may be added only with a schema version bump and a validator update. So may a new role, petiole source or inference method, or any change to these rules.
+
+### Single-leaf export
+
+`leaf_export_document` copies the leaf, petiole and attachment records unchanged and adds the source asset identity, including the `plant.json` hash, units and limits. The command-line export writes `leaf.json` and a byte copy of the leaf NPZ. The viewer embeds the same record for every leaf, with `X` and row IDs inline, and downloads it as JSON. `load_leaf_export` accepts both forms. Exporting never writes into the asset.
+
+The viewer stays one offline HTML file. Clicking selects the frontmost displayed center within 8 px, and a press that moves more than 4 px is a rotation instead. The highlighted petiole is drawn from the embedded export record, so what is shown is what is downloaded.
+
+Synthetic tests cover the emitter and its refusals, byte-identical repeats, validator refusals, export and reload, and the viewer's embedded payload. The Welzo pilot was additionally regenerated and compared, and the viewer was driven in headless Chrome.

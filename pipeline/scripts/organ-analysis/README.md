@@ -135,6 +135,84 @@ Limits:
 
 On the 74,180-row October 15 Welzo export, the command took about 8.5 s and peaked at 260 MiB under `ulimit -v 2500000`. Its M1 and neighbor derivatives were byte-identical to the separations made by hand on October 15. Run it under a hard memory cap anyway. `guarded_query_pairs` estimates the pair count and refuses an over-budget radius query for code that still needs one.
 
+## Plant asset package
+
+After branch/endpoint review, `package_plant_asset.py` turns a reviewed organ result into one versioned, capture-scoped folder: `plant-asset/`. It reuses the review outputs and human decisions; it does not rerun masks, leaf lifting or skeletonization. `plant_asset.py` owns the contract (`SCHEMA`, `SCHEMA_VERSION`, `validate_asset`) and the single-leaf export; `DESIGN.md` explains the rules.
+
+### Inputs
+
+- `--review`: a `review_branches.py` (or `identify_branches.py`) output folder holding `organ-evidence.json`, `leaf_ids2.npz` and `branch-candidates.json` with endpoint IDs. The evidence point-label hash and graph digest are checked.
+- `--endpoint-review` (optional): the endpoint CSV downloaded from that review viewer. Rows marked `false-branch` are rejected; every other endpoint keeps the root path it depends on. Graph digest, endpoint IDs, node IDs and coordinates must match.
+- `--decisions`: a `plant-asset-decisions` JSON, version 1. Copy `plant-asset-decisions-example.json`. It binds to the source graph by `source_graph_sha256` and records:
+  - `plant_id` (prefix of every organ ID) and `source` (who decided, and when);
+  - `rejected_endpoints`: further endpoints to reject, each with a reason;
+  - `leaves`: one entry per leaf cluster to package, keyed by cluster ID, with `role` (`true-leaf`, `cotyledon` or `combined-apex-region`) and `petiole`:
+    - `{"source": "algorithm"}` keeps the skeleton's own leaf-tip path; zero-length fallbacks are refused;
+    - `{"source": "endpoint", "endpoint_id": "b2-a"}` uses the retained graph path from that reviewed endpoint to the main axis;
+    - `{"source": "inferred", "method": "nearest-point-mean-reference-angle"}` builds a straight inferred connection from the leaf point nearest the stem, at the mean initial angle of two extracted petioles. Optional `reference_leaf_ids` fixes those two; otherwise the two nearest along the stem are used. Optional `human_review` records acceptance;
+    - `null` for the apex region, or with `petiole_unresolved_reason` for any other leaf;
+    - optional `geometry_status` text (must start with `extracted`) and `biological_insertion_status` notes, plus `attachment.biological_insertion_status`;
+  - optional `cotyledon_pairs`, `pair_insertions`, `review_summary` and `additional_limits`.
+
+  Every skeleton leaf record needs a decision. Clusters without one, such as small unreviewed clusters, are not packaged.
+- `--evidence` (repeatable): extra review records, copied into `source-evidence/` with hashes.
+
+### Run
+
+```text
+python pipeline/scripts/organ-analysis/package_plant_asset.py --review /path/to/branch-review --endpoint-review /path/to/endpoint-review.csv --decisions /path/to/decisions.json --output /path/to/new-package --validate-only
+python pipeline/scripts/organ-analysis/package_plant_asset.py --review /path/to/branch-review --endpoint-review /path/to/endpoint-review.csv --decisions /path/to/decisions.json --output /path/to/new-package
+python pipeline/scripts/organ-analysis/validate_plant_asset.py /path/to/new-package/plant-asset
+```
+
+The output directory must be new. A failed run keeps `package-record.json` with the error. The same inputs give byte-identical `plant-asset/` files.
+
+### Package contract (`plant-asset`, `schema_version` 1)
+
+Treat the whole `plant-asset/` folder as the object. Every path in `plant.json` is a relative POSIX path inside it, so a copied folder stays valid; `source_files` keeps the absolute input paths only as provenance and is never read.
+
+| Field | Content |
+|---|---|
+| `schema`, `schema_version` | `plant-asset`, `1`. The validator refuses any other version. |
+| `plant_id`, `capture_id`, `id_scope` | Organ IDs are `{plant_id}:leaf:{cluster}`, `:petiole:`, `:attachment:`, `:internode:` and `{plant_id}:axis:main`. They are scoped to this capture and graph, not to other dates. |
+| `source_graph_sha256` | `branches.graph_digest` of the unreviewed source graph the decisions refer to. |
+| `units`, `metric_scale` | Always `scale_free_scene_units` and `null`. No metric scale is established. |
+| `generator` | Command name and release version. |
+| `point_labels` | `source-evidence/leaf_ids2.npz`: hash, point count and row-ID scope. Row IDs are rows of this opacity-filtered analysis array, not raw PLY vertex indices. |
+| `reviewed_graph` | `skeleton-extracted-reviewed.json`: the retained graph, its hash and edge classification counts. Graph nodes are geometric samples, not phytomers. |
+| `main_axis` | Polyline and source node IDs; `radius` is `null`. |
+| `leaves[]` | `id`, `source_cluster_id`, `role`, `petiole_id` (or `null`), `point_geometry` (`leaves/leaf-{cluster}.npz`, hash, count, status) and `surface_mesh: null`. Each NPZ holds every source array for the whole cluster plus `source_point_row_ids`. |
+| `petioles[]` | `polyline`, `attachment_id`, `classification`, `geometry_status`, `radius: null`, `inference`. Extracted: `extracted-petiole-candidate`, `source_node_ids` on the reviewed graph, source endpoint ID and node, blade-to-path gap. Inferred: `inferred-petiole`, `geometry_status: inferred`, `source_node_ids: null` and an `inference` record (method, references, angles, anchor row, confidence, optional human review). |
+| `attachment_nodes[]` | Stem segment, fraction, `xyz` on the axis, arc length and `geometry_status`: `extracted-candidate` at a source node, or `inferred` with `source_node_id: null`. |
+| `ordered_attachment_ids`, `internodes[]` | Attachments sorted by (arc length, cluster ID) and the intervals between neighbors. A zero interval is marked unresolved; intervals are not validated botanical internodes. |
+| `cotyledon_pairs`, `pair_insertions`, `review_update` | Human annotations from the decisions; `null` or empty when absent. |
+| `source_evidence[]`, `source_files` | Copied evidence (point labels, original evidence, branch report, decisions, CSV, extras) with hashes; absolute input paths with hashes. |
+| `limits` | What the package does not establish. |
+
+`validate_asset` checks all of these: every hash, each leaf NPZ against its source rows, extracted petioles on reviewed-graph edges, no extracted edge owned by two organs, attachments on the axis, and inferred geometry keeping its inferred labels. No status may claim measured geometry.
+
+Beside `plant-asset/`, the output holds `viewer.html`, `checks.json`, `edge-classifications.csv`, `plant-asset-manifest.json` and `package-record.json` (command, code and input hashes).
+
+### Select and export one leaf
+
+In the viewer:
+
+1. Open `viewer.html` from the package output in a browser. It works offline from a local file.
+2. Under **Select one leaf**, click a leaf's points in the canvas (a drag still rotates) or choose the leaf in the list. The panel shows its role, point count and petiole status; the leaf and its petiole are highlighted, inferred petioles cyan dashed.
+3. Click **Download selected leaf (JSON)**. The file `{plant_id}-leaf-{cluster}.json` holds the leaf record with its full point coordinates and original row IDs, its petiole polyline and status, and its attachment record. Other organs and the package are not changed.
+
+From the command line, the same record goes to a new folder as `leaf.json` plus `points.npz`, a copy of the leaf NPZ with every attribute:
+
+```text
+python pipeline/scripts/organ-analysis/export_leaf.py --asset /path/to/new-package/plant-asset --leaf welzo-M1:leaf:2 --output /path/to/leaf-2-export
+python pipeline/scripts/organ-analysis/export_leaf.py --reload /path/to/leaf-2-export
+python pipeline/scripts/organ-analysis/export_leaf.py --reload /path/to/welzo-M1-leaf-5.json
+```
+
+`--leaf` takes a leaf ID or its cluster integer. Export validates the asset first and refuses an existing output. `plant_asset.load_leaf_export` reloads either form and returns the record plus `X` and `source_point_row_ids` (all arrays for a folder export). Reloading refuses a record whose petiole status disagrees with its inference record, so an inferred petiole cannot come back labeled extracted. The viewer download carries coordinates and row IDs only; recover other attributes from `point_labels` by row ID.
+
+Limits: the package is the reviewed interpretation of one capture, not a measurement. It has no metric scale, radii, blade surfaces, cross-date IDs or validated insertion order. Inferred petioles are straight synthetic connections. The viewer shows sampled Gaussian centers and graph lines, not rendered splats.
+
 ## Verification and design
 
 ### Record endpoint review
