@@ -225,6 +225,28 @@ The synthetic tests cover:
 
 In both, the cameras spread over a dome. Alex then set the ground-plane principle above.
 
+**Welzo real-data checks (2026-10-17, commit 4b7d4e2).** The October 2 run used the four pilot soil masks.
+
+| Quantity | October 2 | October 15 |
+|---|---|---|
+| Soil masks | 4 pilot masks | 60 of 61 views; one view had no detection and counts as unknown |
+| Soil-supported points | 933 | 3,716 |
+| Iterations to convergence | 3 | 3 |
+| Final local / deduplicated / inlier points | 491 / 478 / 243 | 832 / 775 / 304 |
+| Soil normal | (0.092, -0.349, 0.933) | (0.070, -0.057, 0.996) |
+| Soil normal to dataparser z (= C) | 21.1 degrees, so `up_disagreement` is set | 5.2 degrees |
+| C angular spread (RMS) | 55 degrees | 23 degrees |
+
+The October 15 masks were made with the pilot's prompt `soil` and threshold 0.50, by the low-memory hybrid runner.
+
+The October 15 check also gives the detached cluster c6 (469 centers, at M1's base):
+- **Under the soil up:** assigned to M1. r/R is 0.544 for M1 and 2.606 for the neighbor 2M; 2M's lookup is its nearest slice, flagged.
+- **Under C (cross-check only):** unassigned. r/R is 0.887 for M1 and 1.408 for 2M, below the 2.0 the rule requires.
+
+The assignment therefore depends on the up estimate.
+
+The first soil run on October 15 failed under a 2.4 GiB address-space cap, because it held all 60 masks at once. Votes now stream one mask at a time, and the pilot regression still matches exactly.
+
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 
 ## Plant asset package and single-leaf export

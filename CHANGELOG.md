@@ -14,6 +14,24 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.7] - 2026-10-17
+
+### Added
+
+- `orient_plants.py` and `plant_orientation.py`: the scene's up direction, each plant's vertical axis and the stacking test for detached clusters, all recorded and algorithmic. The stage edits no derivative, and no visual judgment selects anything.
+  - **Soil plane, the primary up.** The ground plane is orthogonal to up by definition. The method is ported from the October 2 soil pilot: soil votes at each COLMAP point's own feature-track observations, plant masks subtracted in memory, then deterministic RANSAC and SVD.
+    - The camera mean image-up only bootstraps the neighborhood. The fit then re-takes the base along its own normal until the inlier set stops changing (at most 5 fits). Every iteration and the convergence are recorded.
+    - Given the pilot's base and sign reference, the port reproduces the pilot's point IDs, votes, inlier set and normal exactly.
+  - **Camera mean image-up.** The fallback, with its angular spread as the quality figure, and a cross-check. A disagreement above 10 degrees is reported, never switched.
+  - **Plant axes.** Slice medians along up, every 0.02 scene units, with a 95th-percentile radius profile, height range and straightness.
+  - **Detached-cluster assignment.** A cluster goes to plant P only when r/R is at most 1.0 for P, it lies within P's height range, and r/R is at least 2.0 for every other plant. Otherwise it is unassigned, with every number written. Axes and assignments are also written under the camera up, labeled as a cross-check.
+  - **Welzo October 15.** With newly generated soil masks (prompt `soil`, threshold 0.50, 60 of 61 views), the soil normal lies 5.2 degrees from dataparser z. Cluster c6 is assigned to M1 under the soil up (r/R 0.544 against 2.606) and is unassigned under the camera up (0.887 against 1.408).
+  - **Experimental defaults.** All numeric settings are experimental defaults (`plant_orientation.DEFAULTS`).
+
+### Changed
+
+- `geometry.py`: the pose mapping of `Geometry.cameras` is factored into `dataparser_frame` and `camera_to_world`, unchanged.
+
 ## [0.3.0-alpha.6] - 2026-10-16
 
 ### Added
