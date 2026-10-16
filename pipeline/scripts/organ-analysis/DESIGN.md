@@ -302,8 +302,10 @@ labels. Existing coordinates, topology and provenance are retained for future
 mapping. Considering established MTG/OpenAlea or Helios formats is a preference,
 not an adoption decision or a requirement for this feature. Alex approved stable anatomical IDs, separate base-to-apex ranks starting at
 zero when the basal node is known, and explicit internode endpoints with
-below-node phytomer grouping. Species-specific leaf/branch cardinality remains
-unresolved; zero-to-many leaves is not an approved default. An axillary bud and
+below-node phytomer grouping. Zero-to-many leaf attachments are provisionally
+allowed for early development. Species-specific botanical, morphological and
+anatomical fidelity remains the future target; a permissive container does not
+assert actual leaf/branch cardinality. An axillary bud and
 a developed branch need distinct treatment in that investigation, alongside
 petioles and observation loss. No semantic IDs, adapter or node-first model is
 implemented here.

@@ -88,8 +88,9 @@ Helios formats is a preference, not an adoption decision or completion gate.
 Stable anatomical IDs, separate base-to-apex ranks starting at zero when the
 basal node is known, and explicit internode endpoints with below-node phytomer
 grouping are approved design directions, not implemented behavior. Species-specific
-leaf/branch cardinality remains unresolved; no generic zero-to-many leaf default
-is approved. Distinguish buds, developed branches, petioles and observation loss
+botanical leaf/branch cardinality remains a future target; zero-to-many leaf
+attachments are provisionally allowed for the early prototype, not asserted as
+biological reality. Distinguish buds, developed branches, petioles and observation loss
 when investigating that question.
 
 The longer-term plant-plus-environment direction includes local temperature,
