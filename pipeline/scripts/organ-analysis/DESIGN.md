@@ -311,9 +311,9 @@ petioles and observation loss. The partial semantic identity prototype below add
 source-bound opaque identities and candidate queries. It accepts no new real
 anatomical nodes or internodes, and implements no backend adapter.
 
-MTG/Helios is the first candidate for evaluation and testing, with other
-representation and backend options still open (Alex, 2026-10-18). Neither the
-source-of-truth architecture nor a backend has been selected. Evaluate identity,
+MTG/Helios remains the initial candidate for evaluating botanical semantics and
+derived geometry. OpenUSD is an additional scene/geometry exchange candidate.
+Other options remain open. No representation or backend is selected. Evaluate identity,
 uncertainty, topology, geometry preservation, round trips and implementation cost
 before adoption. Automatic base/apex recovery does not block the reviewed-plant
 partial semantic prototype described below. Backend adoption remains design direction.
