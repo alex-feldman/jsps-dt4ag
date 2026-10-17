@@ -7,7 +7,10 @@ scenes and contains no subject-specific logic.
 An optional experimental post-processing command now supplies plant-specific
 leaf labeling and provisional skeleton extraction from an existing model and
 masks: [`pipeline/scripts/organ-analysis/`](pipeline/scripts/organ-analysis/README.md).
-It runs on CPU and does not change the reconstruction stages.
+It runs on CPU and does not change the reconstruction stages. It also provides
+an additive partial semantic package with saved source-bound identities and
+explicit unresolved insertion candidates. Accepted anatomical topology and
+backend adoption remain separate from this prototype.
 
 ### [See a reconstruction in your browser](https://alex-feldman.github.io/jsps-dt4ag/)
 

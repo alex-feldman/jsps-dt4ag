@@ -14,6 +14,27 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.9] - 2026-10-18
+
+### Added
+
+- Experimental additive partial semantic package and build/validate/query CLI.
+  The complete schema-1 source is copied unchanged; a saved opaque identity
+  registry binds every source file and preserves IDs through identical-source
+  rebuilds and relocation. Changed sources require explicit correspondence.
+- Candidate-to-leaf queries and geometric candidate groups preserve unresolved
+  insertions, inferred geometry, pair annotations and combined apex regions.
+  Source-built packages contain no accepted botanical nodes or internodes.
+- Separate topology consistency helpers and synthetic fixtures exercise
+  explicit accepted endpoints, axis-local ranks, zero-to-many leaves and
+  below-node grouping without promoting source observations to anatomy.
+
+### Changed
+
+- Clarify MTG/Helios as the first candidate to evaluate with other architectures
+  still open. This preview selects no backend, establishes no cross-date
+  correspondence, and does not complete the 0.3 collection/run-record milestone.
+
 ## [0.3.0-alpha.8] - 2026-10-17
 
 ### Added

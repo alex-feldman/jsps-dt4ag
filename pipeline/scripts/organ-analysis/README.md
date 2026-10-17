@@ -87,7 +87,9 @@ distinct from today's geometric graph samples. Considering established MTG or
 Helios formats is a preference, not an adoption decision or completion gate.
 Stable anatomical IDs, separate base-to-apex ranks starting at zero when the
 basal node is known, and explicit internode endpoints with below-node phytomer
-grouping are approved design directions, not implemented behavior. Species-specific
+grouping are approved design directions. The experimental partial semantic package below
+implements source-bound identities and candidate queries; accepted anatomical nodes
+and internodes remain empty for source-derived packages. Species-specific
 botanical leaf/branch cardinality remains a future target; zero-to-many leaf
 attachments are provisionally allowed for the early prototype, not asserted as
 biological reality. Distinguish buds, developed branches, petioles and observation loss
@@ -104,7 +106,7 @@ representation and backend options still open (Alex, 2026-10-18). Neither the
 source-of-truth architecture nor a backend has been selected. Evaluate identity,
 uncertainty, topology, geometry preservation, round trips and implementation cost
 before adoption. Automatic base/apex recovery does not block the reviewed-plant
-partial semantic prototype. This is design direction, not implemented behavior.
+partial semantic prototype described below. Backend adoption remains design direction.
 
 ## Outputs and limits
 
@@ -324,6 +326,61 @@ python pipeline/scripts/organ-analysis/export_leaf.py --reload /path/to/welzo-M1
 `--leaf` takes a leaf ID or its cluster integer. Export validates the asset first and refuses an existing output. `plant_asset.load_leaf_export` reloads either form and returns the record plus `X` and `source_point_row_ids` (all arrays for a folder export). Reloading refuses a record whose petiole status disagrees with its inference record, so an inferred petiole cannot come back labeled extracted. The viewer download carries coordinates and row IDs only; recover other attributes from `point_labels` by row ID.
 
 Limits: the package is the reviewed interpretation of one capture, not a measurement. It has no metric scale, radii, blade surfaces, cross-date IDs or validated insertion order. Inferred petioles are straight synthetic connections. The viewer shows sampled Gaussian centers and graph lines, not rendered splats.
+
+## Experimental partial semantic package
+
+`plant_semantics_cli.py` adds an independently versioned partial semantic document
+and saved opaque identity registry around a byte-identical schema-1 `plant-asset/`.
+This bounded prototype tests identity and uncertainty; it selects no permanent
+plant architecture or MTG/Helios backend. Its axis is the reviewed geometric path,
+not an accepted anatomical base or automatically resolved biological axis.
+
+```text
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py build --source /path/to/plant-asset --output /path/to/new-semantic-package
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py build --source /path/to/plant-asset --registry /path/to/new-semantic-package/identity-registry.json --output /path/to/new-rebuild
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py validate /path/to/new-semantic-package
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py query /path/to/new-semantic-package candidate-groups
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py query /path/to/new-semantic-package candidate-leaves --id candidate:UUID
+python pipeline/scripts/organ-analysis/plant_semantics_cli.py query /path/to/new-semantic-package topology
+```
+
+Output must be fresh and outside the source. Keep the whole folder: `semantic.json`,
+`identity-registry.json` and `plant-asset/`. The registry binds the exact source
+capture, graph, entry-point hash and complete relative-path/file-hash manifest.
+Reuse it to preserve IDs through rebuild/reload/relocation. Changed input,
+including unreferenced files, requires explicit correspondence outside this
+prototype; no automatic rematching or cross-date tracking exists. Building without
+a registry starts a fresh identity namespace. IDs contain UUIDs, separate from
+source labels, graph samples and ranks. Same source plus registry and generator
+version writes identical JSON: UTF-8, sorted keys, two-space indentation, final
+newline, no output-location or timestamp fields. A recorded generator version
+remains valid when the software version advances.
+
+`plant_semantics.py` owns the schema/version, builder and validation. Semantic
+leaves have opaque IDs and `source_leaf_id` references into unchanged source
+`plant.json`; follow the referenced source record's geometry path inside
+`plant-asset/` to retrieve its points/petiole evidence. Combined apex regions
+are only in `regions`, never fabricated individual leaves. Insertion candidates
+reference source attachments and leaf IDs; all ranks are null, and accepted
+nodes/internodes are empty. Package validation refuses promotions or semantic
+relabeling. Geometry/inference/human-review status remains authoritative in the
+source, and candidate-group queries include source attachments and petioles.
+Cotyledon pair membership does not assert shared insertion.
+
+`candidate-groups` uses source root-to-apex arc length and groups equal arcs.
+This is explicitly geometric order, with possible unseen nodes, never botanical
+rank. Coincident samples preserve distinct candidates and unresolved anatomical
+relationships. `--id` optionally selects the opaque axis for this query.
+Candidate-leaves requires an opaque candidate ID. Topology reports the empty
+accepted collections honestly. Accepted-node leaf and phytomer queries are
+library-only fixture helpers, not CLI modes for source-built packages.
+
+The library's `validate_topology`, `leaves_at(..., accepted=True)` and
+`below_node_phytomer` support small synthetic accepted-topology tests: same-axis
+explicit basal/apical endpoints, zero-to-many attached leaves, independent IDs
+and ranks, and below-node grouping with explicit incomplete basal boundary.
+Structural consistency and free-text evidence do not establish scientific
+acceptance. There is no anatomical promotion workflow in this release.
 
 ## Verification and design
 

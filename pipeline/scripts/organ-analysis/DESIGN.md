@@ -307,15 +307,16 @@ allowed for early development. Species-specific botanical, morphological and
 anatomical fidelity remains the future target; a permissive container does not
 assert actual leaf/branch cardinality. An axillary bud and
 a developed branch need distinct treatment in that investigation, alongside
-petioles and observation loss. No semantic IDs, adapter or node-first model is
-implemented here.
+petioles and observation loss. The partial semantic identity prototype below adds
+source-bound opaque identities and candidate queries. It accepts no new real
+anatomical nodes or internodes, and implements no backend adapter.
 
 MTG/Helios is the first candidate for evaluation and testing, with other
 representation and backend options still open (Alex, 2026-10-18). Neither the
 source-of-truth architecture nor a backend has been selected. Evaluate identity,
 uncertainty, topology, geometry preservation, round trips and implementation cost
 before adoption. Automatic base/apex recovery does not block the reviewed-plant
-partial semantic prototype. This is design direction, not implemented behavior.
+partial semantic prototype described below. Backend adoption remains design direction.
 
 ### Future plant-plus-environment direction
 
@@ -389,3 +390,36 @@ A new field may be added only with a schema version bump and a validator update.
 The viewer stays one offline HTML file. Clicking selects the frontmost displayed center within 8 px, and a press that moves more than 4 px is a rotation instead. The highlighted petiole is drawn from the embedded export record, so what is shown is what is downloaded.
 
 Synthetic tests cover the emitter and its refusals, byte-identical repeats, validator refusals, export and reload, and the viewer's embedded payload. The Welzo pilot was additionally regenerated and compared, and the viewer was driven in headless Chrome.
+
+## Partial semantic identity prototype
+
+`plant_semantics.py` owns the separately versioned semantic/registry documents,
+source-derived validation, queries and generic accepted-topology consistency
+checks. The README owns usage and the format's limits. This is an additive
+experiment, not a permanent source-of-truth or backend selection. The source
+schema-1 document and every source file stay byte-identical; no schema-1 rule
+changes. Complete source-tree hashes bind registry reuse and copied evidence.
+
+Opaque identities are allocated once and saved. Source reference keys locate
+observations within an exact hash-bound asset; they are not anatomical IDs.
+Fresh registries start fresh identities. Changed sources are refused rather than
+matched by labels or geometry. The writer uses deterministic UTF-8 sorted JSON
+without timestamps or output paths; generator version is recorded provenance,
+not a requirement to validate with that same software release.
+
+Source attachment observations remain separate unresolved candidates. Equal
+source arcs form geometric query groups; shared samples annotate ambiguity,
+never merge anatomical nodes. Combined apex tissue remains a region. The
+source-derived builder emits no accepted anatomy and null absolute ranks;
+validation compares the semantic claims against exactly that derivation.
+Adding status/evidence text cannot promote these observations. Inference status
+and human acceptance of an approximation remain distinct from acceptance of a
+botanical insertion.
+
+A separate small topology helper tests future explicit accepted records without
+making them eligible for source-package promotion. Accepted internodes require
+distinct accepted endpoints on one axis, consistent acyclic succession and
+explicit evidence; unknown basal identity requires null absolute ranks. The
+below-node view joins the incoming internode at its apical endpoint and marks a
+missing basal boundary incomplete. Synthetic fixtures demonstrate these rules,
+not the anatomy of the reviewed cucumber.
