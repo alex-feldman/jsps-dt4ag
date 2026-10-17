@@ -249,6 +249,63 @@ Limits:
 - A plant axis is a sequence of slice medians: leaves, tendrils and a neighbor's overlap all move it.
 - An `unassigned` cluster is not evidence that it belongs to no plant.
 
+## Frame calibration: dataparser frame to plant frame
+
+`calibrate_frame.py` writes and extends a `frame-calibration` record, a JSON sidecar that maps points from the export's dataparser frame into a plant frame with +z up:
+
+```text
+p_plant = s * R @ (p_source - o)
+```
+
+`R` is a rotation, `o` the origin in the source frame and `s` the meters per scene unit. While the scale is unset, `s` is 1.0 and target units stay scale-free scene units. `frame_calibration.py` owns the contract (`SCHEMA`, `SCHEMA_VERSION`, `validate`) and the library calls `new`, `load`, `save`, `validate`, `set_rotation`, `set_scale`, `set_scale_from_estimate`, `compose` and `apply`.
+
+### Contract (`frame-calibration`, `schema_version` 1)
+
+| Field | Content |
+|---|---|
+| `schema`, `schema_version` | `frame-calibration`, `1`. Any other version is refused. |
+| `generator` | `{"name": "jsps-dt4ag", "version": ...}`. |
+| `capture_id` | The capture the record belongs to. |
+| `source_frame` | `name: dataparser`, description, `units: scale_free_scene_units`, and `binding`: `dataparser_transforms_sha256` plus optional extra hashes (`--bind-file NAME=PATH` records `NAME_sha256`). |
+| `target_frame` | `name: plant`, `up: +z`, `units` (`m` exactly when scale is set, else `scale_free_scene_units`), `origin_definition` in words. |
+| `rotation` | `null` or `matrix` (3x3, row-major), `method`, `status` (`algorithmic` or `human-decision`), `inputs` (`path`, `sha256`), `diagnostics`. |
+| `origin` | `null` or `point_source_frame`, `method`, `inputs`; `orient` adds `diagnostics`. |
+| `scale` | `null` or `meters_per_scene_unit`, `uncertainty` (`std_meters_per_scene_unit`, `n_pairs`, `method`), `method`, `decisions` (`path`, `sha256`, `by: Alex`), `inputs`, `diagnostics`. |
+| `transform_4x4` | Derived from the three parts and recomputed on every save. |
+
+`validate` checks: R orthonormal within 1e-9 with determinant +1; `s` finite and above 0; every set part has a nonempty method and nonempty inputs with 64-hex SHA-256; target units `m` exactly when scale is set; `transform_4x4` equal to the composition within 1e-12. `save` refuses an existing path and writes sorted keys, two-space indentation and a final newline with no timestamps, so the same inputs give identical bytes.
+
+### Commands
+
+```text
+python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--bind-file export_ply=/path/to/export.ply]
+python pipeline/scripts/organ-analysis/calibrate_frame.py scale --calibration /path/to/calibration.json --estimate /path/to/scale-estimate.json --out /path/to/new-scaled.json
+python pipeline/scripts/organ-analysis/calibrate_frame.py validate /path/to/calibration.json
+python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/points.npy --out /path/to/new-points.npy
+python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/leaf-2.npz [--array X] --out /path/to/new-leaf-2.npz
+```
+
+- **`orient`** reads a complete `orient_plants.py` `orientation.json`:
+  - It refuses a different `capture_id`, and a `--dataparser-transforms` whose hash matches none of the `dataparser_transforms.json` hashes the orientation run recorded.
+  - **Up:** `up_soil_plane.normal` when `up_soil_plane.status` is `ok`. Otherwise `up_camera_mean_image_up.normal`, recorded as a fallback in `rotation.diagnostics.up_source`. With neither, it refuses.
+  - **Rotation:** R maps up to +z. Plant +x is the source-frame x axis projected onto the horizontal plane, and plant +y is up cross plant +x. It refuses when source x lies within 1 degree of up.
+  - **Origin (soil):** `up_soil_plane.base` projected along `up_soil_plane.normal` onto the plane through `up_soil_plane.point`. The base is the final soil iteration's base estimate (the base plant's lowest-slice axis point); the point is the final fit's inlier centroid.
+  - **Origin (fallback):** the only plant's `axis.polyline[0]`, unprojected. With several plants the origin stays `null`.
+  - The camera-versus-soil angle and the orientation's `up_disagreement` go into diagnostics; they are reported and never acted on. Scale is `null`.
+- **`scale`** copies a `scale-estimate` (schema 1) into `scale`:
+  - It refuses a different `capture_id`, a `source_frame` other than `dataparser`, and an estimate input named `dataparser_transforms.json` whose hash differs from the binding.
+  - Values, method and decisions are copied. The estimate's own path and SHA-256 are appended to `scale.inputs`, and target units become `m`.
+- **`validate`** exits 0 when valid and 1 with one line per error.
+- **`apply`** transforms an (N,3) `.npy`, or one array (default `X`) of an `.npz`, to float64 plant coordinates in a new file. The other `.npz` arrays are copied unchanged. It never writes in place and refuses an existing output.
+
+Exit code 2 means invalid input or a refusal.
+
+Limits:
+- Up is the orientation stage's geometric estimate, not measured gravity.
+- The origin is a bed-level reference under the plant, not a validated stem-emergence point.
+- The x direction is a convention with no biological meaning.
+- The record maps points only. Gaussian scales and rotations are not transformed.
+
 ## Plant asset package
 
 After branch/endpoint review, `package_plant_asset.py` turns a reviewed organ result into one versioned, capture-scoped folder: `plant-asset/`. It reuses the review outputs and human decisions; it does not rerun masks, leaf lifting or skeletonization. `plant_asset.py` owns the contract (`SCHEMA`, `SCHEMA_VERSION`, `validate_asset`) and the single-leaf export; `DESIGN.md` explains the rules.

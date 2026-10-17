@@ -175,6 +175,15 @@ in this source snapshot.
 
 ### Added
 
+- Experimental `frame-calibration` record (schema version 1) and
+  `calibrate_frame.py` with `orient`, `scale`, `validate` and `apply`. It maps
+  dataparser-frame points into a plant frame by `p = s * R @ (p_source - o)`.
+  `orient` takes up from the orientation stage's soil plane (camera mean
+  image-up as a recorded fallback) and the origin from the soil base projected
+  onto the fitted plane. `scale` ingests a `scale-estimate` file. The record is
+  hash-bound to the run's `dataparser_transforms.json`, validated on load and
+  save, and written as deterministic bytes.
+
 - Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
   and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the
   explicit COLMAP image-sequence mode, camera review before training, and the

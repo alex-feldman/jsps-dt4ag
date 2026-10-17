@@ -257,6 +257,38 @@ The first soil run on October 15 failed under a 2.4 GiB address-space cap, becau
 
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 
+## Frame calibration: the plant frame convention
+
+`frame_calibration.py` owns the contract; `calibrate_frame.py` is the command; the README owns the field table and usage. The record exists so that later stages, and metric measurements, can work in one named frame without moving any source data. Source points stay in the dataparser frame; the calibration is a separate, hash-bound sidecar.
+
+**The plant frame.**
+- +z is up: the soil-plane normal from the orientation stage (Alex, 2026-10-17: the ground is orthogonal to up), or the camera mean image-up when no soil plane exists, recorded as a fallback.
+- The origin is on the ground under the plant: the soil stage's base estimate projected onto the fitted soil plane. A point's plant z is therefore its height above the fitted bed plane, in scene units until scale is set.
+- +x is the source x axis projected onto the horizontal plane, and +y = z cross x, so the frame is right-handed.
+
+The x rule is a deterministic convention only. It refuses when source x lies within 1 degree of up, where the projection would be unstable.
+
+**Why three separate parts.** Rotation, origin and scale come from different evidence:
+- rotation and origin from the orientation stage;
+- scale from a separate scale-estimate built on Alex's decisions.
+
+Each part keeps its own method, inputs and diagnostics. One part can be refit without touching the others, and the record says exactly what each number rests on. `transform_4x4` is derived and recomputed on every save. Validation refuses a stored matrix that disagrees with the parts by more than 1e-12, so a hand-edited matrix cannot silently diverge.
+
+**Binding.** The source frame is bound by the hash of the run's `dataparser_transforms.json`. `orient` refuses a dataparser file the orientation run did not record. `scale` refuses an estimate input naming a different dataparser file. Extra hashes (the export PLY, `transforms.json`) can be bound with `--bind-file`.
+
+**Diagnostics are not decisions.** The camera-versus-soil angle and the orientation's disagreement flag are copied into `rotation.diagnostics`. They never change the rotation. No agent visual judgment enters the record: rotation status is `algorithmic`, or `human-decision` when Alex supplies it.
+
+**First real record (2026-10-18).** October 2 Welzo M1, from the soil-primary orientation run of 2026-10-17 (`oct02-soil-primary-r2`):
+- Up: 21.15 degrees from dataparser z, equal to the camera-versus-soil angle, because the camera mean image-up is dataparser z there.
+- Origin: about 0.037 scene units below the base estimate.
+
+Applied to the reviewed plant asset (package v0.3.0-alpha.6):
+- every leaf center lies above the fitted plane (minimum plant z 0.027);
+- the main axis rises on all 34 segments;
+- the axis chord is 13.6 degrees from +z, against 34.5 degrees from dataparser z before calibration.
+
+These are internal consistency checks, not validation of up against gravity.
+
 ## Computed base and conservative apex candidates
 
 The opt-in integration lives in `computed_axis.orientation` (artifact validation)
