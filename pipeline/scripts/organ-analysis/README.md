@@ -99,6 +99,13 @@ organ or region attributes need a separate FSPM literature review. This is a
 future compass, outside current implementation; no environment schema or spatial
 resolution is required here.
 
+MTG/Helios is the first candidate for evaluation and testing, with other
+representation and backend options still open (Alex, 2026-10-18). Neither the
+source-of-truth architecture nor a backend has been selected. Evaluate identity,
+uncertainty, topology, geometry preservation, round trips and implementation cost
+before adoption. Automatic base/apex recovery does not block the reviewed-plant
+partial semantic prototype. This is design direction, not implemented behavior.
+
 ## Outputs and limits
 
 - `leaf_ids2.npz`: full filtered point centers, RGB approximation, per-point leaf/non-leaf labels, votes and visibility evidence. `-1` is unassigned; `-2` is plant-minus-leaf evidence, not an anatomical stem class.

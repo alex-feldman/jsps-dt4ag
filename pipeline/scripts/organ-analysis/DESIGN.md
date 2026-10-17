@@ -310,6 +310,13 @@ a developed branch need distinct treatment in that investigation, alongside
 petioles and observation loss. No semantic IDs, adapter or node-first model is
 implemented here.
 
+MTG/Helios is the first candidate for evaluation and testing, with other
+representation and backend options still open (Alex, 2026-10-18). Neither the
+source-of-truth architecture nor a backend has been selected. Evaluate identity,
+uncertainty, topology, geometry preservation, round trips and implementation cost
+before adoption. Automatic base/apex recovery does not block the reviewed-plant
+partial semantic prototype. This is design direction, not implemented behavior.
+
 ### Future plant-plus-environment direction
 
 The longer-term compass includes plant structure coupled with local environment
