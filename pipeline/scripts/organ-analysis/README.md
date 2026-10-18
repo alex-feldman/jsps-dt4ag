@@ -549,3 +549,14 @@ python -m unittest discover -s pipeline/scripts/organ-analysis/tests -v
 ```
 
 The real-data regression additionally compares every NPZ array, leaf membership JSON and full skeleton JSON against the preserved Welzo baseline in a fresh directory. That dataset is private/machine-local and is not part of the repository. No public claim of multi-plant or other-species validation is made.
+
+## Click points on photographs
+
+`click_points.html` is a single offline HTML file (no network, no install) for clicking labelled points on photographs and recording exact pixel coordinates. Open it by double-clicking it in Chrome or Edge.
+
+- Load images with "Open images..." (multiple selection) or by dropping files on the window. Pick an image from the list to display it.
+- Mouse wheel zooms around the cursor (up to 32x, with pixel grid at high zoom). Pan with right or middle mouse drag, or hold Space and drag with the left button. A left click without dragging places a point with the text in the Label box. Dragging an existing point with the left button moves it.
+- Quick label buttons: "tape_ cm" (type the number between tape_ and cm, e.g. tape_5cm), "{leaf}_base" and "{leaf}_tip" (leaf name from the Leaf name box, default A).
+- A label can be used only once per image; the same label on different images means the same physical point. Ctrl+Z undoes, F fits the image to the window.
+- Coordinates are full-resolution image pixels, floating point, x right, y down, origin at the top-left corner of the top-left pixel (pixel centres at i+0.5, the COLMAP convention). Images are read without EXIF rotation so coordinates match the stored pixels.
+- Export JSON downloads `clicks-YYYYMMDD-HHMM.json` with schema `image-clicks` (version 1): `images` (name, width, height; only images with points) and `points` (image, label, x, y). Import JSON adds points from an earlier export; they attach to images by file name. Points are also autosaved in the browser (localStorage) and offered for restore on reload.
