@@ -14,6 +14,12 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.12] - 2026-10-18
+
+### Fixed
+
+- Composite transparent PNG pixels over white in the offline click viewer so photographs remain legible without changing source pixels or click coordinates.
+
 ## [0.3.0-alpha.11] - 2026-10-18
 
 ### Added

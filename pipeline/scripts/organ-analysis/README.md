@@ -429,3 +429,7 @@ python -m unittest discover -s pipeline/scripts/organ-analysis/tests -v
 ```
 
 The real-data regression additionally compares every NPZ array, leaf membership JSON and full skeleton JSON against the preserved Welzo baseline in a fresh directory. That dataset is private/machine-local and is not part of the repository. No public claim of multi-plant or other-species validation is made.
+
+## Click points on photographs
+
+Open click_points.html directly in a browser; it works offline. The viewer composites transparent PNG pixels over white in draw() while preserving source pixels and exported click coordinates.
