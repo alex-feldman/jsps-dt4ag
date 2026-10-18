@@ -14,7 +14,7 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
-## [0.3.0-alpha.10] - 2026-10-18
+## [0.3.0-alpha.11] - 2026-10-18
 
 ### Added
 
