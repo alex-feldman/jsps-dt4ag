@@ -278,7 +278,7 @@ p_plant = s * R @ (p_source - o)
 ### Commands
 
 ```text
-python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--up y|z] [--bind-file export_ply=/path/to/export.ply]
+python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--up y|z] [--bind-file export_ply=/path/to/export.ply] [--origin-from-asset /path/to/plant.json | --origin-point X,Y,Z  --origin-decided-by Alex --origin-decision "TEXT"]
 python pipeline/scripts/organ-analysis/calibrate_frame.py scale --calibration /path/to/calibration.json --estimate /path/to/scale-estimate.json --out /path/to/new-scaled.json
 python pipeline/scripts/organ-analysis/calibrate_frame.py validate /path/to/calibration.json
 python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/points.npy --out /path/to/new-points.npy
@@ -291,6 +291,7 @@ python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /p
   - **Rotation:** with `--up z`, R maps up to +z; plant +x is the source-frame x axis projected onto the horizontal plane, and plant +y is up cross plant +x. With `--up y` (default), R is that z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`: plant +x is unchanged, up becomes +y, and plant +z is plant +x cross up (right-handed, det +1). It refuses when source x lies within 1 degree of up.
   - **Origin (soil):** `up_soil_plane.base` projected along `up_soil_plane.normal` onto the plane through `up_soil_plane.point`. The base is the final soil iteration's base estimate (the base plant's lowest-slice axis point); the point is the final fit's inlier centroid.
   - **Origin (fallback):** the only plant's `axis.polyline[0]`, unprojected. With several plants the origin stays `null`.
+  - **Origin (explicit human decision, optional):** `--origin-point X,Y,Z` (source frame) or `--origin-from-asset /path/to/plant.json` (that asset's `main_axis.polyline[0]`, the reviewed main-axis root), with `--origin-decided-by Alex --origin-decision "TEXT"` (both required; the statement, with its date, is recorded verbatim). The point is projected along the soil normal onto the soil plane, so the origin is where that point's vertical meets the fitted bed; it is refused without an `ok` soil plane. `--origin-from-asset` first checks the frame: one of the asset's hash-listed `source_evidence` JSON files must record `camera_inputs.dataparser_transforms` equal to the `--dataparser-transforms` hash, else it refuses. `origin.diagnostics` records the decision, the unprojected point, the projection distance along up, the default origin and the shift from it, and the asset provenance; the asset is added to `origin.inputs`. The rotation is identical to the default run, so only a translation changes.
   - The camera-versus-soil angle and the orientation's `up_disagreement` go into diagnostics; they are reported and never acted on. Scale is `null`.
 - **`scale`** copies a `scale-estimate` (schema 1) into `scale`:
   - It refuses a different `capture_id`, a `source_frame` other than `dataparser`, and an estimate input named `dataparser_transforms.json` whose hash differs from the binding.
@@ -302,7 +303,7 @@ Exit code 2 means invalid input or a refusal.
 
 Limits:
 - Up is the orientation stage's geometric estimate, not measured gravity.
-- The origin is a bed-level reference under the plant, not a validated stem-emergence point.
+- The default origin is a bed-level reference under the plant, not a validated stem-emergence point. An explicit origin is as good as the decided point (for the asset option, the reviewed main-axis root) and the fitted plane it is projected onto.
 - The x direction is a convention with no biological meaning.
 - `apply` maps points only. To move whole Gaussians (quaternions, scales, SH color), use `transform_splat.py` below.
 

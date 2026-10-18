@@ -298,6 +298,8 @@ Applied to the reviewed plant asset (package v0.3.0-alpha.6):
 
 These are internal consistency checks, not validation of up against gravity.
 
+**Explicit origin (Alex, 2026-10-18).** For October 2 Alex decided the origin is the bottom of the main (base) stem, not the orientation stage's base estimate (0.096 scene units horizontally from the reviewed main-axis root). `orient --origin-from-asset` (or `--origin-point`) takes that decided point, projects it along the soil normal onto the fitted plane so the origin sits where the stem meets the soil, and records the decision, unprojected point, projection distance and shift from the default in `origin.diagnostics`. The rotation does not change, so lengths, areas and extents are unchanged; only plant-frame coordinates shift by a constant. The asset route refuses unless the asset's own hash-listed evidence names the same `dataparser_transforms.json` hash, which closes the frame assumption noted in the first record. The default origin is unchanged when the option is absent.
+
 ## Splat transform
 
 `transform_splat.py` moves a whole Gaussian splat into the plant frame, so that viewers and later stages see the plant upright and metric without retraining.

@@ -3,7 +3,9 @@
 
 Subcommands: orient (rotation and origin from an orient_plants.py orientation.json), scale (metric
 scale from a scale-estimate JSON), validate, apply (transform points into a new file). Every
-choice is algorithmic and recorded; nothing is selected by looking at images. See README.md.
+choice is algorithmic or an explicit, recorded human decision (orient --origin-point /
+--origin-from-asset with --origin-decided-by Alex); nothing is selected by looking at images.
+See README.md.
 """
 import argparse
 import json
@@ -33,8 +35,62 @@ def _vec(value, what):
     return a
 
 
+def origin_from_asset(asset_path, dataparser_sha):
+    """(point, record) for main_axis.polyline[0] of a plant asset's plant.json, after checking that the
+    asset's coordinates are in the frame of DATAPARSER_SHA: one of its hash-listed source_evidence JSON
+    files must record camera_inputs.dataparser_transforms equal to it. Refuses otherwise."""
+    asset_path = Path(asset_path).resolve()
+    with asset_path.open() as f:
+        asset = json.load(f)
+    axis = asset.get('main_axis')
+    if not isinstance(axis, dict) or not isinstance(axis.get('polyline'), list) or not axis['polyline']:
+        raise ValueError('%s has no main_axis.polyline' % asset_path)
+    point = _vec(axis['polyline'][0], 'main_axis.polyline[0] of the asset')
+    if asset.get('units') not in (None, fc.SCENE_UNITS):
+        raise ValueError('Asset units must be %s, not %r' % (fc.SCENE_UNITS, asset.get('units')))
+    frame = None
+    for ref in asset.get('source_evidence') or []:
+        if not isinstance(ref, dict) or not str(ref.get('path', '')).endswith('.json'):
+            continue
+        ev = (asset_path.parent / ref['path']).resolve()
+        if not ev.is_file():
+            continue
+        ev_sha = sha(ev)
+        if ev_sha != ref.get('sha256'):
+            raise ValueError('Asset evidence hash mismatch: %s' % ev)
+        with ev.open() as f:
+            evidence = json.load(f)
+        cams = evidence.get('camera_inputs') if isinstance(evidence, dict) else None
+        if isinstance(cams, dict) and cams.get('dataparser_transforms'):
+            frame = {'evidence_path': str(ev), 'evidence_sha256': ev_sha,
+                     'evidence_dataparser_transforms_sha256': cams['dataparser_transforms'],
+                     'evidence_source_ply_sha256': evidence.get('source_ply_sha256'),
+                     'evidence_capture_id': evidence.get('capture_id')}
+            break
+    if frame is None:
+        raise ValueError('Cannot establish the asset frame: no hash-listed source_evidence JSON in %s records '
+                         'camera_inputs.dataparser_transforms; give the point with --origin-point instead' % asset_path)
+    if frame['evidence_dataparser_transforms_sha256'] != dataparser_sha:
+        raise ValueError('Asset evidence records dataparser_transforms %s, not %s: different frame'
+                         % (frame['evidence_dataparser_transforms_sha256'], dataparser_sha))
+    rec = {'asset_path': str(asset_path), 'asset_sha256': sha(asset_path), 'asset_plant_id': asset.get('plant_id'),
+           'asset_capture_id': asset.get('capture_id'), 'main_axis_id': axis.get('id'),
+           'main_axis_point': 'polyline[0]', 'frame_check': frame}
+    return point, rec
+
+
+def _parse_point(text):
+    try:
+        values = [float(v) for v in text.split(',')]
+    except ValueError:
+        values = []
+    if len(values) != 3 or not all(math.isfinite(v) for v in values):
+        raise ValueError('--origin-point expects X,Y,Z (three finite numbers in the source frame), got %r' % text)
+    return np.array(values)
+
+
 def calibration_from_orientation(orientation, orientation_path, dataparser_path, capture_id, bind_files=None,
-                                 x_reference=(1.0, 0.0, 0.0), up_axis='+y'):
+                                 x_reference=(1.0, 0.0, 0.0), up_axis='+y', explicit_origin=None):
     """Rotation and origin from a complete plant-orientation record.
 
     Up: up_soil_plane.normal when up_soil_plane.status is ok (method soil_plane), otherwise
@@ -45,7 +101,12 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
     final soil iteration's base estimate, the base plant's lowest-slice axis point) projected along
     up_soil_plane.normal onto the plane through up_soil_plane.point (the final fit's inlier centroid).
     Origin (fallback): the lowest axis point (axis.polyline[0]) of the only plant, unprojected; with
-    several plants the origin stays null. The camera-versus-soil angle is a diagnostic only."""
+    several plants the origin stays null. The camera-versus-soil angle is a diagnostic only.
+
+    EXPLICIT_ORIGIN (optional) replaces the default origin with a human-decided source-frame point,
+    projected along the soil normal onto the soil plane (refused without an ok soil plane). It is a dict
+    with 'point' (3,), 'decided_by' ('Alex'), 'decision' (statement with date), 'source' (description),
+    and optionally 'record' (asset provenance) and 'inputs' (extra [{'path','sha256'}])."""
     orientation_path = Path(orientation_path).resolve()
     dataparser_path = Path(dataparser_path).resolve()
     if orientation.get('schema') != ORIENTATION_SCHEMA or orientation.get('schema_version') != ORIENTATION_SCHEMA_VERSION:
@@ -113,7 +174,41 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
 
     origin = origin_method = definition = None
     odiag = None
-    if soil_ok:
+    origin_inputs = [inputs[0]]
+    if explicit_origin is not None:
+        if explicit_origin.get('decided_by') != 'Alex':
+            raise ValueError('An explicit origin must be decided by Alex (--origin-decided-by Alex)')
+        statement = str(explicit_origin.get('decision') or '').strip()
+        if not statement:
+            raise ValueError('An explicit origin needs --origin-decision (the decision statement, with its date)')
+        if not soil_ok:
+            raise ValueError('An explicit origin is projected onto the soil plane, and this orientation has no ok '
+                             'soil plane')
+        raw = _vec(explicit_origin.get('point'), 'explicit origin point')
+        point = _vec(soil.get('point'), 'up_soil_plane.point')
+        height = float((raw - point) @ up_unit)
+        origin = raw - height * up_unit
+        default_base = _vec(soil.get('base'), 'up_soil_plane.base')
+        default_origin = default_base - float((default_base - point) @ up_unit) * up_unit
+        shift = origin - default_origin
+        origin_method = ('explicit human decision by %s (%s): %s, projected along up_soil_plane.normal onto the '
+                         'soil plane through up_soil_plane.point' % (explicit_origin['decided_by'], statement,
+                                                                      explicit_origin.get('source')))
+        definition = ('human-decided point (%s) projected along the soil normal onto the fitted soil plane: %s'
+                      % (statement, explicit_origin.get('source')))
+        odiag = {'decision': {'by': explicit_origin['decided_by'], 'statement': statement},
+                 'source': explicit_origin.get('source'),
+                 'unprojected_point_source_frame': [float(v) for v in raw],
+                 'projection_distance_along_up': height,
+                 'projection_note': 'signed height of the unprojected point above the soil plane, removed along the up normal',
+                 'plane_point_source_frame': [float(v) for v in point],
+                 'default_origin_source_frame': [float(v) for v in default_origin],
+                 'shift_from_default_origin_source_frame': [float(v) for v in shift],
+                 'shift_from_default_origin_scene_units': float(np.linalg.norm(shift))}
+        if explicit_origin.get('record') is not None:
+            odiag['asset'] = explicit_origin['record']
+        origin_inputs = origin_inputs + list(explicit_origin.get('inputs') or [])
+    elif soil_ok:
         base = _vec(soil.get('base'), 'up_soil_plane.base')
         point = _vec(soil.get('point'), 'up_soil_plane.point')
         offset = float((base - point) @ up_unit)
@@ -140,7 +235,7 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
         else:
             definition = 'unset: no soil plane and not exactly one plant with an axis'
     fc.set_rotation(cal, R, origin, method, 'algorithmic', inputs, diag,
-                    origin_method=origin_method, origin_inputs=[inputs[0]] if origin is not None else None,
+                    origin_method=origin_method, origin_inputs=origin_inputs if origin is not None else None,
                     origin_definition=definition, origin_diagnostics=odiag, up_source=up_unit)
     return cal
 
@@ -172,8 +267,24 @@ def cmd_orient(args):
     out = _new_path(args.out)
     with Path(args.orientation).open() as f:
         orientation = json.load(f)
+    explicit = None
+    if args.origin_point is not None or args.origin_from_asset is not None:
+        if args.origin_point is not None and args.origin_from_asset is not None:
+            raise ValueError('Give --origin-point or --origin-from-asset, not both')
+        if args.origin_decided_by is None or args.origin_decision is None:
+            raise ValueError('An explicit origin needs --origin-decided-by Alex and --origin-decision TEXT')
+        explicit = {'decided_by': args.origin_decided_by, 'decision': args.origin_decision}
+        if args.origin_point is not None:
+            explicit.update(point=_parse_point(args.origin_point), source='source-frame point given with --origin-point')
+        else:
+            point, rec = origin_from_asset(args.origin_from_asset, sha(args.dataparser_transforms))
+            explicit.update(point=point, record=rec,
+                            source='main_axis.polyline[0] (main-axis root) of plant asset %s' % rec['asset_path'],
+                            inputs=[{'path': rec['asset_path'], 'sha256': rec['asset_sha256']}])
+    elif args.origin_decided_by is not None or args.origin_decision is not None:
+        raise ValueError('--origin-decided-by/--origin-decision need --origin-point or --origin-from-asset')
     cal = calibration_from_orientation(orientation, args.orientation, args.dataparser_transforms, args.capture_id,
-                                       _bind(args.bind_file), up_axis='+' + args.up)
+                                       _bind(args.bind_file), up_axis='+' + args.up, explicit_origin=explicit)
     fc.save(cal, out)
     d = cal['rotation']['diagnostics']
     print('up: %s -> target %s; angle to dataparser z %.4f deg' % (d['up_source'], cal['target_frame']['up'],
@@ -181,6 +292,10 @@ def cmd_orient(args):
     if 'camera_vs_soil_angle_deg' in d:
         print('camera vs soil angle: %.4f deg (reported only)' % d['camera_vs_soil_angle_deg'])
     print('origin: %s' % (cal['origin']['point_source_frame'] if cal['origin'] else None))
+    od = (cal['origin'] or {}).get('diagnostics') or {}
+    if 'projection_distance_along_up' in od:
+        print('explicit origin: projected %.6f along up onto the soil plane; %.6f scene units from the default origin'
+              % (od['projection_distance_along_up'], od['shift_from_default_origin_scene_units']))
     print('Wrote ' + str(out))
     return 0
 
@@ -254,6 +369,14 @@ def main(argv=None):
                    help='extra source-frame binding hash, recorded as NAME_sha256 (repeatable)')
     p.add_argument('--up', choices=['y', 'z'], default='y',
                    help='target up axis: y (default) or z; recorded as target_frame.up')
+    p.add_argument('--origin-point', metavar='X,Y,Z',
+                   help='explicit origin, source (dataparser) frame; projected onto the soil plane along up')
+    p.add_argument('--origin-from-asset', type=Path, metavar='PLANT_JSON',
+                   help="explicit origin at a plant asset's main_axis.polyline[0], after checking the asset's "
+                        'evidence names the same dataparser transforms; projected onto the soil plane along up')
+    p.add_argument('--origin-decided-by', choices=['Alex'], help='who decided the explicit origin (required with it)')
+    p.add_argument('--origin-decision', metavar='TEXT',
+                   help='the decision statement with its date, recorded verbatim (required with an explicit origin)')
     p.add_argument('--out', required=True, type=Path)
     p.set_defaults(func=cmd_orient)
     p = sub.add_parser('scale', help='add the metric scale from a scale-estimate JSON')

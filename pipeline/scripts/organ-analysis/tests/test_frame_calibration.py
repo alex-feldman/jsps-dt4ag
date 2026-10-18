@@ -248,6 +248,96 @@ class Orient(unittest.TestCase):
         self.assertEqual(run(['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp),
                               '--capture-id', 'cap-1', '--out', str(out)])[0], 2)
 
+    def _asset(self, axis0, dp_sha=None):
+        a = self.d / 'asset'
+        (a / 'source-evidence').mkdir(parents=True, exist_ok=True)
+        ev = a / 'source-evidence' / 'organ-evidence-original.json'
+        ev.write_text(json.dumps({'capture_id': 'cap-1', 'source_ply_sha256': 'c' * 64,
+                                  'camera_inputs': {'dataparser_transforms': dp_sha or self.dp_sha}}))
+        plant = a / 'plant.json'
+        plant.write_text(json.dumps({'plant_id': 'M1', 'capture_id': 'cap-1', 'units': 'scale_free_scene_units',
+                                     'main_axis': {'id': 'M1:axis:main', 'polyline': [list(axis0), [0, 0, 1.0]]},
+                                     'source_evidence': [{'path': 'source-evidence/organ-evidence-original.json',
+                                                          'sha256': sha(ev)}]}))
+        return plant
+
+    def test_explicit_origin_from_asset_and_point(self):
+        o = synthetic_orientation(self.dp, self.dp_sha)
+        p = self.write(o)
+        n = np.array(o['up_soil_plane']['normal'])
+        plane_pt = np.array(o['up_soil_plane']['point'])
+        root = plane_pt + np.array([0.06, -0.07, 0.0])
+        root = root - ((root - plane_pt) @ n) * n + 0.033 * n   # 0.033 above the plane, off the default base
+        plant = self._asset(root)
+        base_args = ['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp), '--capture-id', 'cap-1']
+        decision = ['--origin-decided-by', 'Alex', '--origin-decision', 'Alex 2026-10-18: bottom of the base stem']
+        out = self.d / 'cal-asset.json'
+        code, text, err = run(base_args + ['--origin-from-asset', str(plant)] + decision + ['--out', str(out)])
+        self.assertEqual(code, 0, err)
+        cal = fc.load(out)
+        org = np.array(cal['origin']['point_source_frame'])
+        want = root - 0.033 * n
+        np.testing.assert_allclose(org, want, atol=1e-14)
+        self.assertAlmostEqual(float((org - plane_pt) @ n), 0.0, places=14)
+        d = cal['origin']['diagnostics']
+        self.assertAlmostEqual(d['projection_distance_along_up'], 0.033, places=14)
+        np.testing.assert_allclose(d['unprojected_point_source_frame'], root, atol=1e-15)
+        self.assertEqual(d['decision'], {'by': 'Alex', 'statement': 'Alex 2026-10-18: bottom of the base stem'})
+        self.assertEqual(d['asset']['frame_check']['evidence_dataparser_transforms_sha256'], self.dp_sha)
+        self.assertEqual([i['sha256'] for i in cal['origin']['inputs']], [sha(p), sha(plant)])
+        self.assertIn('explicit human decision by Alex', cal['origin']['method'])
+        self.assertIn('bottom of the base stem', cal['target_frame']['origin_definition'])
+        # Same rotation as the default; only the origin differs, and the shift is recorded.
+        default = self.d / 'cal-default.json'
+        self.assertEqual(run(base_args + ['--out', str(default)])[0], 0)
+        dcal = fc.load(default)
+        self.assertEqual(dcal['rotation']['matrix'], cal['rotation']['matrix'])
+        dorg = np.array(dcal['origin']['point_source_frame'])
+        np.testing.assert_allclose(d['shift_from_default_origin_source_frame'], org - dorg, atol=1e-15)
+        self.assertNotIn('decision', dcal['origin']['diagnostics'])
+        # Differences between points are unchanged under the new origin (pure translation in the plant frame).
+        pts = np.random.default_rng(0).normal(size=(20, 3))
+        A, B = fc.apply(cal, pts), fc.apply(dcal, pts)
+        np.testing.assert_allclose(A - A[0], B - B[0], atol=1e-14)
+        self.assertEqual(run(['validate', str(out)])[0], 0)
+        # --origin-point gives the same origin.
+        out2 = self.d / 'cal-point.json'
+        code, _, err = run(base_args + ['--origin-point', ','.join(repr(float(v)) for v in root)] + decision + ['--out', str(out2)])
+        self.assertEqual(code, 0, err)
+        np.testing.assert_allclose(fc.load(out2)['origin']['point_source_frame'], want, atol=1e-14)
+
+    def test_explicit_origin_refusals(self):
+        o = synthetic_orientation(self.dp, self.dp_sha)
+        p = self.write(o)
+        base_args = ['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp), '--capture-id', 'cap-1']
+        decision = ['--origin-decided-by', 'Alex', '--origin-decision', 'Alex 2026-10-18: bottom of the base stem']
+        k = iter(range(100))
+
+        def code(extra):
+            out = self.d / ('r%d.json' % next(k))
+            c, _, err = run(base_args + extra + ['--out', str(out)])
+            self.assertFalse(out.exists())
+            return c, err
+        self.assertEqual(code(['--origin-point', '0,0,0'])[0], 2)                 # no decision
+        self.assertEqual(code(decision)[0], 2)                                     # decision without a point
+        self.assertEqual(code(['--origin-point', '0,0'] + decision)[0], 2)         # malformed
+        plant = self._asset((0, 0, 0))
+        self.assertEqual(code(['--origin-point', '0,0,0', '--origin-from-asset', str(plant)] + decision)[0], 2)
+        other = self._asset((0, 0, 0), dp_sha='d' * 64)                            # different frame
+        c, err = code(['--origin-from-asset', str(other)] + decision)
+        self.assertEqual(c, 2)
+        self.assertIn('different frame', err)
+        ev = self.d / 'asset' / 'source-evidence' / 'organ-evidence-original.json'
+        ev.write_text('{"tampered": true}')                                        # evidence hash mismatch
+        self.assertEqual(code(['--origin-from-asset', str(other)] + decision)[0], 2)
+        nosoil = synthetic_orientation(self.dp, self.dp_sha, soil=False)
+        p2 = self.write(nosoil, 'nosoil.json')
+        out = self.d / 'ns.json'
+        c, _, err = run(['orient', '--orientation', str(p2), '--dataparser-transforms', str(self.dp), '--capture-id',
+                         'cap-1', '--origin-point', '0,0,0'] + decision + ['--out', str(out)])
+        self.assertEqual(c, 2)
+        self.assertIn('soil plane', err)
+
     def test_orient_y_up_default(self):
         o = synthetic_orientation(self.dp, self.dp_sha)
         p = self.write(o)

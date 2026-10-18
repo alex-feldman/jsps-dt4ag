@@ -53,6 +53,14 @@ Dates are the tag date, not the commit date, where they differ.
   option and stays the analysis file. Refused with `--inverse` or a calibration
   whose target up is not `+y`. On the October 2 export the display copies match
   the ad hoc copies Alex checked vertex for vertex (all differences 0.0).
+- `calibrate_frame.py orient --origin-from-asset PLANT_JSON` or
+  `--origin-point X,Y,Z`, with `--origin-decided-by Alex --origin-decision TEXT`:
+  an explicit, human-decided origin (for example the main-axis root, "bottom of
+  the base stem") projected along the soil normal onto the soil plane, with the
+  decision, unprojected point, projection distance and shift from the default
+  recorded in `origin.diagnostics`. The asset route checks that the asset's
+  hash-listed evidence names the same dataparser transforms. Without the option
+  the origin is unchanged.
 - `click_points.html`: single offline HTML tool for labelled pixel clicks on
   photographs (zoom, pan, quick `tape_{N}cm` and `{leaf}_base`/`{leaf}_tip`
   labels, COLMAP pixel convention, no EXIF rotation), exporting the
