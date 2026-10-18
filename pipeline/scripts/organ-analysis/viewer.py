@@ -2,6 +2,8 @@
 import json
 import numpy as np
 
+PALETTE = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7']
+
 
 def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=None):
     """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export."""
@@ -58,7 +60,7 @@ These are Gaussian centers and graph lines, not rendered splats or measured orga
 No tag/string removal, gravity alignment, metric scale, or biological acceptance is implied.</p></aside>
 <script>const D=__DATA__;
 const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
-const colors=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7'];
+const colors=__PALETTE__;
 document.getElementById('title').textContent=D.capture+' organ evidence';
 const nodes=new Map(D.graph.skeleton_nodes.map(n=>[n.id,n.xyz]));
 const reviewCategories=['not reviewed','unclear','leaf','false-branch','tip/apex','tendril','stem/base','string/support','other'];
@@ -173,4 +175,4 @@ for(const id of['points','edges','highlightCandidates','hideCandidates','hideCon
 addEventListener('resize',fit);fit();
 </script></html>'''
     with (out/'viewer.html').open('x') as f:
-        f.write(page.replace('__DATA__',payload))
+        f.write(page.replace('__DATA__',payload).replace('__PALETTE__',json.dumps(PALETTE)))
