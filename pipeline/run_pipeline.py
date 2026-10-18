@@ -28,6 +28,7 @@ loudly while producing nothing; nothing here is allowed to repeat it.
 from __future__ import annotations
 
 import argparse
+import configparser
 import datetime as _dt
 import json
 import os
@@ -43,6 +44,8 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 PIPELINE_DIR = Path(__file__).resolve().parent
 if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
+
+from plant_catalog import CatalogJob
 
 from dt4ag_config import (  # noqa: E402
     ConfigError,
@@ -97,6 +100,8 @@ MAX_AUTO_RESOLUTION = 1600
 #: A gaussian-splat PLY smaller than this is a header with no geometry behind
 #: it. The real thing runs to tens of megabytes.
 MIN_EXPORT_BYTES = 1024
+
+CATALOG_COMMAND_LOG = None
 
 #: Timestamped nerfstudio run directories are named like ``2026-08-07_170701``.
 RUN_DIR_TIMESTAMP_FORMAT = "%Y-%m-%d_%H%M%S"
@@ -1184,6 +1189,12 @@ def build_parser() -> argparse.ArgumentParser:
             "--stage train,export --run-id run_260807-01-3120\n"
         ),
     )
+    parser.add_argument("--catalog-root", type=Path, default=os.environ.get("PLANT_CATALOG_ROOT"),
+                        help="local storage root for portable catalog pointers")
+    parser.add_argument("--catalog-root-id", default=os.environ.get("PLANT_CATALOG_ROOT_ID"),
+                        help="logical root ID; enables canonical catalog emission")
+    parser.add_argument("--catalog-capture-id", default=os.environ.get("PLANT_CATALOG_CAPTURE_ID"),
+                        help="stable capture identity, required with --catalog-root-id")
     parser.add_argument(
         "--config",
         help=(
@@ -1290,7 +1301,27 @@ def run_command(command: Sequence[str], label: str, dry_run: bool) -> None:
         return
     started = time.time()
     try:
-        completed = subprocess.run(list(command), check=False)
+        if CATALOG_COMMAND_LOG is None:
+            completed = subprocess.run(list(command), check=False)
+        else:
+            # Stream tool output to both the terminal and durable invocation log.
+            with CATALOG_COMMAND_LOG.open("a", encoding="utf-8") as stream:
+                stream.write("\n$ " + render(command) + "\n")
+                stream.flush()
+                process = subprocess.Popen(list(command), stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, text=True, errors="replace")
+                try:
+                    for line in process.stdout:
+                        print(line, end="", flush=True)
+                        stream.write(line)
+                        stream.flush()
+                    completed = subprocess.CompletedProcess(command, process.wait())
+                except BaseException:
+                    # Only the child created above is signaled.
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait()
+                    raise
     except OSError as exc:
         raise StageError(f"{label}: could not execute {command[0]!r}: {exc}") from exc
     elapsed = format_elapsed(time.time() - started)
@@ -1572,6 +1603,10 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 )
                 if not dry_run:
                     verify_export(ply, export_dir)
+                    if getattr(args, "catalog_job", None):
+                        args.catalog_job.artifact(ply, role="gaussian-splat" if cfg.export_3dgs else "point-cloud",
+                                                  media_type="application/octet-stream",
+                                                  coordinate_frame="raw COLMAP/nerfstudio frame; uncalibrated")
                     # The point-cloud conversion inflates a file about a
                     # thousandfold, so it runs for the final checkpoint only.
                     if cfg.export_3dgs and is_final:
@@ -1581,6 +1616,10 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                             dry_run,
                         )
 
+        if not dry_run and getattr(args, "catalog_job", None) and stage in ("colmap", "process", "train"):
+            output = cfg.output_dir(run_id) if stage == "train" else workspace
+            args.catalog_job.artifact(output, role=stage + "-output", media_type="inode/directory",
+                                      coordinate_frame="raw COLMAP/nerfstudio frame; uncalibrated")
         log(f"stage {stage}: done in {format_elapsed(time.time() - stage_start)}")
 
     log_banner(
@@ -1629,17 +1668,58 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except ConfigError as exc:
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return 2
+    global CATALOG_COMMAND_LOG
+    catalog = None
+    code, error = 1, None
     try:
-        return run_pipeline(cfg, args)
+        if args.catalog_root_id and not args.dry_run:
+            if not args.catalog_capture_id:
+                raise ConfigError("--catalog-capture-id is required when catalog emission is enabled")
+            root = Path(args.catalog_root or cfg.data_root)
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.read(cfg.source)
+            selected = [p.relative_to(cfg.images_path).as_posix()
+                        for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+            catalog = CatalogJob(root, args.catalog_root_id, args.catalog_capture_id,
+                PIPELINE_DIR.parent, title="JSPS-DT4AG reconstruction", job_type="reconstruction",
+                command=render([sys.executable, str(Path(__file__).resolve()), *(argv if argv is not None else sys.argv[1:])]),
+                config={"ini": {section: dict(parser[section]) for section in parser.sections()},
+                        "stages": list(args.stages), "run_id_override": args.run_id}, selected_images=selected)
+            catalog.capture(source=cfg.images_path, image_count=len(selected))
+            catalog.freeze_config(cfg.source)
+            args.catalog_job = catalog
+            CATALOG_COMMAND_LOG = catalog.directory / "evidence" / (catalog.id + ".log")
+            CATALOG_COMMAND_LOG.touch(exist_ok=False)
+            catalog.evidence(CATALOG_COMMAND_LOG, log=True)
+        code = run_pipeline(cfg, args)
     except StageError as exc:
+        error = str(exc)
         print(f"\nPIPELINE FAILED: {exc}", file=sys.stderr)
-        return 1
-    except ConfigError as exc:
+        code = 1
+    except (ConfigError, ValueError) as exc:
+        error = str(exc)
         print(f"\nCONFIG ERROR: {exc}", file=sys.stderr)
-        return 2
+        code = 2
     except KeyboardInterrupt:
+        error = "User interrupted the pipeline"
         print("\ninterrupted", file=sys.stderr)
-        return 130
+        code = 130
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        if catalog:
+            if CATALOG_COMMAND_LOG and error:
+                with CATALOG_COMMAND_LOG.open("a", encoding="utf-8") as stream:
+                    stream.write("\nPIPELINE FINAL ERROR: " + error + "\n")
+            # Existing CSV is invocation evidence, not a claim about final status.
+            try:
+                if cfg.run_log.is_file():
+                    catalog.evidence(cfg.run_log, log=True)
+            finally:
+                catalog.finish(code, error)
+        CATALOG_COMMAND_LOG = None
+    return code
 
 
 if __name__ == "__main__":

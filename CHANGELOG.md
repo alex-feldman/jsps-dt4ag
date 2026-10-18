@@ -14,6 +14,16 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.10] - 2026-10-18
+
+### Added
+
+- Opt-in Plant Reconstruction Catalog v1 emission for user-run reconstruction:
+  atomic running/final job records, stable capture references, exact INI settings,
+  selected inputs, frozen configs, command logs and verified export artifacts.
+  Portable pointers use an explicit logical root ID. Execution completion does
+  not imply human acceptance. Dry runs do not emit records.
+
 ## [0.3.0-alpha.9] - 2026-10-18
 
 ### Added
