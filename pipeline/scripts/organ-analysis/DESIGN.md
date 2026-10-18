@@ -318,6 +318,8 @@ Verification (2026-10-18, gsplat 1.4.0):
 - **Fit quality.** SH fit residuals reached at most 2.6e-15.
 - **Real round trip.** The October 2 export was transformed to y-up meters and back. It agrees within float32 rounding: centers 3.0e-8, f_rest 6.0e-8, log scales 4.8e-7, quaternions 1.2e-7. f_dc, opacity and normals are bit-identical.
 
+**Viewer display copies are separate files (O30.T2.2, 2026-10-18).** "Viewers expect y-up" turned out not to be enough for SuperSplat: it rotates a y-up file 180 degrees about z on load, so the plant shows upside down. Alex confirmed visually that a copy pre-rotated 180 degrees about z appears upright. The fix is a viewer convention, not a property of the plant frame, so it is never folded into the calibration or the default output. `--viewer supersplat` writes an extra `-supersplat.ply` by applying the same Gaussian transform (R = diag(-1, -1, 1), no origin, scale 1) to the plain output as stored, plus a `splat-viewer-copy` sidecar marked `display_only`. Measurement uses the plain file only. On the October 2 export, the option's plain outputs (meters and scene units) were byte-identical to those made at a3c8144 (run before the version bump, which changes only the version in a provenance comment), and its display copies have vertex data byte-identical to the ad hoc copies Alex inspected (positions, quaternions and SH all differ by 0.0); only the header comment differs.
+
 ## Computed base and conservative apex candidates
 
 The opt-in integration lives in `computed_axis.orientation` (artifact validation)

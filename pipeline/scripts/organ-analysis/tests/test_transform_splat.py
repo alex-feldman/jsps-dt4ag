@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 import numpy as np
 
@@ -175,6 +176,91 @@ class Command(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'in place|exists'):
                 ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(src)])
             self.assertEqual(sha(src), side['input']['sha256'])
+
+    def _setup(self, d, rng):
+        a = gaussians(60, '<f4', seed=11)
+        header = ['ply', 'format binary_little_endian 1.0', 'comment Vertical Axis: z', 'element vertex 60'] + \
+            ['property float ' + k for k in NAMES] + ['end_header']
+        src = d / 'in.ply'
+        ts.write_ply(src, header, a)
+        cal = calibration(random_rotation(rng), rng.normal(size=3), 0.5)
+        cp = d / 'cal.json'
+        fc.save(cal, cp)
+        return src, cp
+
+    def test_viewer_supersplat_copy_is_z180_of_plain_output_and_default_unchanged(self):
+        rng = np.random.default_rng(9)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            src, cp = self._setup(d, rng)
+            (d / 'a').mkdir()
+            (d / 'b').mkdir()
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'a' / 'p.ply')]), 0)
+                self.assertEqual(ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'b' / 'p.ply'),
+                                          '--viewer', 'supersplat']), 0)
+            # Default output: no display files, and the plain PLY is byte-identical with or without --viewer.
+            self.assertEqual(sorted(p.name for p in (d / 'a').iterdir()), ['p.ply', 'p.transform.json'])
+            self.assertEqual(sha(d / 'a' / 'p.ply'), sha(d / 'b' / 'p.ply'))
+            sa = json.loads((d / 'a' / 'p.transform.json').read_text())
+            sb = json.loads((d / 'b' / 'p.transform.json').read_text())
+            self.assertNotIn('viewer_copy', sa)
+            vc = sb.pop('viewer_copy')
+            for s_ in (sa, sb):
+                for k in ('output', 'calibration', 'input'):
+                    s_[k].pop('path')
+            self.assertEqual(sa, sb)
+            disp = d / 'b' / 'p-supersplat.ply'
+            vside = json.loads((d / 'b' / 'p-supersplat.viewer.json').read_text())
+            self.assertEqual(vc['sha256'], sha(disp))
+            self.assertTrue(vc['display_only'] and vside['display_only'])
+            self.assertEqual(vside['schema'], 'splat-viewer-copy')
+            self.assertEqual(vside['output']['sha256'], sha(disp))
+            self.assertEqual(vside['analysis_file']['sha256'], sha(d / 'b' / 'p.ply'))
+            self.assertEqual(vside['display_rotation']['R'], [[-1.0, 0, 0], [0, -1.0, 0], [0, 0, 1.0]])
+            # The display copy equals a 180-degree z rotation of the stored plain output.
+            lp, plain = ts.read_ply(d / 'b' / 'p.ply')
+            lv, view = ts.read_ply(disp)
+            want, _ = ts.transform(plain, np.diag([-1.0, -1.0, 1.0]), np.zeros(3), 1.0)
+            np.testing.assert_array_equal(view, want)
+            self.assertEqual([l for l in lv if not l.startswith('comment DISPLAY ONLY')], lp)
+            np.testing.assert_array_equal(view['x'], -plain['x'])
+            np.testing.assert_array_equal(view['y'], -plain['y'])
+            np.testing.assert_array_equal(view['z'], plain['z'])
+            for k in ('f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity', 'scale_0', 'scale_1', 'scale_2'):
+                np.testing.assert_array_equal(view[k], plain[k])
+            # Colors seen from the rotated direction match: f'(R d) = f(d).
+            pa = plain.astype([(k, '<f8') for k in NAMES])
+            va = view.astype([(k, '<f8') for k in NAMES])
+            R = np.diag([-1.0, -1.0, 1.0])
+            dirs = ts.sample_directions(len(pa), 5)
+            self.assertLess(np.abs(colors(va, dirs @ R.T) - colors(pa, dirs)).max(), 1e-5)
+            np.testing.assert_allclose(covariance(va), R @ covariance(pa) @ R.T, atol=1e-6)
+            # Refuses to overwrite either display file.
+            with self.assertRaisesRegex(ValueError, 'exists'):
+                ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'b' / 'p.ply'),
+                         '--viewer', 'supersplat'])
+
+    def test_viewer_refusals(self):
+        rng = np.random.default_rng(10)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            src, cp = self._setup(d, rng)
+            with self.assertRaisesRegex(ValueError, 'inverse'):
+                ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'i.ply'), '--inverse',
+                         '--viewer', 'supersplat'])
+            (d / 'x-supersplat.viewer.json').write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'exists'):
+                ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'x.ply'), '--viewer', 'supersplat'])
+            self.assertFalse((d / 'x.ply').exists())
+            cal = fc.load(cp)
+            cal['target_frame']['up'] = '+z'
+            with self.assertRaisesRegex(ValueError, r'target up \+y'):
+                with unittest.mock.patch.object(fc, 'load', return_value=cal):
+                    ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'z.ply'), '--viewer', 'supersplat'])
+            self.assertFalse((d / 'z.ply').exists())
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                ts.main(['--calibration', str(cp), '--input', str(src), '--out', str(d / 'v.ply'), '--viewer', 'other'])
 
     def test_refuses_bad_layout(self):
         a = np.zeros(3, dtype=[(k, '<f4') for k in ['x', 'y', 'z', 'f_rest_0']])

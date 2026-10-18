@@ -14,6 +14,57 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.10] - 2026-10-18
+
+### Added
+
+- Experimental `frame-calibration` record (schema version 1) and
+  `calibrate_frame.py` with `orient`, `scale`, `validate` and `apply`. It maps
+  dataparser-frame points into a plant frame by `p = s * R @ (p_source - o)`.
+  `orient` takes up from the orientation stage's soil plane (camera mean
+  image-up as a recorded fallback) and the origin from the soil base projected
+  onto the fitted plane. `scale` ingests a `scale-estimate` file. The record is
+  hash-bound to the run's `dataparser_transforms.json`, validated on load and
+  save, and written as deterministic bytes.
+- Target up axis setting `target_frame.up` (`+y` or `+z`; files without it read
+  as `+z`, schema version unchanged) and `orient --up y|z`, default `y`. Y-up is
+  the z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`; the validator
+  checks that R maps the recorded up vector to the target axis.
+- `transform_splat.py`: transform a 3DGS export PLY by a frame calibration into
+  a new PLY plus a hash sidecar, without retraining. Centers, normals, wxyz
+  quaternions, log scales (`--no-scale` keeps scene units) and band-wise rotated
+  SH `f_rest` coefficients (fitted on the exact gsplat basis); `--inverse` maps
+  back.
+- **`pipeline/scripts/organ-analysis/click_points.py` and `ruler_scale.py`**: human-clicked image
+  points (an `image-clicks` v1 file) to 3D points in the export's dataparser frame. A label clicked
+  in two or more images is triangulated (DLT, then reprojection-error refinement with the camera's
+  distortion; per-view residuals, triangulation angle, covariance). A label clicked once is placed
+  where its ray meets a robust local plane through the COLMAP points observed in that image near the
+  click (radius ladder 40/80/160 px, median depth for small support, refusal below a minimum), with
+  an optional surface offset for an object lying above that surface. `ruler_scale.py` turns
+  `tape_{N}cm` marks into a `scale-estimate` v1 (baseline-weighted median over all pairs, spread,
+  propagated uncertainty, collinearity and leave-one-out checks). `click_points.py triangulate`
+  writes all points, `{leaf}_base`/`{leaf}_tip` chords and a report-only nearest plant-asset leaf.
+- `transform_splat.py --viewer supersplat` (opt-in): also writes a display-only
+  `{out stem}-supersplat.ply`, the plain output rotated 180 degrees about z by
+  the same Gaussian transform (centers, normals, quaternions, SH), because
+  SuperSplat shows y-up files upside down, plus a `splat-viewer-copy` sidecar
+  marked `display_only`. The plain output is byte-identical with or without the
+  option and stays the analysis file. Refused with `--inverse` or a calibration
+  whose target up is not `+y`. On the October 2 export the display copies match
+  the ad hoc copies Alex checked vertex for vertex (all differences 0.0).
+- `click_points.html`: single offline HTML tool for labelled pixel clicks on
+  photographs (zoom, pan, quick `tape_{N}cm` and `{leaf}_base`/`{leaf}_tip`
+  labels, COLMAP pixel convention, no EXIF rotation), exporting the
+  `image-clicks` v1 JSON that `click_points.py` and `ruler_scale.py` read.
+
+### Changed
+
+- Scope: the plant frame's up and origin are geometric estimates from the
+  orientation stage, and its scale rests on Alex's ruler clicks and his stated
+  tape offset. This release validates neither against gravity or manual
+  measurements, and adds no leaf length, area or curvature code.
+
 ## [0.3.0-alpha.9] - 2026-10-18
 
 ### Added
@@ -174,34 +225,6 @@ in this source snapshot.
 ## [Unreleased]
 
 ### Added
-
-- Experimental `frame-calibration` record (schema version 1) and
-  `calibrate_frame.py` with `orient`, `scale`, `validate` and `apply`. It maps
-  dataparser-frame points into a plant frame by `p = s * R @ (p_source - o)`.
-  `orient` takes up from the orientation stage's soil plane (camera mean
-  image-up as a recorded fallback) and the origin from the soil base projected
-  onto the fitted plane. `scale` ingests a `scale-estimate` file. The record is
-  hash-bound to the run's `dataparser_transforms.json`, validated on load and
-  save, and written as deterministic bytes.
-- Target up axis setting `target_frame.up` (`+y` or `+z`; files without it read
-  as `+z`, schema version unchanged) and `orient --up y|z`, default `y`. Y-up is
-  the z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`; the validator
-  checks that R maps the recorded up vector to the target axis.
-- `transform_splat.py`: transform a 3DGS export PLY by a frame calibration into
-  a new PLY plus a hash sidecar, without retraining. Centers, normals, wxyz
-  quaternions, log scales (`--no-scale` keeps scene units) and band-wise rotated
-  SH `f_rest` coefficients (fitted on the exact gsplat basis); `--inverse` maps
-  back.
-- **`pipeline/scripts/organ-analysis/click_points.py` and `ruler_scale.py`**: human-clicked image
-  points (an `image-clicks` v1 file) to 3D points in the export's dataparser frame. A label clicked
-  in two or more images is triangulated (DLT, then reprojection-error refinement with the camera's
-  distortion; per-view residuals, triangulation angle, covariance). A label clicked once is placed
-  where its ray meets a robust local plane through the COLMAP points observed in that image near the
-  click (radius ladder 40/80/160 px, median depth for small support, refusal below a minimum), with
-  an optional surface offset for an object lying above that surface. `ruler_scale.py` turns
-  `tape_{N}cm` marks into a `scale-estimate` v1 (baseline-weighted median over all pairs, spread,
-  propagated uncertainty, collinearity and leave-one-out checks). `click_points.py triangulate`
-  writes all points, `{leaf}_base`/`{leaf}_tip` chords and a report-only nearest plant-asset leaf.
 
 - Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
   and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the

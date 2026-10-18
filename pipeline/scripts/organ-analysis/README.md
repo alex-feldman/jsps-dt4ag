@@ -308,12 +308,21 @@ Limits:
 
 ## Transform a splat export into the plant frame
 
-`transform_splat.py` applies a frame calibration to a 3DGS export PLY without retraining, for example to open a y-up, metric splat in SuperSplat. It writes a new PLY and a sidecar `{output stem}.transform.json`; it never writes in place and refuses existing outputs.
+`transform_splat.py` applies a frame calibration to a 3DGS export PLY without retraining, for example to analyze a y-up, metric splat or open it in a viewer (SuperSplat needs the display copy below to show it upright). It writes a new PLY and a sidecar `{output stem}.transform.json`; it never writes in place and refuses existing outputs.
 
 ```text
 python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/export.ply --out /path/to/new-plant.ply [--no-scale]
 python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/new-plant.ply --out /path/to/new-back.ply --inverse
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/export.ply --out /path/to/new-plant.ply --viewer supersplat
 ```
+
+### Display copy for a viewer (`--viewer supersplat`)
+
+SuperSplat (PlayCanvas) shows a y-up splat PLY upside down: it applies its own 180-degree rotation about z on load. A copy pre-rotated by 180 degrees about z appears upright (confirmed visually by Alex, 2026-10-18). `--viewer supersplat` is opt-in and writes, in addition to the plain output and its sidecar:
+- `{output stem}-supersplat.ply`: the plain output as stored, rotated 180 degrees about z by the same Gaussian transform below (centers and normals negated in x and y, quaternions `q' = q_R * q`, SH `f_rest` rotated band by band; scales, `f_dc` and opacity unchanged). Its header carries a `comment DISPLAY ONLY ...` line naming the analysis file.
+- `{output stem}-supersplat.viewer.json` (`splat-viewer-copy`, `schema_version` 1): `display_only: true`, the reason, the display rotation, and the hashes of the source export, the calibration, the analysis file and the display copy.
+
+The plain output is byte-identical with or without the option and remains the file for analysis and measurement; its sidecar gains a `viewer_copy` entry naming the display copy. The option is refused with `--inverse` and for a calibration whose target up is not `+y`, and refuses existing display files like any other output. Do not measure in the display copy: its x and y are negated relative to the plant frame.
 
 Every Gaussian is mapped by `p' = s * R @ (p - o)`:
 - **Centers** `x, y, z` by the full map; **normals** `nx, ny, nz`, when present, by R.

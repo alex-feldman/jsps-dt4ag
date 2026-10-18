@@ -10,7 +10,13 @@ Every Gaussian is mapped by p' = s * R @ (p - o):
   (k = 0..K-1 is basis index k+1, c = 0..2 the color channel);
 - f_dc, opacity and every other property unchanged.
 Header element/property order is kept. The output is always a new file, with a JSON sidecar
-recording input, output and calibration hashes and the settings. See README.md.
+recording input, output and calibration hashes and the settings.
+
+Opt-in `--viewer supersplat` additionally writes a display-only copy `{out stem}-supersplat.ply`: the
+plain output rotated 180 degrees about z by the same Gaussian transform (centers, normals,
+quaternions, SH), because SuperSplat shows y-up files upside down. A sidecar
+`{out stem}-supersplat.viewer.json` records that it is display-only. The default output is unchanged.
+See README.md.
 """
 import argparse
 import json
@@ -31,6 +37,19 @@ PLY_TYPES = {'float': '<f4', 'float32': '<f4', 'double': '<f8', 'float64': '<f8'
 SH_FIT_DIRECTIONS = 4096
 SH_FIT_SEED = 20261018
 SH_RESIDUAL_TOL = 1e-10
+VIEWER_SIDECAR_SCHEMA = 'splat-viewer-copy'
+VIEWER_SIDECAR_SCHEMA_VERSION = 1
+# Display-only conventions. Each maps the plain plant-frame output to a copy the viewer shows upright.
+VIEWERS = {
+    'supersplat': {
+        'rotation': [[-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
+        'rotation_description': '180 degrees about z',
+        'requires_up': '+y',
+        'reason': ('SuperSplat (PlayCanvas) displays y-up splat PLYs rotated 180 degrees about z, so a y-up plant '
+                   'appears upside down; this copy is pre-rotated 180 degrees about z so it appears upright '
+                   '(confirmed visually by Alex, 2026-10-18).'),
+    },
+}
 
 
 # ----------------------------------------------------------------------------- PLY
@@ -281,6 +300,20 @@ def transform(data, R, o, s, sh_fit=None):
     return out, rec
 
 
+def viewer_paths(out, viewer):
+    """(display PLY, display sidecar) beside the plain output OUT."""
+    stem = out.name[:-4] + '-' + viewer
+    return out.with_name(stem + '.ply'), out.with_name(stem + '.viewer.json')
+
+
+def viewer_copy(data, viewer):
+    """Display-only copy of a plain plant-frame splat for VIEWER: the same Gaussian transform as the
+    calibration (centers, normals, quaternions, SH f_rest) with the viewer rotation, no origin, scale 1.
+    Returns (array, record)."""
+    spec = VIEWERS[viewer]
+    return transform(data, np.array(spec['rotation'], np.float64), np.zeros(3), 1.0)
+
+
 def transformed_properties(data):
     info = layout(data)
     names = ['x', 'y', 'z'] + (['nx', 'ny', 'nz'] if info['has_normals'] else [])
@@ -321,6 +354,9 @@ def main(argv=None):
     ap.add_argument('--out', required=True, type=Path, help='new PLY; the sidecar is OUT with .transform.json')
     ap.add_argument('--no-scale', action='store_true', help='rotation and origin only; keep scene units')
     ap.add_argument('--inverse', action='store_true', help='map plant-frame splats back to the source frame')
+    ap.add_argument('--viewer', choices=sorted(VIEWERS),
+                    help='also write a display-only copy for this viewer ({out stem}-VIEWER.ply plus '
+                         '{out stem}-VIEWER.viewer.json); the plain output is unchanged and remains the analysis file')
     args = ap.parse_args(argv)
     cal = fc.load(args.calibration)
     src, out = args.input.resolve(), args.out.resolve()
@@ -329,7 +365,19 @@ def main(argv=None):
         raise ValueError('Output must end in .ply')
     if out == src:
         raise ValueError('transform_splat never writes in place')
-    for p in (out, side):
+    targets = [out, side]
+    if args.viewer:
+        if args.inverse:
+            raise ValueError('--viewer applies to plant-frame output only, not with --inverse')
+        need = VIEWERS[args.viewer]['requires_up']
+        up = cal['target_frame'].get('up', fc.DEFAULT_UP)
+        if up != need:
+            raise ValueError('--viewer %s needs a calibration with target up %s; this one has %s' % (args.viewer, need, up))
+        v_out, v_side = viewer_paths(out, args.viewer)
+        if src in (v_out, v_side):
+            raise ValueError('transform_splat never writes in place')
+        targets += [v_out, v_side]
+    for p in targets:
         if p.exists():
             raise ValueError('Output already exists; choose a new path: ' + str(p))
     if not out.parent.is_dir():
@@ -359,9 +407,42 @@ def main(argv=None):
                'header_changes': [l for l in header if l not in lines],
                'properties': list(data.dtype.names), 'transform': rec,
                'unchanged_properties': [n for n in data.dtype.names if n not in transformed_properties(data)]}
+    if args.viewer:
+        spec = VIEWERS[args.viewer]
+        disp, vrec = viewer_copy(new, args.viewer)
+        v_header = []
+        for line in header:
+            v_header.append(line)
+            if line.startswith('format '):
+                v_header.append('comment DISPLAY ONLY for %s: plain plant-frame file rotated %s; analysis uses %s; '
+                                'sidecar %s' % (args.viewer, spec['rotation_description'], out.name, v_side.name))
+        write_ply(v_out, v_header, disp)
+        if sha(src) != in_sha:
+            raise ValueError('Input changed during the run')
+        v_sha = sha(v_out)
+        sidecar['viewer_copy'] = {'viewer': args.viewer, 'path': str(v_out), 'sha256': v_sha,
+                                  'sidecar': str(v_side), 'display_only': True}
+        vside = {'schema': VIEWER_SIDECAR_SCHEMA, 'schema_version': VIEWER_SIDECAR_SCHEMA_VERSION,
+                 'display_only': True,
+                 'purpose': '%s display only; analysis and measurement use the plain plant-frame file' % args.viewer,
+                 'viewer': args.viewer, 'reason': spec['reason'],
+                 'generator': {'name': fc.GENERATOR, 'version': VERSION,
+                               'command': 'transform_splat.py --viewer ' + args.viewer},
+                 'analysis_file': {'path': str(out), 'sha256': sidecar['output']['sha256'], 'sidecar': str(side),
+                                   'frame': sidecar['frame']},
+                 'source_input': sidecar['input'], 'calibration': sidecar['calibration'],
+                 'output': {'path': str(v_out), 'sha256': v_sha, 'vertices': int(len(disp))},
+                 'display_rotation': {'R': spec['rotation'], 'description': spec['rotation_description'],
+                                      'map': 'p_display = R @ p_plain (no origin, no scale)',
+                                      'applied_to': 'the plain output as stored, by the same Gaussian transform'},
+                 'header_changes': [l for l in v_header if l not in header], 'transform': vrec}
     with side.open('x') as f:
         f.write(json.dumps(sidecar, indent=2, sort_keys=True, allow_nan=False) + '\n')
     print('Wrote %s (%d Gaussians, %s frame, %s) and %s' % (out, len(new), sidecar['frame']['name'], sidecar['frame']['units'], side))
+    if args.viewer:
+        with v_side.open('x') as f:
+            f.write(json.dumps(vside, indent=2, sort_keys=True, allow_nan=False) + '\n')
+        print('Wrote display-only %s copy %s and %s' % (args.viewer, v_out, v_side))
     return 0
 
 
