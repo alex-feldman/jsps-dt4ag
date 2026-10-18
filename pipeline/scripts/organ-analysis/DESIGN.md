@@ -257,6 +257,67 @@ The first soil run on October 15 failed under a 2.4 GiB address-space cap, becau
 
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 
+## Frame calibration: the plant frame convention
+
+`frame_calibration.py` owns the contract; `calibrate_frame.py` is the command; the README owns the field table and usage. The record exists so that later stages, and metric measurements, can work in one named frame without moving any source data. Source points stay in the dataparser frame; the calibration is a separate, hash-bound sidecar.
+
+**The plant frame.**
+- +z is up: the soil-plane normal from the orientation stage (Alex, 2026-10-17: the ground is orthogonal to up), or the camera mean image-up when no soil plane exists, recorded as a fallback.
+- The origin is on the ground under the plant: the soil stage's base estimate projected onto the fitted soil plane. A point's plant z is therefore its height above the fitted bed plane, in scene units until scale is set.
+- +x is the source x axis projected onto the horizontal plane, and +y = z cross x, so the frame is right-handed.
+
+**Up axis setting (Alex, 2026-10-18).** The target up axis is recorded as `target_frame.up`, `+y` or `+z`, and `orient` defaults to `+y`. Viewers such as SuperSplat expect y-up.
+
+The y-up frame is the z-up frame followed by M = [[1,0,0],[0,0,1],[0,-1,0]] (det +1):
+- plant +x is unchanged;
+- the z-up +z (up) becomes +y;
+- the z-up +y becomes -z.
+
+So a y-up point is (x, height, -y_zup). The validator checks that R maps the recorded source-frame up vector to the target axis. Files written before the setting existed carry `+z`, and a missing value reads as `+z`, so the schema version stays 1.
+
+The x rule is a deterministic convention only. It refuses when source x lies within 1 degree of up, where the projection would be unstable.
+
+**Why three separate parts.** Rotation, origin and scale come from different evidence:
+- rotation and origin from the orientation stage;
+- scale from a separate scale-estimate built on Alex's decisions.
+
+Each part keeps its own method, inputs and diagnostics. One part can be refit without touching the others, and the record says exactly what each number rests on. `transform_4x4` is derived and recomputed on every save. Validation refuses a stored matrix that disagrees with the parts by more than 1e-12, so a hand-edited matrix cannot silently diverge.
+
+**Binding.** The source frame is bound by the hash of the run's `dataparser_transforms.json`. `orient` refuses a dataparser file the orientation run did not record. `scale` refuses an estimate input naming a different dataparser file. Extra hashes (the export PLY, `transforms.json`) can be bound with `--bind-file`.
+
+**Diagnostics are not decisions.** The camera-versus-soil angle and the orientation's disagreement flag are copied into `rotation.diagnostics`. They never change the rotation. No agent visual judgment enters the record: rotation status is `algorithmic`, or `human-decision` when Alex supplies it.
+
+**First real record (2026-10-18).** October 2 Welzo M1, from the soil-primary orientation run of 2026-10-17 (`oct02-soil-primary-r2`):
+- Up: 21.15 degrees from dataparser z, equal to the camera-versus-soil angle, because the camera mean image-up is dataparser z there.
+- Origin: about 0.037 scene units below the base estimate.
+
+Applied to the reviewed plant asset (package v0.3.0-alpha.6):
+- every leaf center lies above the fitted plane (minimum plant z 0.027);
+- the main axis rises on all 34 segments;
+- the axis chord is 13.6 degrees from +z, against 34.5 degrees from dataparser z before calibration.
+
+These are internal consistency checks, not validation of up against gravity.
+
+## Splat transform
+
+`transform_splat.py` moves a whole Gaussian splat into the plant frame, so that viewers and later stages see the plant upright and metric without retraining.
+
+Under `p' = s R (p - o)`, a Gaussian with covariance R_q S S^T R_q^T becomes s^2 R R_q S S^T R_q^T R^T. So the quaternion becomes q_R * q (gsplat's w, x, y, z order; it normalizes when rendering, and the product keeps the stored norm) and each log scale gains log s.
+
+View-dependent color is f(d) with d the unit direction from the camera to the Gaussian, so after the transform it must satisfy f'(R d) = f(d). Real SH bands are invariant under rotation, so each band l has a (2l+1)^2 matrix D_l with c' = D_l c. Rather than port a Wigner-D convention, which must match gsplat's sign and ordering choices exactly, D_l is fitted by least squares: B_l(R d) D_l = B_l(d) over 4,096 random directions, using a line-for-line port of gsplat's `_eval_sh_bases_fast`. The fitted matrix is exact because the band is closed under rotation. The residual and the orthogonality deviation are recorded, and residuals above 1e-10 are refused.
+
+Verification (2026-10-18, gsplat 1.4.0):
+- **Basis port.** It equals the installed gsplat source exactly (maximum difference 0.0 over 10,000 directions; the source was executed with a numpy stand-in for torch).
+- **Synthetic color and covariance.** Ten random rotations, origins and scales on 2,000 Gaussians each, with SH color compared over 50 direction sets:
+
+  | Storage | SH color, max relative error | Covariance, max relative error |
+  |---|---|---|
+  | float64 | 3.3e-15 | 2.0e-15 |
+  | float32 | 4.4e-8 | 3.0e-7 |
+
+- **Fit quality.** SH fit residuals reached at most 2.6e-15.
+- **Real round trip.** The October 2 export was transformed to y-up meters and back. It agrees within float32 rounding: centers 3.0e-8, f_rest 6.0e-8, log scales 4.8e-7, quaternions 1.2e-7. f_dc, opacity and normals are bit-identical.
+
 ## Computed base and conservative apex candidates
 
 The opt-in integration lives in `computed_axis.orientation` (artifact validation)

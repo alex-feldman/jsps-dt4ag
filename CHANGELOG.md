@@ -175,6 +175,24 @@ in this source snapshot.
 
 ### Added
 
+- Experimental `frame-calibration` record (schema version 1) and
+  `calibrate_frame.py` with `orient`, `scale`, `validate` and `apply`. It maps
+  dataparser-frame points into a plant frame by `p = s * R @ (p_source - o)`.
+  `orient` takes up from the orientation stage's soil plane (camera mean
+  image-up as a recorded fallback) and the origin from the soil base projected
+  onto the fitted plane. `scale` ingests a `scale-estimate` file. The record is
+  hash-bound to the run's `dataparser_transforms.json`, validated on load and
+  save, and written as deterministic bytes.
+- Target up axis setting `target_frame.up` (`+y` or `+z`; files without it read
+  as `+z`, schema version unchanged) and `orient --up y|z`, default `y`. Y-up is
+  the z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`; the validator
+  checks that R maps the recorded up vector to the target axis.
+- `transform_splat.py`: transform a 3DGS export PLY by a frame calibration into
+  a new PLY plus a hash sidecar, without retraining. Centers, normals, wxyz
+  quaternions, log scales (`--no-scale` keeps scene units) and band-wise rotated
+  SH `f_rest` coefficients (fitted on the exact gsplat basis); `--inverse` maps
+  back.
+
 - Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
   and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the
   explicit COLMAP image-sequence mode, camera review before training, and the
