@@ -31,6 +31,12 @@ TRANSFORM_TOL = 1e-12
 ESTIMATE_SCHEMA = 'scale-estimate'
 ESTIMATE_SCHEMA_VERSION = 1
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
+# Target up settings. '+z' is the original convention (files without target_frame.up read as '+z').
+UP_AXES = {'+z': (0.0, 0.0, 1.0), '+y': (0.0, 1.0, 0.0)}
+DEFAULT_UP = '+z'
+# z-up plant frame to y-up plant frame: keep +x, z-up +z becomes +y, z-up +y becomes -z (det +1).
+Z_UP_TO_Y_UP = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+UP_TOL = 1e-9
 
 
 def _floats(a):
@@ -42,9 +48,12 @@ def _matrix(a):
     return [[float(x) for x in row] for row in a]
 
 
-def new(capture_id, dataparser_transforms_sha256, extra_binding=None, origin_definition='unset'):
+def new(capture_id, dataparser_transforms_sha256, extra_binding=None, origin_definition='unset', up=DEFAULT_UP):
     """An empty calibration bound to one dataparser transform: no rotation, origin or scale,
-    so transform_4x4 is the identity. extra_binding adds optional {name: sha256} binding hashes."""
+    so transform_4x4 is the identity. extra_binding adds optional {name: sha256} binding hashes.
+    up is the target up axis setting, '+z' or '+y'."""
+    if up not in UP_AXES:
+        raise ValueError('target up must be one of %s' % sorted(UP_AXES))
     binding = {'dataparser_transforms_sha256': dataparser_transforms_sha256}
     for k, v in sorted((extra_binding or {}).items()):
         if k in binding:
@@ -55,7 +64,7 @@ def new(capture_id, dataparser_transforms_sha256, extra_binding=None, origin_def
            'capture_id': capture_id,
            'source_frame': {'name': SOURCE_FRAME, 'description': SOURCE_DESCRIPTION, 'units': SCENE_UNITS,
                             'binding': binding},
-           'target_frame': {'name': TARGET_FRAME, 'up': '+z', 'units': SCENE_UNITS,
+           'target_frame': {'name': TARGET_FRAME, 'up': up, 'units': SCENE_UNITS,
                             'origin_definition': origin_definition},
            'rotation': None, 'origin': None, 'scale': None}
     cal['transform_4x4'] = _matrix(compose(cal))
@@ -87,10 +96,14 @@ def apply(cal, points):
     return s * ((P - o) @ R.T)
 
 
-def horizontal_x(up, reference=(1.0, 0.0, 0.0), min_norm=math.sin(math.radians(1.0))):
+def horizontal_x(up, reference=(1.0, 0.0, 0.0), min_norm=math.sin(math.radians(1.0)), target_up=DEFAULT_UP):
     """Rotation R with R @ up = +z and plant +x along the projection of `reference` (default the
     source x axis) onto the plane perpendicular to up. Refuses when that projection is shorter
-    than min_norm (reference within asin(min_norm) of the up line). Returns (R, diagnostics)."""
+    than min_norm (reference within asin(min_norm) of the up line). With target_up '+y' the
+    z-up rotation is followed by Z_UP_TO_Y_UP, so R @ up = +y and plant +x is unchanged.
+    Returns (R, diagnostics)."""
+    if target_up not in UP_AXES:
+        raise ValueError('target up must be one of %s' % sorted(UP_AXES))
     u = np.asarray(up, np.float64)
     n = float(np.linalg.norm(u))
     if not np.isfinite(n) or n < 1e-12:
@@ -106,8 +119,15 @@ def horizontal_x(up, reference=(1.0, 0.0, 0.0), min_norm=math.sin(math.radians(1
     x = h / hn
     y = np.cross(u, x)
     R = np.stack([x, y, u])
-    return R, {'x_rule': 'plant +x is the source-frame reference axis projected onto the plane perpendicular to up; '
-                         'plant +y = up x plant +x (right-handed)',
+    if target_up == '+y':
+        R = np.array(Z_UP_TO_Y_UP) @ R
+        rule = ('plant +x is the source-frame reference axis projected onto the plane perpendicular to up; '
+                'plant +y = up; plant +z = plant +x cross up (right-handed); built as the z-up rotation '
+                'followed by [[1,0,0],[0,0,1],[0,-1,0]]')
+    else:
+        rule = ('plant +x is the source-frame reference axis projected onto the plane perpendicular to up; '
+                'plant +y = up x plant +x (right-handed)')
+    return R, {'x_rule': rule, 'target_up': target_up,
                'x_reference_source_frame': _floats(ref), 'x_projection_length': hn,
                'x_projection_min_length': float(min_norm),
                'angle_reference_to_plant_x_deg': float(math.degrees(math.acos(max(-1.0, min(1.0, float(ref @ x)))))),
@@ -200,8 +220,8 @@ def validate(cal):
     else:
         if tgt.get('name') != TARGET_FRAME:
             errors.append('target_frame.name must be "%s"' % TARGET_FRAME)
-        if tgt.get('up') != '+z':
-            errors.append('target_frame.up must be "+z"')
+        if tgt.get('up', DEFAULT_UP) not in UP_AXES:
+            errors.append('target_frame.up must be one of %s' % sorted(UP_AXES))
         if not isinstance(tgt.get('origin_definition'), str) or not tgt['origin_definition'].strip():
             errors.append('target_frame.origin_definition must be a nonempty string')
     for key in ('rotation', 'origin', 'scale'):
@@ -224,6 +244,19 @@ def validate(cal):
             det = float(np.linalg.det(R))
             if abs(det - 1.0) > ORTHONORMAL_TOL:
                 errors.append('rotation.matrix determinant %.12g is not +1' % det)
+            u = rot.get('up_source_frame')
+            if u is None and isinstance(rot.get('diagnostics'), dict):
+                u = rot['diagnostics'].get('up_source_frame')
+            if u is not None:
+                ua = _finite_array(u, (3,))
+                if ua is None or np.linalg.norm(ua) < 1e-12:
+                    errors.append('rotation.up_source_frame must be three finite numbers, not all zero')
+                elif tgt.get('up', DEFAULT_UP) in UP_AXES:
+                    got = R @ (ua / np.linalg.norm(ua))
+                    dev = float(np.abs(got - np.array(UP_AXES[tgt.get('up', DEFAULT_UP)])).max())
+                    if dev > UP_TOL:
+                        errors.append('rotation does not map the recorded up vector to target_frame.up %s '
+                                      '(max deviation %.3g > %g)' % (tgt.get('up', DEFAULT_UP), dev, UP_TOL))
         if rot.get('status') not in ROTATION_STATUSES:
             errors.append('rotation.status must be one of %s' % (ROTATION_STATUSES,))
         if not isinstance(rot.get('diagnostics'), dict):
@@ -304,7 +337,7 @@ def _inputs(inputs):
 
 
 def set_rotation(cal, R, origin, method, status, inputs, diagnostics, origin_method=None, origin_inputs=None,
-                 origin_definition=None, origin_diagnostics=None):
+                 origin_definition=None, origin_diagnostics=None, up_source=None):
     """Set the rotation (and, unless origin is None, the origin). The origin takes its own method
     and inputs when given, otherwise the rotation's."""
     R = np.asarray(R, np.float64)
@@ -314,6 +347,9 @@ def set_rotation(cal, R, origin, method, status, inputs, diagnostics, origin_met
     previous_definition = cal['target_frame'].get('origin_definition')
     cal['rotation'] = {'matrix': _matrix(R), 'method': method, 'status': status, 'inputs': _inputs(inputs),
                        'diagnostics': diagnostics}
+    if up_source is not None:
+        u = np.asarray(up_source, np.float64)
+        cal['rotation']['up_source_frame'] = _floats(u / np.linalg.norm(u))
     if origin is None:
         cal['origin'] = None
     else:

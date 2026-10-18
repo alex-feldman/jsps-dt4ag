@@ -34,12 +34,13 @@ def _vec(value, what):
 
 
 def calibration_from_orientation(orientation, orientation_path, dataparser_path, capture_id, bind_files=None,
-                                 x_reference=(1.0, 0.0, 0.0)):
+                                 x_reference=(1.0, 0.0, 0.0), up_axis='+y'):
     """Rotation and origin from a complete plant-orientation record.
 
     Up: up_soil_plane.normal when up_soil_plane.status is ok (method soil_plane), otherwise
     up_camera_mean_image_up.normal when its status is ok (fallback, recorded as such); otherwise
-    refused. R maps up to +z; plant +x is the source x axis projected onto the horizontal plane
+    refused. R maps up to +z, or to +y with up_axis '+y' (the default: the z-up rotation followed
+    by [[1,0,0],[0,0,1],[0,-1,0]]); plant +x is the source x axis projected onto the horizontal plane
     (fc.horizontal_x; refused within 1 degree of up). Origin (soil case): up_soil_plane.base (the
     final soil iteration's base estimate, the base plant's lowest-slice axis point) projected along
     up_soil_plane.normal onto the plane through up_soil_plane.point (the final fit's inlier centroid).
@@ -65,7 +66,7 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
     for name, path in sorted((bind_files or {}).items()):
         key = name if name.endswith('_sha256') else name + '_sha256'
         binding[key] = sha(path)
-    cal = fc.new(capture_id, dp_sha, binding)
+    cal = fc.new(capture_id, dp_sha, binding, up=up_axis)
 
     soil = orientation.get('up_soil_plane')
     cam = orientation.get('up_camera_mean_image_up')
@@ -82,7 +83,7 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
     else:
         raise ValueError('orientation.json has neither an ok soil plane nor an ok camera mean image-up; no up')
     up_unit = up / np.linalg.norm(up)
-    R, xdiag = fc.horizontal_x(up_unit, x_reference)
+    R, xdiag = fc.horizontal_x(up_unit, x_reference, target_up=up_axis)
     diag = dict(xdiag)
     diag.update({
         'up_source': up_method,
@@ -107,8 +108,8 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
             diag['soil_' + k] = soil.get(k)
     if soil_ok and choice.get('method') not in (None, 'soil_plane'):
         diag['note'] = 'orientation.json chose %r, but its soil plane is ok; the soil normal is used' % choice.get('method')
-    method = ('up from orientation.json %s; R maps up to +z; plant +x is the source-frame x axis projected '
-              'onto the horizontal plane' % ('up_soil_plane.normal' if soil_ok else 'up_camera_mean_image_up.normal'))
+    method = ('up from orientation.json %s; R maps up to %s; plant +x is the source-frame x axis projected '
+              'onto the horizontal plane' % ('up_soil_plane.normal' if soil_ok else 'up_camera_mean_image_up.normal', up_axis))
 
     origin = origin_method = definition = None
     odiag = None
@@ -140,7 +141,7 @@ def calibration_from_orientation(orientation, orientation_path, dataparser_path,
             definition = 'unset: no soil plane and not exactly one plant with an axis'
     fc.set_rotation(cal, R, origin, method, 'algorithmic', inputs, diag,
                     origin_method=origin_method, origin_inputs=[inputs[0]] if origin is not None else None,
-                    origin_definition=definition, origin_diagnostics=odiag)
+                    origin_definition=definition, origin_diagnostics=odiag, up_source=up_unit)
     return cal
 
 
@@ -172,10 +173,11 @@ def cmd_orient(args):
     with Path(args.orientation).open() as f:
         orientation = json.load(f)
     cal = calibration_from_orientation(orientation, args.orientation, args.dataparser_transforms, args.capture_id,
-                                       _bind(args.bind_file))
+                                       _bind(args.bind_file), up_axis='+' + args.up)
     fc.save(cal, out)
     d = cal['rotation']['diagnostics']
-    print('up: %s; angle to dataparser z %.4f deg' % (d['up_source'], d['up_angle_to_dataparser_z_deg']))
+    print('up: %s -> target %s; angle to dataparser z %.4f deg' % (d['up_source'], cal['target_frame']['up'],
+                                                                 d['up_angle_to_dataparser_z_deg']))
     if 'camera_vs_soil_angle_deg' in d:
         print('camera vs soil angle: %.4f deg (reported only)' % d['camera_vs_soil_angle_deg'])
     print('origin: %s' % (cal['origin']['point_source_frame'] if cal['origin'] else None))
@@ -250,6 +252,8 @@ def main(argv=None):
     p.add_argument('--capture-id', required=True)
     p.add_argument('--bind-file', action='append', metavar='NAME=PATH',
                    help='extra source-frame binding hash, recorded as NAME_sha256 (repeatable)')
+    p.add_argument('--up', choices=['y', 'z'], default='y',
+                   help='target up axis: y (default) or z; recorded as target_frame.up')
     p.add_argument('--out', required=True, type=Path)
     p.set_defaults(func=cmd_orient)
     p = sub.add_parser('scale', help='add the metric scale from a scale-estimate JSON')

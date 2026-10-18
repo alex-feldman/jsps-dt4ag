@@ -213,9 +213,10 @@ class Orient(unittest.TestCase):
         ply.write_bytes(b'ply\n')
         out = self.d / 'cal.json'
         code, text, err = run(['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp),
-                               '--capture-id', 'cap-1', '--bind-file', 'export_ply=' + str(ply), '--out', str(out)])
+                               '--capture-id', 'cap-1', '--bind-file', 'export_ply=' + str(ply), '--up', 'z', '--out', str(out)])
         self.assertEqual(code, 0, err)
         cal = fc.load(out)
+        self.assertEqual(cal['target_frame']['up'], '+z')
         self.assertIsNone(cal['scale'])
         self.assertEqual(cal['target_frame']['units'], 'scale_free_scene_units')
         self.assertEqual(cal['source_frame']['binding'], {'dataparser_transforms_sha256': self.dp_sha,
@@ -240,16 +241,54 @@ class Orient(unittest.TestCase):
         # repeat is byte-identical
         out2 = self.d / 'cal2.json'
         run(['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp), '--capture-id', 'cap-1',
-             '--bind-file', 'export_ply=' + str(ply), '--out', str(out2)])
+             '--bind-file', 'export_ply=' + str(ply), '--up', 'z', '--out', str(out2)])
         self.assertEqual(out.read_bytes(), out2.read_bytes())
         self.assertEqual(run(['validate', str(out)])[0], 0)
         # existing output refused
         self.assertEqual(run(['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp),
                               '--capture-id', 'cap-1', '--out', str(out)])[0], 2)
 
+    def test_orient_y_up_default(self):
+        o = synthetic_orientation(self.dp, self.dp_sha)
+        p = self.write(o)
+        out = self.d / 'cal-y.json'
+        code, _, err = run(['orient', '--orientation', str(p), '--dataparser-transforms', str(self.dp),
+                            '--capture-id', 'cap-1', '--out', str(out)])
+        self.assertEqual(code, 0, err)
+        cal = fc.load(out)
+        self.assertEqual(cal['target_frame']['up'], '+y')
+        R = np.array(cal['rotation']['matrix'])
+        n = np.array(o['up_soil_plane']['normal'])
+        np.testing.assert_allclose(R @ n, [0, 1, 0], atol=1e-14)
+        self.assertAlmostEqual(np.linalg.det(R), 1.0, places=14)
+        zc = cli.calibration_from_orientation(o, p, self.dp, 'cap-1', up_axis='+z')
+        Rz = np.array(zc['rotation']['matrix'])
+        np.testing.assert_allclose(R, np.array(fc.Z_UP_TO_Y_UP) @ Rz, atol=1e-15)
+        np.testing.assert_allclose(R[0], Rz[0], atol=1e-15)  # plant +x kept
+        base = np.array(o['up_soil_plane']['base'])
+        np.testing.assert_allclose(fc.apply(cal, base[None])[0], [0, 0.037, 0], atol=1e-12)
+        self.assertEqual(cal['rotation']['up_source_frame'], cal['rotation']['diagnostics']['up_source_frame'])
+        # validator: up setting must match R
+        bad = json.loads(out.read_text())
+        bad['target_frame']['up'] = '+z'
+        self.assertIn('does not map the recorded up vector', ' | '.join(fc.validate(bad)))
+        bad['target_frame']['up'] = '-y'
+        self.assertIn('target_frame.up must be one of', ' | '.join(fc.validate(bad)))
+
+    def test_old_z_up_files_stay_valid(self):
+        o = synthetic_orientation(self.dp, self.dp_sha)
+        zc = cli.calibration_from_orientation(o, self.write(o), self.dp, 'cap-1', up_axis='+z')
+        old = json.loads(fc.dumps(zc))
+        del old['rotation']['up_source_frame']  # files written before the up setting existed
+        self.assertEqual(fc.validate(old), [])
+        del old['target_frame']['up']  # a missing up setting reads as +z
+        self.assertEqual(fc.validate(old), [])
+        old['rotation']['diagnostics']['up_source_frame'] = [0.0, 1.0, 0.0]
+        self.assertIn('does not map', ' | '.join(fc.validate(old)))
+
     def test_orient_fallback_recorded(self):
         o = synthetic_orientation(self.dp, self.dp_sha, soil=False)
-        cal = cli.calibration_from_orientation(o, self.write(o), self.dp, 'cap-1')
+        cal = cli.calibration_from_orientation(o, self.write(o), self.dp, 'cap-1', up_axis='+z')
         d = cal['rotation']['diagnostics']
         self.assertTrue(d['up_source'].startswith('camera_mean_image_up (fallback'))
         self.assertNotIn('camera_vs_soil_angle_deg', d)
