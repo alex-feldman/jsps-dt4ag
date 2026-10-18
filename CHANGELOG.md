@@ -192,6 +192,16 @@ in this source snapshot.
   quaternions, log scales (`--no-scale` keeps scene units) and band-wise rotated
   SH `f_rest` coefficients (fitted on the exact gsplat basis); `--inverse` maps
   back.
+- **`pipeline/scripts/organ-analysis/click_points.py` and `ruler_scale.py`**: human-clicked image
+  points (an `image-clicks` v1 file) to 3D points in the export's dataparser frame. A label clicked
+  in two or more images is triangulated (DLT, then reprojection-error refinement with the camera's
+  distortion; per-view residuals, triangulation angle, covariance). A label clicked once is placed
+  where its ray meets a robust local plane through the COLMAP points observed in that image near the
+  click (radius ladder 40/80/160 px, median depth for small support, refusal below a minimum), with
+  an optional surface offset for an object lying above that surface. `ruler_scale.py` turns
+  `tape_{N}cm` marks into a `scale-estimate` v1 (baseline-weighted median over all pairs, spread,
+  propagated uncertainty, collinearity and leave-one-out checks). `click_points.py triangulate`
+  writes all points, `{leaf}_base`/`{leaf}_tip` chords and a report-only nearest plant-asset leaf.
 
 - Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
   and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the

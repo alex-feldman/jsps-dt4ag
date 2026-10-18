@@ -462,6 +462,46 @@ and ranks, and below-node grouping with explicit incomplete basal boundary.
 Structural consistency and free-text evidence do not establish scientific
 acceptance. There is no anatomical promotion workflow in this release.
 
+## Clicked image points and ruler scale
+
+`click_points.py` turns points that Alex clicked in the photographs into 3D points in the export's dataparser frame; `ruler_scale.py` turns clicked tape-measure graduations into a metric scale. The clicks are explicit human decisions. Everything after them is algorithmic with the settings in `click_points.DEFAULTS`, which every output records. No photograph pixels are read.
+
+### Input: `image-clicks` v1
+
+```text
+{"schema":"image-clicks","schema_version":1,"tool":"click_points.html","tool_version":"1","created":"2026-10-18T...",
+ "pixel_convention":"x right, y down, origin at the top-left corner of the top-left pixel; pixel centers at i+0.5 (COLMAP convention)",
+ "images":[{"name":"frame_00024.png","width":4096,"height":3072}],
+ "points":[{"image":"frame_00024.png","label":"tape_5cm","x":1234.5,"y":678.25}]}
+```
+
+The same label in several images is one physical point. Labels `tape_{N}cm` (N may be decimal) are ruler graduations; `{leaf}_base` and `{leaf}_tip` give a leaf chord. Refused: another schema or version, another pixel convention, an image not in `images` or not in the model, a width or height that differs from the camera, the same label twice in one image, a pixel outside `0..width` by `0..height`. Image names resolve through `transforms.json` (`file_path` basename to `colmap_im_id`) or COLMAP's own names.
+
+### Run
+
+```text
+python pipeline/scripts/organ-analysis/click_points.py validate clicks.json
+python pipeline/scripts/organ-analysis/ruler_scale.py --clicks clicks.json --colmap /path/to/colmap-capture --dataparser /path/to/run/dataparser_transforms.json --capture-id ID --output scale-estimate.json [--surface-offset-m 0.01 --surface-offset-basis "who said so"] [--exclude tape_10cm]
+python pipeline/scripts/organ-analysis/click_points.py triangulate --clicks clicks.json --colmap /path/to/colmap-capture --dataparser /path/to/run/dataparser_transforms.json --capture-id ID --output points.json [--plant-asset /path/to/plant-asset] [--scale scale-estimate.json]
+```
+
+`--colmap` is the folder holding `sparse/0` and `transforms.json` (override with `--sparse`, `--transforms`). `--parameters` takes a JSON object of `DEFAULTS` overrides. Outputs must not exist. Exit codes: 0 written, 2 invalid input, 3 (ruler) fewer than two resolved marks, in which case `{output stem}.refused.json` is written instead.
+
+### Methods
+
+- **Frames.** Points are computed in the COLMAP frame from `cameras.bin`/`images.bin` (SIMPLE_PINHOLE, PINHOLE, SIMPLE_RADIAL, RADIAL, OPENCV) and mapped with `plant_orientation.colmap_to_dataparser`. Before any point, every camera center is mapped both ways (COLMAP route and `transforms.json` route) and must agree to 1e-6, and `transforms.json` intrinsics must equal `cameras.bin`. With `--plant-asset`, the dataparser hash recorded by the asset must equal the one supplied.
+- **Multi-view** (label in 2+ images): undistort, linear DLT, Levenberg-Marquardt on pixel reprojection error. Reported: per-view residuals, triangulation angle, covariance (`click_sigma_px`). Flagged above `max_reprojection_px` or below `min_triangulation_angle_deg`; refused behind a camera.
+- **Single-view local surface** (label in 1 image): COLMAP points whose track includes that image and whose keypoint lies within the support radius (40 px, doubling to at most 160 px until `min_support_plane` points are found). With enough support, a deterministic RANSAC plane is fitted and the ray intersected; with fewer, the median depth is used; below `min_support`, refused. Reported: support ids, radius, inliers, plane residual, incidence, each support point's signed distance to the plane and depth relative to the hit, and a prediction sigma along the ray. `surface_offset` moves the plane toward the camera by that height before intersecting (for a tape lying above the soil); `ruler_scale.py` converts meters with its current estimate and iterates to a fixed point.
+- **Scale.** Every pair of resolved marks gives known |Na - Nb| cm over the dataparser distance. The estimate is the baseline-weighted median of the pair estimates; `std` is the larger of 1.4826 times the weighted MAD and the longest pair's propagated uncertainty. Collinearity (perpendicular deviation from the SVD line, spacing residual along it, and both leave-one-out with 4+ marks) is reported in mm; it never removes a mark. Only `--exclude`, Alex's decision, removes one.
+- **Leaves.** For each leaf with both ends, the chord in scene units (meters with `--scale`) and, with `--plant-asset`, the leaf whose points have the smallest median distance to the base-tip segment, with the margin to the second. Report only; it never relabels.
+
+### Limits
+
+- A single-view mark lies where its ray meets the surface below it. A tape suspended over a trough is placed on the trough floor unless the offset is given; the support-point distances and the collinearity checks are the evidence, and the offset is a stated input, not a measurement.
+- On the October 2 frame_00024 only 7% of the image area has 4 or more COLMAP keypoints within 40 px; with the ladder, 27%. Clicks elsewhere are refused.
+- One pair of marks gives no spread; the reported `std` is then only the propagated uncertainty.
+- The frame-chain check cannot tell whether a dataparser file belongs to the run; check its hash.
+
 ## Verification and design
 
 ### Record endpoint review

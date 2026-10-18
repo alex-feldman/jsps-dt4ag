@@ -417,6 +417,17 @@ internal consistency test, not independent anatomical validation. The automatic
 October 2 acceptance goal remains unmet, even though refusal is correct software
 behavior. This release is candidate diagnostics, not a finished apex detector.
 
+## Clicked image points and ruler scale
+
+Origin: the October 2 Welzo M1 export has no metric scale, and the only ruler is a tape measure in one photograph (frame_00024), so its marks cannot be triangulated. The design keeps human input to clicks (procedure 6b) and makes every later step a recorded rule.
+
+- **Why COLMAP frame first.** Clicked pixels refer to COLMAP's cameras. Working in that frame and mapping with `colmap_to_dataparser` avoids the transforms.json route, where using the saved dataparser transform directly is the applied_transform trap. Camera centers through both routes must agree; this also checks the frame-to-image mapping.
+- **Projection.** Verified against the model: the reprojection of every COLMAP point equals COLMAP's stored mean error to 1e-12 px. This model's own keypoint residuals reach 4 px, so the multi-view flag is set at 4 px (COLMAP's default filter).
+- **Single-view support.** Only points observed in the clicked image, so support is what that camera saw near the click. The ladder exists because keypoints are sparse (93% of frame_00024 has fewer than 4 within 40 px). The plane is a RANSAC consensus with a tolerance relative to depth; mixed surfaces, grazing planes and extrapolated hits are flagged, not hidden. The along-ray sigma is a prediction sigma; on held-out real points its ratio to the actual depth error has median 0.8 and p90 2.5.
+- **Surface offset.** A tape resting on raised bed edges is above the soil it crosses. The offset is Alex's stated height, applied along the plane normal toward the camera; because it is metric, it is converted with the current estimate and iterated. Scale sensitivity on October 2: about 1.2% per cm of offset.
+- **Scale combination.** All pairs, weighted median by known length: robust to one bad mark (synthetic: a mark misplaced by 4 cm moved the estimate by less than 1%), and longer baselines dominate. Pairs are not independent, so the spread is a check, not a standard error.
+- **Checks.** Synthetic cameras with OPENCV distortion (exact recovery, calibrated covariance, refusals, suspended-mark behavior, offset recovery); real-camera regression with COLMAP keypoints as fake clicks (multi-view median error 2e-11 scene units; single-view held-out median 0.16% of depth). Investigation: `/home/alex/data/investigations/click-points-20261018/`.
+
 ## Plant asset package and single-leaf export
 
 `plant_asset.py` owns the versioned contract and its validator; `package_plant_asset.py` emits it; `export_leaf.py` and the viewer's leaf control export one leaf. The README owns commands, the decisions file and the field table.
