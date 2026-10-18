@@ -153,19 +153,53 @@ def run(args):
         raise ValueError('--exclude names labels that are not tape marks in the clicks: ' + ', '.join(sorted(unknown)))
     model = cp.Model(args.colmap, args.dataparser, args.sparse, args.transforms)
     model.check_click_images(doc)
-    solved, refused, excluded = {}, [], sorted(args.exclude or [])
-    for label in sorted(marks, key=marks.get):
-        rec = cp.solve_label(model, obs[label], params)
-        if 'xyz_dataparser' not in rec:
-            refused.append(dict(cp.point_record(label, rec)))
-        elif label not in excluded:
-            solved[label] = rec
+    excluded = sorted(args.exclude or [])
+    offset_m = float(args.surface_offset_m)
+    if not math.isfinite(offset_m) or offset_m < 0:
+        raise ValueError('--surface-offset-m must be a nonnegative number')
+    if offset_m and not args.surface_offset_basis:
+        raise ValueError('--surface-offset-m needs --surface-offset-basis (who stated it and how)')
+
+    def solve(offset_colmap):
+        solved, refused = {}, []
+        for label in sorted(marks, key=marks.get):
+            rec = cp.solve_label(model, obs[label], params, surface_offset_colmap=offset_colmap)
+            if 'xyz_dataparser' not in rec:
+                refused.append(dict(cp.point_record(label, rec)))
+            elif label not in excluded:
+                solved[label] = rec
+        return solved, refused
+
+    # A metric offset needs the scale: start at zero offset, convert offset_m with the current
+    # estimate (meters -> dataparser -> COLMAP units), re-solve, until the estimate stops changing.
+    offset_colmap, iterations = 0.0, []
+    solved, refused = solve(0.0)
+    for it in range(args.max_offset_iterations if offset_m else 1):
+        if len(solved) < 2:
+            break
+        m = estimate(marks, solved)['meters_per_scene_unit']
+        iterations.append({'iteration': it, 'offset_colmap': offset_colmap, 'offset_dataparser': offset_colmap * model.scale,
+                           'meters_per_scene_unit': m})
+        if not offset_m:
+            break
+        new = offset_m / m / model.scale
+        if it and abs(new - offset_colmap) <= 1e-12 * max(new, 1e-30):
+            iterations[-1]['converged'] = True
+            break
+        offset_colmap = new
+        solved, refused = solve(offset_colmap)
+    offset_rec = {'surface_offset_m': offset_m, 'basis': args.surface_offset_basis, 'final_offset_colmap': offset_colmap,
+                  'final_offset_dataparser': offset_colmap * model.scale, 'iterations': iterations,
+                  'converged': (not offset_m) or bool(iterations and iterations[-1].get('converged')),
+                  'rule': ('single-view local planes are moved along their normal toward the camera by the offset before '
+                           'ray intersection; offset_scene = offset_m / meters_per_scene_unit, iterated to a fixed point; '
+                           'multi-view marks are unaffected')}
     base = {'schema': 'scale-estimate', 'schema_version': 1, 'capture_id': args.capture_id, 'source_frame': 'dataparser'}
     inputs = model.input_records()
     decisions = [{'path': str(Path(args.clicks).resolve()), 'sha256': cp.sha256(args.clicks), 'by': 'Alex'}]
     extra = {'created': datetime.now(timezone.utc).isoformat(timespec='seconds'), 'parameters': params,
              'checks': model.checks, 'tape_labels': {l: marks[l] for l in sorted(marks, key=marks.get)},
-             'excluded_labels': excluded, 'refused_points': refused,
+             'excluded_labels': excluded, 'refused_points': refused, 'surface_offset': offset_rec,
              'code': cp.code_records(), 'source_revision': cp.source_revision(), 'command': sys.argv}
     if len(solved) < 2:
         cp.write_new(refused_path, cp.jsonable(dict(base, status='refused', reason='%d resolved tape marks < 2' % len(solved),
@@ -179,15 +213,22 @@ def run(args):
         points.append({'label': label, 'xyz_dataparser': r['xyz_dataparser'], 'method': r['method'],
                        'diagnostics': dict(r['diagnostics'], status=r['status'], flags=r['flags'],
                                            xyz_colmap=r['xyz_colmap'])})
+    if offset_m and not offset_rec['converged']:
+        raise ValueError('surface offset iteration did not converge in %d iterations' % args.max_offset_iterations)
+    summary = mark_summary(model, obs, solved, e['meters_per_scene_unit'])
     result = dict(base, meters_per_scene_unit=e['meters_per_scene_unit'],
                   std_meters_per_scene_unit=e['std_meters_per_scene_unit'], n_pairs=e['n_pairs'], method=METHOD,
                   pairs=e['pairs'], points=points, inputs=inputs, decisions=decisions,
-                  estimators=e['estimators'], collinearity=e['collinearity'], **extra)
+                  estimators=e['estimators'], collinearity=e['collinearity'], mark_summary=summary, **extra)
     cp.write_new(out, cp.jsonable(result))
     print('meters_per_scene_unit %.6g +- %.2g from %d pairs of %d marks (%d refused, %d excluded)'
           % (e['meters_per_scene_unit'], e['std_meters_per_scene_unit'], e['n_pairs'], len(solved), len(refused), len(excluded)))
     for p in points:
         print('  %-14s %-26s %-8s %s' % (p['label'], p['method'], p['diagnostics']['status'], ','.join(p['diagnostics']['flags'])))
+    for s in summary:
+        print('  %-10s support %s r=%s px, plane rms %s mm, camera distance %.4f m' % (
+            s['label'], s.get('support_count'), s.get('support_radius_px'), _fmt(s.get('plane_residual_rms_mm')),
+            s['camera_distance_m']))
     col = e['collinearity']
     if col['status'] == 'ok':
         print('collinearity: max perpendicular %.2f mm, max spacing residual %.2f mm'
@@ -195,10 +236,51 @@ def run(args):
     return 0
 
 
+def _fmt(v):
+    return 'n/a' if v is None else '%.2f' % v
+
+
+def mark_summary(model, obs, solved, mpsu):
+    """Per mark, in meters with the estimate: support, plane residual, camera distance, and where
+    the supporting COLMAP points lie relative to the bare-surface ray hit (the signal for a tape
+    that is suspended above, rather than resting on, the surface)."""
+    k = mpsu * model.scale * 1000  # mm per COLMAP unit
+    out = []
+    for label, rec in sorted(solved.items(), key=lambda kv: kv[0]):
+        cam = model.camera(obs[label][0][0])
+        dist_m = float(np.linalg.norm(rec['xyz_colmap'] - cam.center) * mpsu * model.scale)
+        d = rec['diagnostics']
+        s = {'label': label, 'method': rec['method'], 'status': rec['status'], 'flags': rec.get('flags', []),
+             'image': obs[label][0][0], 'camera_distance_m': dist_m}
+        if rec['method'] == 'single-view-local-surface':
+            sp = d.get('support_points', [])
+            s.update(submethod=d['submethod'], support_count=d['support_count'], support_radius_px=d['support_radius_px'],
+                     plane_inliers=d.get('plane_inliers'), plane_inlier_share=d.get('plane_inlier_share'),
+                     ray_incidence_deg=d.get('ray_incidence_deg'),
+                     plane_residual_rms_mm=None if d.get('plane_residual_rms_colmap') is None else d['plane_residual_rms_colmap'] * k,
+                     along_ray_sigma_mm=d['along_ray_sigma_colmap'] * k,
+                     surface_offset_mm=d.get('surface_offset_colmap', 0.0) * k,
+                     support_point_ids=d['support_point_ids'])
+            sd = [p['signed_distance_from_plane_toward_camera_colmap'] * k for p in sp if 'signed_distance_from_plane_toward_camera_colmap' in p]
+            dz = [p.get('depth_minus_surface_hit_depth_colmap', p.get('depth_minus_median_depth_colmap')) * k for p in sp]
+            if sd:
+                s['support_signed_distance_from_plane_mm'] = {'min': min(sd), 'median': float(np.median(sd)), 'max': max(sd)}
+            if dz:
+                s['support_depth_minus_surface_hit_mm'] = {'min': min(dz), 'median': float(np.median(dz)), 'max': max(dz)}
+        else:
+            s.update(max_residual_px=d['max_residual_px'], triangulation_angle_max_deg=d['triangulation_angle_max_deg'])
+        out.append(s)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     cp.add_model_args(ap)
     ap.add_argument('--exclude', action='append', help='tape label to leave out (Alex\'s explicit decision; recorded)')
+    ap.add_argument('--surface-offset-m', type=float, default=0.0,
+                    help='height of the tape above the supporting surface in meters (single-view marks)')
+    ap.add_argument('--surface-offset-basis', help='who stated the offset and how (recorded)')
+    ap.add_argument('--max-offset-iterations', type=int, default=50)
     args = ap.parse_args(argv)
     try:
         return run(args)

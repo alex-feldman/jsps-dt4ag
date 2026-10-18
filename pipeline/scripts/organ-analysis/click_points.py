@@ -563,11 +563,17 @@ def ransac_plane(P, tol, trials, seed):
     return n, center, best
 
 
-def local_surface(model, cam, uv, params, exclude_point_ids=()):
+def local_surface(model, cam, uv, params, exclude_point_ids=(), surface_offset_colmap=0.0):
     """Single-view point: the click's ray meets a robust plane through the COLMAP points observed
     in this image whose keypoints lie near the click. The radius starts at support_radius_px and
     doubles (never above max_support_radius_px) until min_support_plane points are found; the
-    last radius tried is used either way. exclude_point_ids removes points (held-out tests)."""
+    last radius tried is used either way. exclude_point_ids removes points (held-out tests).
+
+    surface_offset_colmap (COLMAP units, >= 0) moves the fitted plane along its normal toward the
+    camera before the ray is intersected: the clicked object lies that far above the supporting
+    surface (for example a tape resting about 1 cm above soil). In the median-depth path the
+    offset is subtracted from the depth along the ray direction (flagged). ruler_scale converts a
+    metric offset with the current scale estimate and iterates."""
     uv = np.asarray(uv, np.float64)
     ids, kp, X = model.support_table(cam.image_id)
     dist = np.linalg.norm(kp - uv, axis=1)
@@ -614,14 +620,28 @@ def local_surface(model, cam, uv, params, exclude_point_ids=()):
             if share < params['min_inlier_share']:
                 flags.append('mixed_surfaces')
             if incidence <= params['max_incidence_deg']:
-                s = float(n @ (P0 - C)) / float(n @ d)
+                if float(n @ (C - P0)) < 0:
+                    n = -n  # normal toward the camera
+                s0 = float(n @ (P0 - C)) / float(n @ d)
+                zp0 = float((cam.R @ (C + s0 * d) + cam.t)[2])
+                P0s = P0 + surface_offset_colmap * n
+                s = float(n @ (P0s - C)) / float(n @ d)
                 Xp = C + s * d
                 zp = float((cam.R @ Xp + cam.t)[2])
-                if zp <= 0:
+                if zp <= 0 or zp0 <= 0:
                     return {'status': 'refused', 'reason': 'plane intersection behind the camera', 'diagnostics': diag}
                 zi = z[inl]
-                if not (zi.min() <= zp <= zi.max()):
+                if not (zi.min() <= zp0 <= zi.max()):
                     flags.append('intersection_outside_support_depth_range')
+                signed = (S - P0) @ n
+                diag.update(plane_normal_colmap=floats(n), surface_offset_colmap=float(surface_offset_colmap),
+                            surface_hit_depth_colmap=zp0,
+                            support_points=[{'point_id': int(i), 'keypoint_distance_px': float(kd), 'inlier': bool(f),
+                                             'signed_distance_from_plane_toward_camera_colmap': float(sd),
+                                             'depth_minus_surface_hit_depth_colmap': float(zz - zp0)}
+                                            for i, kd, f, sd, zz in zip(sid, dist[near], inl, signed, z)],
+                            support_points_rule='signed distance positive = on the camera side of the fitted plane; '
+                                                'depth difference negative = nearer the camera than the bare-surface ray hit')
                 sigma_ray = rms * math.sqrt(1 + 3 / int(inl.sum())) / max(cosi, 1e-12)
                 diag.update(submethod='plane', depth_colmap=zp, along_ray_sigma_colmap=sigma_ray,
                             along_ray_sigma_rule='prediction sigma: plane residual RMS (n-3 dof) x sqrt(1 + 3/n) / |cos incidence|')
@@ -631,11 +651,16 @@ def local_surface(model, cam, uv, params, exclude_point_ids=()):
             flags.append('no_plane_used_median_depth')
     # median depth along the optical axis
     zray = float((cam.R @ d)[2])
-    Xm = C + (zmed / zray) * d
+    Xm = C + (zmed / zray - surface_offset_colmap) * d
+    if surface_offset_colmap:
+        flags.append('surface_offset_applied_along_ray_without_plane')
+    diag.update(surface_offset_colmap=float(surface_offset_colmap),
+                support_points=[{'point_id': int(i), 'keypoint_distance_px': float(kd),
+                                 'depth_minus_median_depth_colmap': float(zz - zmed)} for i, kd, zz in zip(sid, dist[near], z)])
     sigma = spread / max(zray, 1e-12)
     if spread / zmed > params['max_depth_spread_rel']:
         flags.append('support_depth_spread_above_threshold')
-    diag.update(submethod='median-depth', depth_colmap=zmed, along_ray_sigma_colmap=sigma,
+    diag.update(submethod='median-depth', depth_colmap=float((cam.R @ Xm + cam.t)[2]), along_ray_sigma_colmap=sigma,
                 along_ray_sigma_rule='robust depth spread (1.4826 MAD) of the support, along the ray')
     return _single_result(model, cam, Xm, d, zmed, sigma, flags, diag, params)
 
@@ -653,7 +678,7 @@ def _single_result(model, cam, X, d, depth, sigma_ray, flags, diag, params):
 
 # ----------------------------------------------------------------------------- all labels
 
-def solve_label(model, obs, params, exclude_point_ids=()):
+def solve_label(model, obs, params, exclude_point_ids=(), surface_offset_colmap=0.0):
     """One label: multi-view when seen in 2+ images, single-view-local-surface when in one."""
     cams = [model.camera(name) for name, _, _ in obs]
     uv = np.array([[x, y] for _, x, y in obs])
@@ -662,7 +687,8 @@ def solve_label(model, obs, params, exclude_point_ids=()):
             raise ValueError('Two click images resolve to one COLMAP image')
         rec, method = triangulate(cams, uv, params), 'multi-view'
     else:
-        rec, method = local_surface(model, cams[0], uv[0], params, exclude_point_ids), 'single-view-local-surface'
+        rec, method = local_surface(model, cams[0], uv[0], params, exclude_point_ids,
+                                    surface_offset_colmap), 'single-view-local-surface'
     rec['method'] = method
     if 'xyz_colmap' in rec:
         rec['xyz_dataparser'] = model.to_dataparser(rec['xyz_colmap'])[0]

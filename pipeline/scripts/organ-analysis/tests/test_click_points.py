@@ -485,6 +485,34 @@ class RulerScale(unittest.TestCase):
             self.assertEqual((s2['n_pairs'], s2['excluded_labels']), (28, ['tape_10cm']))
             self.assertLess(abs(s2['meters_per_scene_unit'] / truth - 1), 0.002)
 
+    def test_surface_offset_iterates_to_the_raised_tape(self):
+        """A tape resting 1 cm above the support surface, all marks single-view: without the offset
+        the marks land on the surface (biased scale); with --surface-offset-m 0.01 the iteration
+        converts meters with the current estimate and recovers the true scale."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scene, n, e1, e2 = plane_scene(tmp, seed=7)
+            k = 2.5
+            truth = 1 / (k * 0.37)
+            marks = {N: -0.25 * e1 + 0.02 * e2 + e1 * (N / 100.0 * k) + 0.01 * k * n for N in (0, 5, 10, 15, 20)}
+            scene.write()
+            pts = sum((scene.click('tape_%gcm' % N, X, [2]) for N, X in marks.items()), [])
+            clicks = self.write_clicks(tmp, pts)
+            out0, out1 = Path(tmp) / 's0.json', Path(tmp) / 's1.json'
+            self.assertEqual(run_cli(rs.main, self.args(scene, clicks, out0))[0], 0)
+            self.assertEqual(run_cli(rs.main, self.args(scene, clicks, Path(tmp) / 'x.json', '--surface-offset-m', '0.01'))[0], 2)
+            code, so, se = run_cli(rs.main, self.args(scene, clicks, out1, '--surface-offset-m', '0.01',
+                                                      '--surface-offset-basis', 'test'))
+            self.assertEqual(code, 0, se)
+            s0, s1 = json.loads(out0.read_text()), json.loads(out1.read_text())
+            self.assertGreater(abs(s0['meters_per_scene_unit'] / truth - 1), 0.003)
+            self.assertLess(abs(s1['meters_per_scene_unit'] / truth - 1), 1e-6)
+            self.assertTrue(s1['surface_offset']['converged'])
+            self.assertGreater(len(s1['surface_offset']['iterations']), 2)
+            self.assertAlmostEqual(s1['surface_offset']['final_offset_colmap'], 0.01 * k, places=6)
+            m = s1['mark_summary'][0]
+            self.assertAlmostEqual(m['surface_offset_mm'], 10.0, places=3)
+            self.assertIn('support_signed_distance_from_plane_mm', m)
+
     def test_refusal_with_fewer_than_two_marks(self):
         with tempfile.TemporaryDirectory() as tmp:
             scene, marks, truth = tape_scene(tmp)
