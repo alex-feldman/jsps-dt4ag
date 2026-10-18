@@ -251,7 +251,7 @@ Limits:
 
 ## Frame calibration: dataparser frame to plant frame
 
-`calibrate_frame.py` writes and extends a `frame-calibration` record, a JSON sidecar that maps points from the export's dataparser frame into a plant frame with +z up:
+`calibrate_frame.py` writes and extends a `frame-calibration` record, a JSON sidecar that maps points from the export's dataparser frame into a plant frame whose up axis is a recorded setting, `+y` (the `orient` default since 2026-10-18) or `+z`:
 
 ```text
 p_plant = s * R @ (p_source - o)
@@ -267,18 +267,18 @@ p_plant = s * R @ (p_source - o)
 | `generator` | `{"name": "jsps-dt4ag", "version": ...}`. |
 | `capture_id` | The capture the record belongs to. |
 | `source_frame` | `name: dataparser`, description, `units: scale_free_scene_units`, and `binding`: `dataparser_transforms_sha256` plus optional extra hashes (`--bind-file NAME=PATH` records `NAME_sha256`). |
-| `target_frame` | `name: plant`, `up: +z`, `units` (`m` exactly when scale is set, else `scale_free_scene_units`), `origin_definition` in words. |
-| `rotation` | `null` or `matrix` (3x3, row-major), `method`, `status` (`algorithmic` or `human-decision`), `inputs` (`path`, `sha256`), `diagnostics`. |
+| `target_frame` | `name: plant`, `up` (`+y` or `+z`; a file without it reads as `+z`), `units` (`m` exactly when scale is set, else `scale_free_scene_units`), `origin_definition` in words. |
+| `rotation` | `null` or `matrix` (3x3, row-major), `method`, `status` (`algorithmic` or `human-decision`), `inputs` (`path`, `sha256`), `diagnostics`, and `up_source_frame` (the source-frame up vector R maps to `target_frame.up`; `orient` writes it). |
 | `origin` | `null` or `point_source_frame`, `method`, `inputs`; `orient` adds `diagnostics`. |
 | `scale` | `null` or `meters_per_scene_unit`, `uncertainty` (`std_meters_per_scene_unit`, `n_pairs`, `method`), `method`, `decisions` (`path`, `sha256`, `by: Alex`), `inputs`, `diagnostics`. |
 | `transform_4x4` | Derived from the three parts and recomputed on every save. |
 
-`validate` checks: R orthonormal within 1e-9 with determinant +1; `s` finite and above 0; every set part has a nonempty method and nonempty inputs with 64-hex SHA-256; target units `m` exactly when scale is set; `transform_4x4` equal to the composition within 1e-12. `save` refuses an existing path and writes sorted keys, two-space indentation and a final newline with no timestamps, so the same inputs give identical bytes.
+`validate` checks: R orthonormal within 1e-9 with determinant +1; R maps the recorded up vector (`rotation.up_source_frame`, else `rotation.diagnostics.up_source_frame`) to `target_frame.up` within 1e-9; `s` finite and above 0; every set part has a nonempty method and nonempty inputs with 64-hex SHA-256; target units `m` exactly when scale is set; `transform_4x4` equal to the composition within 1e-12. `save` refuses an existing path and writes sorted keys, two-space indentation and a final newline with no timestamps, so the same inputs give identical bytes.
 
 ### Commands
 
 ```text
-python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--bind-file export_ply=/path/to/export.ply]
+python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--up y|z] [--bind-file export_ply=/path/to/export.ply]
 python pipeline/scripts/organ-analysis/calibrate_frame.py scale --calibration /path/to/calibration.json --estimate /path/to/scale-estimate.json --out /path/to/new-scaled.json
 python pipeline/scripts/organ-analysis/calibrate_frame.py validate /path/to/calibration.json
 python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/points.npy --out /path/to/new-points.npy
@@ -288,7 +288,7 @@ python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /p
 - **`orient`** reads a complete `orient_plants.py` `orientation.json`:
   - It refuses a different `capture_id`, and a `--dataparser-transforms` whose hash matches none of the `dataparser_transforms.json` hashes the orientation run recorded.
   - **Up:** `up_soil_plane.normal` when `up_soil_plane.status` is `ok`. Otherwise `up_camera_mean_image_up.normal`, recorded as a fallback in `rotation.diagnostics.up_source`. With neither, it refuses.
-  - **Rotation:** R maps up to +z. Plant +x is the source-frame x axis projected onto the horizontal plane, and plant +y is up cross plant +x. It refuses when source x lies within 1 degree of up.
+  - **Rotation:** with `--up z`, R maps up to +z; plant +x is the source-frame x axis projected onto the horizontal plane, and plant +y is up cross plant +x. With `--up y` (default), R is that z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`: plant +x is unchanged, up becomes +y, and plant +z is plant +x cross up (right-handed, det +1). It refuses when source x lies within 1 degree of up.
   - **Origin (soil):** `up_soil_plane.base` projected along `up_soil_plane.normal` onto the plane through `up_soil_plane.point`. The base is the final soil iteration's base estimate (the base plant's lowest-slice axis point); the point is the final fit's inlier centroid.
   - **Origin (fallback):** the only plant's `axis.polyline[0]`, unprojected. With several plants the origin stays `null`.
   - The camera-versus-soil angle and the orientation's `up_disagreement` go into diagnostics; they are reported and never acted on. Scale is `null`.
@@ -304,7 +304,30 @@ Limits:
 - Up is the orientation stage's geometric estimate, not measured gravity.
 - The origin is a bed-level reference under the plant, not a validated stem-emergence point.
 - The x direction is a convention with no biological meaning.
-- The record maps points only. Gaussian scales and rotations are not transformed.
+- `apply` maps points only. To move whole Gaussians (quaternions, scales, SH color), use `transform_splat.py` below.
+
+## Transform a splat export into the plant frame
+
+`transform_splat.py` applies a frame calibration to a 3DGS export PLY without retraining, for example to open a y-up, metric splat in SuperSplat. It writes a new PLY and a sidecar `{output stem}.transform.json`; it never writes in place and refuses existing outputs.
+
+```text
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/export.ply --out /path/to/new-plant.ply [--no-scale]
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/new-plant.ply --out /path/to/new-back.ply --inverse
+```
+
+Every Gaussian is mapped by `p' = s * R @ (p - o)`:
+- **Centers** `x, y, z` by the full map; **normals** `nx, ny, nz`, when present, by R.
+- **Quaternions** `rot_0..rot_3` are `(w, x, y, z)`, the order gsplat's `_quat_to_rotmat` reads. They become `q' = q_R * q` (Hamilton product), which keeps each stored norm.
+- **Log scales** `scale_0..scale_2` gain `log(s)`. `--no-scale` keeps scene units (rotation and origin only).
+- **View-dependent color** `f_rest_*` is rotated band by band in the real SH basis gsplat evaluates (`_eval_sh_bases_fast`). The export layout is nerfstudio's channel-major `f_rest_{c*K + k}`: channel c, coefficient k, basis index k+1. Each band's matrix is fitted by least squares over 4,096 fixed random directions with the exact basis, and the fit is refused above a 1e-10 residual.
+- **Unchanged:** `f_dc_*`, `opacity` and every other property.
+
+The binary little-endian vertex layout and the element/property order are kept. Two header comments change: nerfstudio's `comment Vertical Axis:` becomes the target up axis, and one provenance comment naming the sidecar is added. The sidecar records the input, output and calibration hashes, the effective R, o and s, units, the SH fit residuals and the header changes. `--inverse` maps a plant-frame splat back to the dataparser frame, for checks.
+
+Limits:
+- The transform is exact up to float32 storage.
+- The plant frame inherits the calibration's up and origin, which are geometric estimates.
+- SH degree 0 to 4 and scalar vertex properties only.
 
 ## Plant asset package
 

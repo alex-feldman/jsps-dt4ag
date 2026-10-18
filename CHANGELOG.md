@@ -183,6 +183,15 @@ in this source snapshot.
   onto the fitted plane. `scale` ingests a `scale-estimate` file. The record is
   hash-bound to the run's `dataparser_transforms.json`, validated on load and
   save, and written as deterministic bytes.
+- Target up axis setting `target_frame.up` (`+y` or `+z`; files without it read
+  as `+z`, schema version unchanged) and `orient --up y|z`, default `y`. Y-up is
+  the z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`; the validator
+  checks that R maps the recorded up vector to the target axis.
+- `transform_splat.py`: transform a 3DGS export PLY by a frame calibration into
+  a new PLY plus a hash sidecar, without retraining. Centers, normals, wxyz
+  quaternions, log scales (`--no-scale` keeps scene units) and band-wise rotated
+  SH `f_rest` coefficients (fitted on the exact gsplat basis); `--inverse` maps
+  back.
 
 - Video-derived image-sequence guidance in `README.md`, `pipeline/QUICKSTART.md`,
   and `pipeline/LAYOUT.md`. It covers frame sampling and provenance, the
