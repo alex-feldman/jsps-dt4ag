@@ -172,7 +172,8 @@
 
   function draw() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#111";
+    // Composite transparent PNG pixels over white for legible clicking.
+    ctx.fillStyle = bmp ? "#fff" : "#111";
     ctx.fillRect(0, 0, cv.width, cv.height);
     if (!bmp) return;
     var k = view.scale * dpr;

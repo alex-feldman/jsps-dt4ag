@@ -167,3 +167,23 @@ Two caveats worth knowing rather than rediscovering:
   at export. (`ns-eval` has to be run by hand.)
 - **COLMAP and ffmpeg are still outside the lockfile.** They are binaries and
   cannot come from uv. See the COLMAP recipe in `QUICKSTART.md`.
+
+## Portable provenance catalog
+
+`plant_catalog.py` (`CatalogJob`) owns optional canonical catalog v1 emission.
+Enable it on a user-run invocation with `--catalog-root-id wsl-data
+--catalog-root "$HOME/data" --catalog-capture-id YOUR-STABLE-CAPTURE-ID`.
+Use a kebab-case capture ID and reuse it only for the same capture. The equivalent
+variables are `PLANT_CATALOG_ROOT_ID`, `PLANT_CATALOG_ROOT`, and
+`PLANT_CATALOG_CAPTURE_ID`; flags take precedence. All referenced data paths must
+resolve beneath the configured root. No catalog writes occur during `--dry-run`.
+
+Records go under the configured root's `catalog/`. `run_pipeline.main` records
+an invocation before prerequisites or expensive stages, freezes the input INI,
+links a tool-output log, and finalizes ordinary success, failure and interruption.
+`verify_export` is followed by artifact emission only after export checks pass.
+An abrupt machine loss can leave a running job for later reconciliation.
+No result is automatically accepted by this writer. Large outputs stay in place;
+checksums and biological facts that were not measured stay null. Configure the
+consumer's mapping for the same root ID to discover records. This feature does
+not publish data or settle retention and backup policy.

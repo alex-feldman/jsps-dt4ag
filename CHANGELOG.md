@@ -14,6 +14,26 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.13] - 2026-10-19
+
+### Added
+
+- Draw each leaf-cluster ID beside its 3D point cloud in all organ-analysis
+  viewers, using a leader from a rendered sample point and collision-aware
+  placement so the ID remains readable as the view rotates.
+
+## [0.3.0-alpha.12] - 2026-10-18
+
+### Fixed
+
+- Composite transparent PNG pixels over white in the offline click viewer so photographs remain legible without changing source pixels or click coordinates.
+
+## [0.3.0-alpha.11] - 2026-10-18
+
+### Added
+
+- Opt-in Plant Reconstruction Catalog v1 emission for user-run reconstruction: atomic running/final job records, stable capture references, exact INI settings, selected inputs, frozen configs, command logs and verified export artifacts. Portable pointers use an explicit logical root ID. Execution completion does not imply human acceptance. Dry runs do not emit records.
+
 ## [0.3.0-alpha.10] - 2026-10-18
 
 ### Added
