@@ -149,6 +149,42 @@ paths. Candidate detection and the viewer do not call this helper or delete
 anything. A leaf-free endpoint is a candidate, not proof of a string or false
 organ: tendrils and missed tissue can satisfy the same criterion.
 
+## Show reviewed leaf groups in a viewer
+
+When a human reviewer has decided that several capture-local clusters are one leaf,
+or that two leaves sit on one side branch, record that decision in a leaf-group file
+and render a fresh viewer from an existing output folder. Nothing is rerun and the
+source folder is only read:
+
+```text
+python pipeline/scripts/organ-analysis/render_viewer.py --source /path/to/leaf-or-skeleton-output --output /path/to/new-viewer [--candidates] [--leaf-groups /path/to/leaf-groups.json]
+```
+
+`--source` is any output folder holding `organ-evidence.json` and `leaf_ids2.npz`
+(a leaf-stage output, or a branch-review output for the skeleton view). `--candidates`
+adds that folder's `branch-candidates.json`. The output folder must be new; it receives
+`viewer.html` and `viewer-record.json` (code revision, command and input hashes).
+
+The leaf-group file (`organ-leaf-groups`, `schema_version` 1) holds `capture_id`,
+`source_labels` (`path` and `sha256` of the exact `leaf_ids2.npz`), `reviewer`, `date`,
+`status`, a `groups` list and optional `unresolved_clusters` (`[{"id": 16, "note": "..."}]`)
+and `notes`. Each group has an `id`, a `kind` and `members` (cluster IDs), plus an
+optional `note`:
+
+- `same_leaf`: two or more clusters shown as one leaf. Members share the color of the
+  lowest member ID and a combined label such as `L: C4+C17` is drawn beside their points.
+- `side_branch_pair`: exactly two clusters annotated as leaves on one side branch with a
+  dashed connector and a `Side branch pair: C13 | C15` label. They are not merged and keep
+  their own colors.
+
+Every member keeps its own `C` label. `viewer.check_leaf_groups` refuses the file when
+the capture or label hash differs from the displayed data, a cluster ID is unknown,
+a cluster is in two `same_leaf` groups, or an unresolved cluster is also grouped. The
+groups are a display layer only: labels, cluster IDs, point rows and cluster-level
+measurements are never changed, and the file is not a plant-asset input. Without
+`--leaf-groups` (or with `write_viewer(..., leaf_groups=None)`) the page is byte-identical
+to the ungrouped viewer.
+
 ## Cluster plants and write per-plant derivatives
 
 `cluster_plants.py` groups the opacity-kept Gaussian centers of one export into 3D clusters by single linkage. It reports each cluster's size and position, the exact join radius and direct gap between every pair of clusters, and a radius sweep. Given an explicit selection, it copies the chosen source rows byte for byte into per-plant derivative PLYs. It needs no cameras or masks, runs on CPU with NumPy and SciPy, and never builds a list of all point pairs within a large radius. `DESIGN.md` explains the method and why that matters.

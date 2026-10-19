@@ -1,5 +1,9 @@
 """Self-contained Canvas 2D inspection viewer; no reconstruction or inference."""
+import hashlib
 import json
+import re
+from pathlib import Path
+
 import numpy as np
 
 PALETTE = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7']
@@ -10,8 +14,167 @@ def palette_js():
     return '[' + ','.join("'%s'" % c for c in PALETTE) + ']'
 
 
-def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=None):
-    """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export."""
+LEAF_GROUPS_SCHEMA = 'organ-leaf-groups'
+LEAF_GROUPS_SCHEMA_VERSION = 1
+LEAF_GROUP_KINDS = ('same_leaf', 'side_branch_pair')
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for chunk in iter(lambda: f.read(1024*1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_leaf_groups(groups, bundle, labels_path):
+    """Validate a human-reviewed leaf-group record against the exact labels it names.
+
+    Display only: the record never changes labels, cluster IDs or measurements.
+    Raises ValueError on any mismatch, unknown cluster ID or ambiguous membership.
+    """
+    def fail(message):
+        raise ValueError('leaf groups: '+message)
+    if not isinstance(groups, dict):
+        fail('expected a JSON object')
+    if groups.get('schema') != LEAF_GROUPS_SCHEMA or groups.get('schema_version') != LEAF_GROUPS_SCHEMA_VERSION:
+        fail('expected schema %s version %d' % (LEAF_GROUPS_SCHEMA, LEAF_GROUPS_SCHEMA_VERSION))
+    allowed = {'schema', 'schema_version', 'capture_id', 'source_labels', 'reviewer', 'date', 'status',
+               'groups', 'unresolved_clusters', 'notes'}
+    unknown = set(groups) - allowed
+    if unknown:
+        fail('unknown keys '+', '.join(sorted(unknown)))
+    for key in ('capture_id', 'reviewer', 'date', 'status'):
+        if not isinstance(groups.get(key), str) or not groups[key].strip():
+            fail('missing '+key)
+    if groups['capture_id'] != bundle['capture_id']:
+        fail('capture %r does not match evidence capture %r' % (groups['capture_id'], bundle['capture_id']))
+    source = groups.get('source_labels')
+    if not isinstance(source, dict) or not isinstance(source.get('path'), str) or not re.fullmatch(r'[0-9a-f]{64}', str(source.get('sha256'))):
+        fail('source_labels needs path and a SHA-256')
+    actual = _sha256(labels_path)
+    if actual != source['sha256']:
+        fail('source label SHA-256 %s does not match the displayed labels %s' % (source['sha256'], actual))
+    known = {leaf['id'] for leaf in bundle['leaves']}
+    entries = groups.get('groups')
+    if not isinstance(entries, list) or not entries:
+        fail('groups must be a non-empty list')
+    names, same_leaf_owner = set(), {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - {'id', 'kind', 'members', 'note'}:
+            fail('each group has only id, kind, members and an optional note')
+        name, kind, members = entry.get('id'), entry.get('kind'), entry.get('members')
+        if not isinstance(name, str) or not name or name in names:
+            fail('group ids must be unique non-empty strings')
+        names.add(name)
+        if kind not in LEAF_GROUP_KINDS:
+            fail('%s: kind must be one of %s' % (name, ', '.join(LEAF_GROUP_KINDS)))
+        if (not isinstance(members, list) or len(members) < 2 or len(set(members)) != len(members)
+                or not all(isinstance(m, int) and not isinstance(m, bool) for m in members)):
+            fail('%s: members must be two or more distinct integer cluster IDs' % name)
+        if kind == 'side_branch_pair' and len(members) != 2:
+            fail('%s: a side_branch_pair has exactly two members' % name)
+        missing = [m for m in members if m not in known]
+        if missing:
+            fail('%s: unknown cluster ID(s) %s for these labels' % (name, ', '.join(map(str, missing))))
+        if 'note' in entry and not isinstance(entry['note'], str):
+            fail('%s: note must be text' % name)
+        if kind == 'same_leaf':
+            for m in members:
+                if m in same_leaf_owner:
+                    fail('cluster %d is in two same_leaf groups (%s, %s)' % (m, same_leaf_owner[m], name))
+                same_leaf_owner[m] = name
+    unresolved = groups.get('unresolved_clusters', [])
+    if not isinstance(unresolved, list) or not all(isinstance(u, dict) and isinstance(u.get('id'), int) for u in unresolved):
+        fail('unresolved_clusters must be a list of {id, note}')
+    for item in unresolved:
+        if item['id'] not in known:
+            fail('unknown unresolved cluster ID %d' % item['id'])
+        if any(item['id'] in e['members'] for e in entries):
+            fail('cluster %d is listed as unresolved and grouped' % item['id'])
+    return groups
+
+
+def _group_display(groups, points):
+    """Display records: label text and an anchor at a rendered point of the members."""
+    shown = []
+    for entry in groups['groups']:
+        members = sorted(entry['members'])
+        if entry['kind'] == 'same_leaf':
+            text = 'L: '+'+'.join('C%d' % m for m in members)
+        else:
+            text = 'Side branch pair: '+' | '.join('C%d' % m for m in members)
+        sample = np.array([p for m in members for p in points.get(str(m), [])], dtype=float).reshape(-1, 3)
+        anchor = None
+        if len(sample):
+            anchor = sample[int(np.argmin(np.sum((sample-sample.mean(axis=0))**2, axis=1)))].tolist()
+        shown.append({'id': entry['id'], 'kind': entry['kind'], 'members': members, 'text': text,
+                      'colorId': members[0], 'anchor': anchor, 'note': entry.get('note', '')})
+    return shown
+
+
+# Grouped-mode page edits. Applied only when a leaf-group record is supplied, so the
+# default page stays byte-identical to the ungrouped viewer.
+_GROUP_SCRIPT = r'''
+const LG=D.leafGroups,groupColor=Object.create(null),memberGroups=Object.create(null);
+for(const g of LG.display){for(const m of g.members){(memberGroups[m]=memberGroups[m]||[]).push(g);if(g.kind==='same_leaf')groupColor[m]=g.colorId}}
+function leafColor(id){const g=groupColor[id];return colors[(g===undefined?id:g)%colors.length]}
+(function(){const box=document.getElementById('leafGroups');box.hidden=false;
+const meta=document.createElement('p');meta.textContent='Reviewer '+LG.reviewer+', '+LG.date+', status '+LG.status+'. Labels '+LG.source_labels.sha256.slice(0,12)+'.';box.append(meta);
+for(const g of LG.display){const row=document.createElement('p');row.style.color=colors[g.colorId%colors.length];row.textContent=g.text+(g.kind==='same_leaf'?' · one leaf (shared color)':' · two leaves, not merged')+(g.note?' · '+g.note:'');box.append(row)}
+for(const u of LG.unresolved_clusters||[]){const row=document.createElement('p');row.textContent='C'+u.id+': unresolved, not grouped'+(u.note?' · '+u.note:'');box.append(row)}})();
+'''
+_GROUP_LABELS = r'''
+ for(const g of LG.display){if(!g.anchor)continue;
+  const anchor=project(g.anchor),w=ctx.measureText(g.text).width+12,h=22,col=colors[g.colorId%colors.length];
+  const offsets=[[24,-h-18],[24,18],[-w-24,-h-18],[-w-24,18],[40,-h*2-8],[-w-40,-h*2-8],[40,h+8],[-w-40,h+8],[8,-h*3-6],[-w-8,-h*3-6]];
+  let box=null;
+  for(const[dx,dy]of offsets){const c={x:anchor[0]+dx,y:anchor[1]+dy,w,h};
+   if(c.x>=2&&c.y>=2&&c.x+w<=canvas.clientWidth-2&&c.y+h<=canvas.clientHeight-2&&!occupied.some(o=>overlaps(c,o))){box=c;break}}
+  if(!box)box={x:Math.max(2,Math.min(canvas.clientWidth-w-2,anchor[0]+24)),y:Math.max(2,Math.min(canvas.clientHeight-h-2,anchor[1]-h-18)),w,h};
+  occupied.push(box);
+  if(g.kind==='side_branch_pair'){const ends=g.members.map(m=>clusterAnchors.find(a=>a.id===m)).filter(Boolean).map(a=>project(a.point));
+   if(ends.length===2){ctx.beginPath();ctx.moveTo(ends[0][0],ends[0][1]);ctx.lineTo(ends[1][0],ends[1][1]);ctx.setLineDash([6,4]);ctx.lineWidth=2;ctx.strokeStyle='#ffffff';ctx.stroke();ctx.setLineDash([])}}
+  const tx=Math.max(box.x,Math.min(anchor[0],box.x+box.w)),ty=Math.max(box.y,Math.min(anchor[1],box.y+box.h));
+  ctx.beginPath();ctx.moveTo(anchor[0],anchor[1]);ctx.lineTo(tx,ty);ctx.lineWidth=1.5;ctx.strokeStyle=col;ctx.stroke();
+  ctx.fillStyle=g.kind==='same_leaf'?col:'rgba(16,21,27,.94)';ctx.fillRect(box.x,box.y,box.w,box.h);
+  ctx.setLineDash(g.kind==='same_leaf'?[]:[5,3]);ctx.lineWidth=2;ctx.strokeStyle=g.kind==='same_leaf'?'#ffffff':col;ctx.strokeRect(box.x,box.y,box.w,box.h);ctx.setLineDash([]);
+  ctx.fillStyle=g.kind==='same_leaf'?'#10151b':'#ffffff';ctx.font='bold 13px system-ui';ctx.fillText(g.text,box.x+6,box.y+15)
+ }
+'''
+_GROUP_PANEL = ('<section id="leafGroups" hidden><h2>Reviewed leaf groups</h2>'
+                '<p>Display layer from a human review record. Each cluster keeps its own ID; source labels, '
+                'point rows and cluster-level measurements are unchanged.</p></section>')
+
+
+def _grouped_page(page):
+    """Apply the grouped-mode edits; each anchor must match exactly once."""
+    def once(text, old, new):
+        if text.count(old) != 1:
+            raise RuntimeError('viewer template anchor not found exactly once: '+old[:40])
+        return text.replace(old, new)
+    page, count = re.subn(r'colors\[([A-Za-z_][\w.\[\]]*)%colors\.length\]', r'leafColor(\1)', page)
+    if count != 6:
+        raise RuntimeError('viewer template color sites changed: %d' % count)
+    page = once(page, "<div id=\"legend\"></div>", _GROUP_PANEL+"<div id=\"legend\"></div>")
+    page = once(page, "document.getElementById('title').textContent=D.capture+' organ evidence';",
+                "document.getElementById('title').textContent=D.capture+' organ evidence';"+_GROUP_SCRIPT)
+    page = once(page, "+(leaf.annotation?' · '+JSON.stringify(leaf.annotation,null,1):'')",
+                "+(leaf.annotation?' · '+JSON.stringify(leaf.annotation,null,1):'')"
+                "+(memberGroups[leaf.id]||[]).map(g=>' · '+g.text).join('')")
+    page = once(page, "  ctx.fillStyle='#fff';ctx.fillText(text,box.x+5,box.y+14)\n }\n}",
+                "  ctx.fillStyle='#fff';ctx.fillText(text,box.x+5,box.y+14)\n }\n"+_GROUP_LABELS+"}")
+    return page
+
+
+def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=None, leaf_groups=None):
+    """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export.
+
+    ``leaf_groups`` is an optional human-reviewed leaf-group record (see ``check_leaf_groups``).
+    It changes only the display; without it the page is unchanged.
+    """
+    if leaf_groups is not None:
+        check_leaf_groups(leaf_groups, bundle, labels_path or out/'leaf_ids2.npz')
     with np.load(labels_path or out/'leaf_ids2.npz') as arrays:
         points = {}
         point_labels = {}
@@ -29,6 +192,10 @@ def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=Non
     data = {'capture':bundle['capture_id'],'points':points,'pointLabels':point_labels,
             'graph':graph,'leaves':bundle['leaves'],
             'branchCandidates':candidates,'plantAsset':plant_asset}
+    if leaf_groups is not None:
+        data['leafGroups'] = {**{k: leaf_groups[k] for k in ('reviewer','date','status','source_labels')},
+                              'unresolved_clusters': leaf_groups.get('unresolved_clusters', []),
+                              'display': _group_display(leaf_groups, points)}
     payload = json.dumps(data,allow_nan=False).replace('<','\\u003c')
     page = '''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -179,5 +346,7 @@ document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.28;zoom=1;draw()};
 for(const id of['points','edges','highlightCandidates','hideCandidates','hideConfirmed','endpointLabels'])document.getElementById(id).onchange=draw;
 addEventListener('resize',fit);fit();
 </script></html>'''
+    if leaf_groups is not None:
+        page = _grouped_page(page)
     with (out/'viewer.html').open('x') as f:
         f.write(page.replace('__DATA__',payload).replace('__PALETTE__',palette_js()))
