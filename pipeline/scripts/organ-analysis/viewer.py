@@ -109,7 +109,7 @@ def _group_display(groups, points):
         if len(sample):
             anchor = sample[int(np.argmin(np.sum((sample-sample.mean(axis=0))**2, axis=1)))].tolist()
         shown.append({'id': entry['id'], 'kind': entry['kind'], 'members': members, 'text': text,
-                      'colorId': members[0], 'anchor': anchor, 'note': entry.get('note', '')})
+                      'anchor': anchor, 'note': entry.get('note', '')})
     return shown
 
 
@@ -117,16 +117,19 @@ def _group_display(groups, points):
 # default page stays byte-identical to the ungrouped viewer.
 _GROUP_SCRIPT = r'''
 const LG=D.leafGroups,groupColor=Object.create(null),memberGroups=Object.create(null);
-for(const g of LG.display){for(const m of g.members){(memberGroups[m]=memberGroups[m]||[]).push(g);if(g.kind==='same_leaf')groupColor[m]=g.colorId}}
-function leafColor(id){const g=groupColor[id];return colors[(g===undefined?id:g)%colors.length]}
+// Group colors lie outside the cluster palette, so a shared color means one reviewed leaf.
+const groupPalette=['#ff3fd5','#3dffb0','#c8ff00','#ffffff'];let groupIndex=0;
+for(const g of LG.display){g.color=g.kind==='same_leaf'?groupPalette[groupIndex++%groupPalette.length]:'#ffffff';
+for(const m of g.members){(memberGroups[m]=memberGroups[m]||[]).push(g);if(g.kind==='same_leaf')groupColor[m]=g.color}}
+function leafColor(id){return groupColor[id]??colors[id%colors.length]}
 (function(){const box=document.getElementById('leafGroups');box.hidden=false;
 const meta=document.createElement('p');meta.textContent='Reviewer '+LG.reviewer+', '+LG.date+', status '+LG.status+'. Labels '+LG.source_labels.sha256.slice(0,12)+'.';box.append(meta);
-for(const g of LG.display){const row=document.createElement('p');row.style.color=colors[g.colorId%colors.length];row.textContent=g.text+(g.kind==='same_leaf'?' · one leaf (shared color)':' · two leaves, not merged')+(g.note?' · '+g.note:'');box.append(row)}
+for(const g of LG.display){const row=document.createElement('p');row.style.color=g.color;row.textContent=g.text+(g.kind==='same_leaf'?' · one leaf (shared color)':' · two leaves, not merged')+(g.note?' · '+g.note:'');box.append(row)}
 for(const u of LG.unresolved_clusters||[]){const row=document.createElement('p');row.textContent='C'+u.id+': unresolved, not grouped'+(u.note?' · '+u.note:'');box.append(row)}})();
 '''
 _GROUP_LABELS = r'''
  for(const g of LG.display){if(!g.anchor)continue;
-  const anchor=project(g.anchor),w=ctx.measureText(g.text).width+12,h=22,col=colors[g.colorId%colors.length];
+  const anchor=project(g.anchor),w=ctx.measureText(g.text).width+12,h=22,col=g.color;
   const offsets=[[24,-h-18],[24,18],[-w-24,-h-18],[-w-24,18],[40,-h*2-8],[-w-40,-h*2-8],[40,h+8],[-w-40,h+8],[8,-h*3-6],[-w-8,-h*3-6]];
   let box=null;
   for(const[dx,dy]of offsets){const c={x:anchor[0]+dx,y:anchor[1]+dy,w,h};

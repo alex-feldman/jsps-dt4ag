@@ -60,7 +60,7 @@ class LeafGroupViewerTests(unittest.TestCase):
         text, data = page.read_text(), page_data(page)
         display = {g['id']: g for g in data['leafGroups']['display']}
         self.assertEqual(display['G1']['text'], 'L: C4+C17')
-        self.assertEqual(display['G1']['colorId'], 4)
+        self.assertEqual(display['G1']['members'], [4, 17])
         self.assertIn(display['G1']['anchor'], data['points']['4']+data['points']['17'])
         self.assertEqual(display['G2']['text'], 'Side branch pair: C13 | C15')
         # Members keep their own IDs, points and per-cluster labels: nothing is merged.
@@ -68,7 +68,8 @@ class LeafGroupViewerTests(unittest.TestCase):
         self.assertEqual(sorted(data['pointLabels']), ['13', '15', '17', '4'])
         self.assertIn("text='C'+item.id", text)
         # Shared color applies only to same_leaf members; every color site goes through leafColor.
-        self.assertIn("if(g.kind==='same_leaf')groupColor[m]=g.colorId", text)
+        self.assertIn("if(g.kind==='same_leaf')groupColor[m]=g.color", text)
+        self.assertIn("const groupPalette=['#ff3fd5','#3dffb0','#c8ff00','#ffffff']", text)
         for site in ('leafColor(p[3])', 'leafColor(item.id)', 'leafColor(leaf.id)', 'leafColor(l.leaf_id)'):
             self.assertIn(site, text)
         self.assertNotRegex(text, r'colors\[(p\[3\]|item\.id|leaf\.id|l\.leaf_id)%colors\.length\]')

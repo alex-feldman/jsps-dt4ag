@@ -171,8 +171,9 @@ The leaf-group file (`organ-leaf-groups`, `schema_version` 1) holds `capture_id`
 and `notes`. Each group has an `id`, a `kind` and `members` (cluster IDs), plus an
 optional `note`:
 
-- `same_leaf`: two or more clusters shown as one leaf. Members share the color of the
-  lowest member ID and a combined label such as `L: C4+C17` is drawn beside their points.
+- `same_leaf`: two or more clusters shown as one leaf. Members share a group color taken
+  from a separate palette that ungrouped clusters never use (four colors, reused after the
+  fourth group), and a combined label such as `L: C4+C17` is drawn beside their points.
 - `side_branch_pair`: exactly two clusters annotated as leaves on one side branch with a
   dashed connector and a `Side branch pair: C13 | C15` label. They are not merged and keep
   their own colors.
