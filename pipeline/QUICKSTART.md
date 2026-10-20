@@ -1024,60 +1024,41 @@ the normal image pipeline. Store still frames under a new capture's `images/`
 directory. Keep the source movie outside `images/`; the pipeline will not decode
 a movie or extract frames for this workflow.
 
-Create fresh directories for the capture and review output first. Keep the
-contact sheets outside `images/`:
+Steps 1 to 3 are done by [`pipeline/scripts/video-frames/`](scripts/video-frames/README.md),
+which owns the commands, the files it writes and what it refuses. It uses the
+FFmpeg and `ffprobe` from section 3, decodes on the CPU, and never launches a
+pipeline stage.
 
-```bash
-mkdir -p /path/to/new-capture/images /path/to/new-capture/provenance /path/to/review
-```
-
-1. Record stream metadata with `ffprobe`. The FFmpeg prefix from section 3
-   also provides `ffprobe`. Write its output into the new capture's empty
-   `provenance/` directory:
+1. Review the footage:
 
    ```bash
-   ffprobe -v error -show_format -show_streams -of json \
-       /path/to/source.mp4 \
-       > /path/to/new-capture/provenance/ffprobe.json
+   python pipeline/scripts/video-frames/video-frames.py review \
+       --source /path/to/source.mp4 --review-root /path/to/review
    ```
 
-   Make a coarse contact sheet before choosing the usable segment and sampling
-   interval. This example samples every five seconds, scales each preview to
-   320 pixels wide, and writes one 5-by-4 sheet for every 20 samples:
-
-   ```bash
-   ffmpeg -n -hide_banner -hwaccel none -threads 2 \
-       -i /path/to/source.mp4 -map 0:v:0 -an \
-       -vf "fps=1/5,scale=320:-1,tile=5x4" -filter_threads 1 \
-       -fps_mode passthrough /path/to/review/contact-%02d.jpg
-   ```
-
-   `-n` refuses to overwrite an existing sheet. This preview decodes the video
-   and uses FFmpeg's default pixel autorotation; it can take time on high
-   resolution footage. For a long clip, review every numbered sheet. The
+   This hashes the movie, records its stream metadata, and writes a coarse
+   contact sheet and candidate-interval sheets outside any capture. The
    overview helps choose a segment and sampling plan; it is not the final
-   reconstruction frame set.
+   reconstruction frame set. A long, high-resolution clip takes time to decode.
 2. Choose sampling from camera movement, overlap, blur and scene motion.
    Do not extract every decoded frame by default. There is no universal
-   frame-rate or overlap threshold that guarantees a successful solve.
-3. Extract to a new, empty `images/` directory. This example samples at 2 fps
-   (one frame every 0.5 seconds); choose a rate only after reviewing the footage:
+   frame-rate or overlap threshold that guarantees a successful solve. The
+   choice is yours; the tool records it and does not verify it.
+3. Extract into a new capture, using the hash from the review. Run it once
+   with `--dry-run` first:
 
    ```bash
-   ffmpeg -n -hide_banner -hwaccel none -threads 2 \
-       -i /path/to/source.mp4 -map 0:v:0 -an \
-       -vf "fps=2,showinfo" -filter_threads 1 -fps_mode passthrough \
-       /path/to/data/datasets/capture/images/frame_%06d.png
+   python pipeline/scripts/video-frames/video-frames.py extract \
+       --source /path/to/source.mp4 --sha256 {hash from the review} \
+       --capture /path/to/data/datasets/{new-capture-id} --interval 0.5
    ```
 
-   `-n` refuses to overwrite existing outputs. Use ordered, zero-padded names
-   and do not mix source movies, previews, manifests or unrelated images into
-   `images/`. FFmpeg's default pixel autorotation is enabled by this example;
-   record whether you change it. Save the exact command, source hash, stream,
-   selected range, sampling interval, frame count and a frame manifest. The
-   `fps` filter's output-grid timestamps are not an exact mapping to original
-   source-frame PTS. Keep an explicit source-frame/PTS mapping if that precision
-   is required.
+   The capture directory must not exist. Source movies, previews and manifests
+   stay out of `images/`. The tool saves the exact command, source hash, stream,
+   range, interval, frame count and a frame manifest under `provenance/`. FFmpeg's
+   default pixel autorotation is enabled and recorded. The `fps` filter's
+   output-grid timestamps are not an exact mapping to original source-frame
+   PTS; keep an explicit source-frame/PTS mapping if that precision is required.
 4. Review the extracted set for consistent orientation and dimensions, blur,
    duplicate views, abrupt zoom/exposure changes, moving subjects and adequate
    camera motion. Freeze the reviewed set; a changed sampling plan is a new

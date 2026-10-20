@@ -37,6 +37,13 @@ verification including a PLY that exists at a plausible size but declares zero
 vertices. It runs no subprocess at all; the stages themselves can only be proven
 by a real run.
 
+`test_video_frames.py` covers `scripts/video-frames/video-frames.py`: the exact
+`fps` expression and the frame-count estimate, the PNG header reader, the
+refusals (existing capture, wrong or malformed hash, impossible range), the
+records left by a successful, a failed and a mixed-shape extraction, and the
+review folder's contents. ffmpeg and ffprobe are replaced by fakes, so the tests
+need neither; the real tools were checked only by a real run on a synthetic clip.
+
 Every test is hermetic. Each one builds its own data tree in a
 `tempfile.TemporaryDirectory` and throws it away afterwards.
 

@@ -14,6 +14,28 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [0.3.0-alpha.14] - 2026-10-20
+
+### Added
+
+- `pipeline/scripts/video-frames/video-frames.py`, a stdlib-only preparation tool
+  for a movie that will become a capture. `review` hashes the movie, records
+  `ffprobe` output and makes contact and candidate-interval sheets, writing only
+  to a new review folder. `extract` stages a hash-checked copy into a new capture
+  and extracts PNG frames at a chosen interval and range, with `extraction.json`,
+  `ffprobe.json`, `ffmpeg.log` and `frames.csv`. It refuses an existing capture or
+  a wrong hash, and stops with a "do not train" status on no frames or mixed image
+  shapes. It does not choose the interval or verify overlap, and never starts a
+  pipeline stage.
+
+### Changed
+
+- The video-derived frame workflow in `pipeline/QUICKSTART.md` now uses this tool
+  for steps 1 to 3 instead of inline `ffprobe` and `ffmpeg` commands.
+
+Version note: `v0.3.0-alpha.13` already exists on `codex/oct15-asset-viewer`
+and is not in this line's history, so this release is alpha.14.
+
 ## [0.3.0-alpha.12] - 2026-10-18
 
 ### Fixed
