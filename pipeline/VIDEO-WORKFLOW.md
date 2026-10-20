@@ -73,6 +73,27 @@ python3 pipeline/scripts/video-frames/video-frames.py subset \
     --from "$DATA/datasets/{capture}" --capture "$DATA/datasets/{capture}-1000ms" --every 2
 ```
 
+### Procedure: test one video at several intervals
+
+Use this to see what sampling density costs and buys on the same footage.
+
+1. Extract once at the **finest** interval you want to test (step 3).
+2. Make each sparser capture with `subset`: `--every 2` doubles the interval, `--every 4` quadruples it.
+   Each is a new folder of links to the finest capture's frames, so no image is copied.
+3. Give each capture its own config (step 4) that differs only in `images_subpath` and `id_prefix`, so the
+   number of frames is the only variable.
+4. Solve, review and train each capture separately (steps 5 to 7), one at a time on one GPU.
+5. Compare the camera solves (frames registered, reprojection error, camera-review plot), the model sizes
+   and a visual look at each PLY.
+
+What this does and does not give you. The captures share frames, so it is a clean test of "how few frames
+are enough for this video", and not three independent replicates. Each capture needs its own COLMAP solve,
+and COLMAP is not bit-reproducible, so some difference between runs is solver noise. Image-space scores
+(PSNR, SSIM, LPIPS) from runs on different image sets are not like for like, because each run trained on, and
+would hold out, different photographs; do not rank the runs by them. Every run still writes its own full-size
+copy and downscaled versions of its images (the image-preparation step); only the capture folders are
+copy-free.
+
 ## 4. Write the config
 
 ```bash
