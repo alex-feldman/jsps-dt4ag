@@ -115,7 +115,7 @@ partial semantic prototype described below. Backend adoption remains design dire
 - Tiny residual labeled clusters are preserved with their point counts and marked `small_unreviewed_cluster` in the evidence/viewer; they are not automatically additional biological leaves. The association summary identifies the supported clusters.
 - `skeleton.json` in skeleton mode: nodes, edges, main path, leaf-base/insertion candidates and scale-free network lengths. Nodes are graph samples, not phytomer nodes.
 - `organ-evidence.json`: losslessly serialized graph, leaf associations, source/camera hashes, explicit ID scope, user annotations and uncertainty. Missing/zero-length off-apex paths are marked unresolved.
-- `viewer.html`: deterministic display sample of up to 300 centers per leaf, graph lines and insertion labels, embedded for offline inspection. Rotate by dragging; zoom with the wheel; toggle points/edges; reset. Gray means unresolved side paths, not confirmed strings. This is not a Gaussian-splat renderer and its drawing order is not full visibility testing.
+- `viewer.html`: deterministic display sample of up to 300 centers per leaf, graph lines and insertion labels, embedded for offline inspection. Each point cloud has its cluster ID drawn beside a representative rendered point, with a leader line and collision-aware placement. Rotate by dragging; zoom with the wheel; toggle points/edges; reset. Gray means unresolved side paths, not confirmed strings. This is not a Gaussian-splat renderer and its drawing order is not full visibility testing.
 - `input-manifest.json` and `run-record.json`: source/code hashes, effective settings, versions, command, stage status and output hashes. A leaf stage can complete without a valid skeleton; full mode fails explicitly if no usable network/apex exists.
 
 This does not establish biological classification accuracy, petiole completeness, metric scale or population generalization. Leaf-free paths may be ties, tendrils, missed tissue or artifacts. A zero petiole length at the chosen apex follows from the endpoint construction; other zero-length fallbacks are missing extraction evidence. Preserve originals and human review.
@@ -248,6 +248,96 @@ Limits:
 - Units are scale-free.
 - A plant axis is a sequence of slice medians: leaves, tendrils and a neighbor's overlap all move it.
 - An `unassigned` cluster is not evidence that it belongs to no plant.
+
+## Frame calibration: dataparser frame to plant frame
+
+`calibrate_frame.py` writes and extends a `frame-calibration` record, a JSON sidecar that maps points from the export's dataparser frame into a plant frame whose up axis is a recorded setting, `+y` (the `orient` default since 2026-10-18) or `+z`:
+
+```text
+p_plant = s * R @ (p_source - o)
+```
+
+`R` is a rotation, `o` the origin in the source frame and `s` the meters per scene unit. While the scale is unset, `s` is 1.0 and target units stay scale-free scene units. `frame_calibration.py` owns the contract (`SCHEMA`, `SCHEMA_VERSION`, `validate`) and the library calls `new`, `load`, `save`, `validate`, `set_rotation`, `set_scale`, `set_scale_from_estimate`, `compose` and `apply`.
+
+### Contract (`frame-calibration`, `schema_version` 1)
+
+| Field | Content |
+|---|---|
+| `schema`, `schema_version` | `frame-calibration`, `1`. Any other version is refused. |
+| `generator` | `{"name": "jsps-dt4ag", "version": ...}`. |
+| `capture_id` | The capture the record belongs to. |
+| `source_frame` | `name: dataparser`, description, `units: scale_free_scene_units`, and `binding`: `dataparser_transforms_sha256` plus optional extra hashes (`--bind-file NAME=PATH` records `NAME_sha256`). |
+| `target_frame` | `name: plant`, `up` (`+y` or `+z`; a file without it reads as `+z`), `units` (`m` exactly when scale is set, else `scale_free_scene_units`), `origin_definition` in words. |
+| `rotation` | `null` or `matrix` (3x3, row-major), `method`, `status` (`algorithmic` or `human-decision`), `inputs` (`path`, `sha256`), `diagnostics`, and `up_source_frame` (the source-frame up vector R maps to `target_frame.up`; `orient` writes it). |
+| `origin` | `null` or `point_source_frame`, `method`, `inputs`; `orient` adds `diagnostics`. |
+| `scale` | `null` or `meters_per_scene_unit`, `uncertainty` (`std_meters_per_scene_unit`, `n_pairs`, `method`), `method`, `decisions` (`path`, `sha256`, `by: Alex`), `inputs`, `diagnostics`. |
+| `transform_4x4` | Derived from the three parts and recomputed on every save. |
+
+`validate` checks: R orthonormal within 1e-9 with determinant +1; R maps the recorded up vector (`rotation.up_source_frame`, else `rotation.diagnostics.up_source_frame`) to `target_frame.up` within 1e-9; `s` finite and above 0; every set part has a nonempty method and nonempty inputs with 64-hex SHA-256; target units `m` exactly when scale is set; `transform_4x4` equal to the composition within 1e-12. `save` refuses an existing path and writes sorted keys, two-space indentation and a final newline with no timestamps, so the same inputs give identical bytes.
+
+### Commands
+
+```text
+python pipeline/scripts/organ-analysis/calibrate_frame.py orient --orientation /path/to/orientation.json --dataparser-transforms /path/to/dataparser_transforms.json --capture-id CAPTURE --out /path/to/new-calibration.json [--up y|z] [--bind-file export_ply=/path/to/export.ply] [--origin-from-asset /path/to/plant.json | --origin-point X,Y,Z  --origin-decided-by Alex --origin-decision "TEXT"]
+python pipeline/scripts/organ-analysis/calibrate_frame.py scale --calibration /path/to/calibration.json --estimate /path/to/scale-estimate.json --out /path/to/new-scaled.json
+python pipeline/scripts/organ-analysis/calibrate_frame.py validate /path/to/calibration.json
+python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/points.npy --out /path/to/new-points.npy
+python pipeline/scripts/organ-analysis/calibrate_frame.py apply --calibration /path/to/calibration.json --input /path/to/leaf-2.npz [--array X] --out /path/to/new-leaf-2.npz
+```
+
+- **`orient`** reads a complete `orient_plants.py` `orientation.json`:
+  - It refuses a different `capture_id`, and a `--dataparser-transforms` whose hash matches none of the `dataparser_transforms.json` hashes the orientation run recorded.
+  - **Up:** `up_soil_plane.normal` when `up_soil_plane.status` is `ok`. Otherwise `up_camera_mean_image_up.normal`, recorded as a fallback in `rotation.diagnostics.up_source`. With neither, it refuses.
+  - **Rotation:** with `--up z`, R maps up to +z; plant +x is the source-frame x axis projected onto the horizontal plane, and plant +y is up cross plant +x. With `--up y` (default), R is that z-up rotation followed by `[[1,0,0],[0,0,1],[0,-1,0]]`: plant +x is unchanged, up becomes +y, and plant +z is plant +x cross up (right-handed, det +1). It refuses when source x lies within 1 degree of up.
+  - **Origin (soil):** `up_soil_plane.base` projected along `up_soil_plane.normal` onto the plane through `up_soil_plane.point`. The base is the final soil iteration's base estimate (the base plant's lowest-slice axis point); the point is the final fit's inlier centroid.
+  - **Origin (fallback):** the only plant's `axis.polyline[0]`, unprojected. With several plants the origin stays `null`.
+  - **Origin (explicit human decision, optional):** `--origin-point X,Y,Z` (source frame) or `--origin-from-asset /path/to/plant.json` (that asset's `main_axis.polyline[0]`, the reviewed main-axis root), with `--origin-decided-by Alex --origin-decision "TEXT"` (both required; the statement, with its date, is recorded verbatim). The point is projected along the soil normal onto the soil plane, so the origin is where that point's vertical meets the fitted bed; it is refused without an `ok` soil plane. `--origin-from-asset` first checks the frame: one of the asset's hash-listed `source_evidence` JSON files must record `camera_inputs.dataparser_transforms` equal to the `--dataparser-transforms` hash, else it refuses. `origin.diagnostics` records the decision, the unprojected point, the projection distance along up, the default origin and the shift from it, and the asset provenance; the asset is added to `origin.inputs`. The rotation is identical to the default run, so only a translation changes.
+  - The camera-versus-soil angle and the orientation's `up_disagreement` go into diagnostics; they are reported and never acted on. Scale is `null`.
+- **`scale`** copies a `scale-estimate` (schema 1) into `scale`:
+  - It refuses a different `capture_id`, a `source_frame` other than `dataparser`, and an estimate input named `dataparser_transforms.json` whose hash differs from the binding.
+  - Values, method and decisions are copied. The estimate's own path and SHA-256 are appended to `scale.inputs`, and target units become `m`.
+- **`validate`** exits 0 when valid and 1 with one line per error.
+- **`apply`** transforms an (N,3) `.npy`, or one array (default `X`) of an `.npz`, to float64 plant coordinates in a new file. The other `.npz` arrays are copied unchanged. It never writes in place and refuses an existing output.
+
+Exit code 2 means invalid input or a refusal.
+
+Limits:
+- Up is the orientation stage's geometric estimate, not measured gravity.
+- The default origin is a bed-level reference under the plant, not a validated stem-emergence point. An explicit origin is as good as the decided point (for the asset option, the reviewed main-axis root) and the fitted plane it is projected onto.
+- The x direction is a convention with no biological meaning.
+- `apply` maps points only. To move whole Gaussians (quaternions, scales, SH color), use `transform_splat.py` below.
+
+## Transform a splat export into the plant frame
+
+`transform_splat.py` applies a frame calibration to a 3DGS export PLY without retraining, for example to analyze a y-up, metric splat or open it in a viewer (SuperSplat needs the display copy below to show it upright). It writes a new PLY and a sidecar `{output stem}.transform.json`; it never writes in place and refuses existing outputs.
+
+```text
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/export.ply --out /path/to/new-plant.ply [--no-scale]
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/new-plant.ply --out /path/to/new-back.ply --inverse
+python pipeline/scripts/organ-analysis/transform_splat.py --calibration /path/to/calibration.json --input /path/to/export.ply --out /path/to/new-plant.ply --viewer supersplat
+```
+
+### Display copy for a viewer (`--viewer supersplat`)
+
+SuperSplat (PlayCanvas) shows a y-up splat PLY upside down: it applies its own 180-degree rotation about z on load. A copy pre-rotated by 180 degrees about z appears upright (confirmed visually by Alex, 2026-10-18). `--viewer supersplat` is opt-in and writes, in addition to the plain output and its sidecar:
+- `{output stem}-supersplat.ply`: the plain output as stored, rotated 180 degrees about z by the same Gaussian transform below (centers and normals negated in x and y, quaternions `q' = q_R * q`, SH `f_rest` rotated band by band; scales, `f_dc` and opacity unchanged). Its header carries a `comment DISPLAY ONLY ...` line naming the analysis file.
+- `{output stem}-supersplat.viewer.json` (`splat-viewer-copy`, `schema_version` 1): `display_only: true`, the reason, the display rotation, and the hashes of the source export, the calibration, the analysis file and the display copy.
+
+The plain output is byte-identical with or without the option and remains the file for analysis and measurement; its sidecar gains a `viewer_copy` entry naming the display copy. The option is refused with `--inverse` and for a calibration whose target up is not `+y`, and refuses existing display files like any other output. Do not measure in the display copy: its x and y are negated relative to the plant frame.
+
+Every Gaussian is mapped by `p' = s * R @ (p - o)`:
+- **Centers** `x, y, z` by the full map; **normals** `nx, ny, nz`, when present, by R.
+- **Quaternions** `rot_0..rot_3` are `(w, x, y, z)`, the order gsplat's `_quat_to_rotmat` reads. They become `q' = q_R * q` (Hamilton product), which keeps each stored norm.
+- **Log scales** `scale_0..scale_2` gain `log(s)`. `--no-scale` keeps scene units (rotation and origin only).
+- **View-dependent color** `f_rest_*` is rotated band by band in the real SH basis gsplat evaluates (`_eval_sh_bases_fast`). The export layout is nerfstudio's channel-major `f_rest_{c*K + k}`: channel c, coefficient k, basis index k+1. Each band's matrix is fitted by least squares over 4,096 fixed random directions with the exact basis, and the fit is refused above a 1e-10 residual.
+- **Unchanged:** `f_dc_*`, `opacity` and every other property.
+
+The binary little-endian vertex layout and the element/property order are kept. Two header comments change: nerfstudio's `comment Vertical Axis:` becomes the target up axis, and one provenance comment naming the sidecar is added. The sidecar records the input, output and calibration hashes, the effective R, o and s, units, the SH fit residuals and the header changes. `--inverse` maps a plant-frame splat back to the dataparser frame, for checks.
+
+Limits:
+- The transform is exact up to float32 storage.
+- The plant frame inherits the calibration's up and origin, which are geometric estimates.
+- SH degree 0 to 4 and scalar vertex properties only.
 
 ## Plant asset package
 
@@ -382,6 +472,46 @@ and ranks, and below-node grouping with explicit incomplete basal boundary.
 Structural consistency and free-text evidence do not establish scientific
 acceptance. There is no anatomical promotion workflow in this release.
 
+## Clicked image points and ruler scale
+
+`click_points.py` turns points that Alex clicked in the photographs into 3D points in the export's dataparser frame; `ruler_scale.py` turns clicked tape-measure graduations into a metric scale. The clicks are explicit human decisions. Everything after them is algorithmic with the settings in `click_points.DEFAULTS`, which every output records. No photograph pixels are read.
+
+### Input: `image-clicks` v1
+
+```text
+{"schema":"image-clicks","schema_version":1,"tool":"click_points.html","tool_version":"1","created":"2026-10-18T...",
+ "pixel_convention":"x right, y down, origin at the top-left corner of the top-left pixel; pixel centers at i+0.5 (COLMAP convention)",
+ "images":[{"name":"frame_00024.png","width":4096,"height":3072}],
+ "points":[{"image":"frame_00024.png","label":"tape_5cm","x":1234.5,"y":678.25}]}
+```
+
+The same label in several images is one physical point. Labels `tape_{N}cm` (N may be decimal) are ruler graduations; `{leaf}_base` and `{leaf}_tip` give a leaf chord. Refused: another schema or version, another pixel convention, an image not in `images` or not in the model, a width or height that differs from the camera, the same label twice in one image, a pixel outside `0..width` by `0..height`. Image names resolve through `transforms.json` (`file_path` basename to `colmap_im_id`) or COLMAP's own names.
+
+### Run
+
+```text
+python pipeline/scripts/organ-analysis/click_points.py validate clicks.json
+python pipeline/scripts/organ-analysis/ruler_scale.py --clicks clicks.json --colmap /path/to/colmap-capture --dataparser /path/to/run/dataparser_transforms.json --capture-id ID --output scale-estimate.json [--surface-offset-m 0.01 --surface-offset-basis "who said so"] [--exclude tape_10cm]
+python pipeline/scripts/organ-analysis/click_points.py triangulate --clicks clicks.json --colmap /path/to/colmap-capture --dataparser /path/to/run/dataparser_transforms.json --capture-id ID --output points.json [--plant-asset /path/to/plant-asset] [--scale scale-estimate.json]
+```
+
+`--colmap` is the folder holding `sparse/0` and `transforms.json` (override with `--sparse`, `--transforms`). `--parameters` takes a JSON object of `DEFAULTS` overrides. Outputs must not exist. Exit codes: 0 written, 2 invalid input, 3 (ruler) fewer than two resolved marks, in which case `{output stem}.refused.json` is written instead.
+
+### Methods
+
+- **Frames.** Points are computed in the COLMAP frame from `cameras.bin`/`images.bin` (SIMPLE_PINHOLE, PINHOLE, SIMPLE_RADIAL, RADIAL, OPENCV) and mapped with `plant_orientation.colmap_to_dataparser`. Before any point, every camera center is mapped both ways (COLMAP route and `transforms.json` route) and must agree to 1e-6, and `transforms.json` intrinsics must equal `cameras.bin`. With `--plant-asset`, the dataparser hash recorded by the asset must equal the one supplied.
+- **Multi-view** (label in 2+ images): undistort, linear DLT, Levenberg-Marquardt on pixel reprojection error. Reported: per-view residuals, triangulation angle, covariance (`click_sigma_px`). Flagged above `max_reprojection_px` or below `min_triangulation_angle_deg`; refused behind a camera.
+- **Single-view local surface** (label in 1 image): COLMAP points whose track includes that image and whose keypoint lies within the support radius (40 px, doubling to at most 160 px until `min_support_plane` points are found). With enough support, a deterministic RANSAC plane is fitted and the ray intersected; with fewer, the median depth is used; below `min_support`, refused. Reported: support ids, radius, inliers, plane residual, incidence, each support point's signed distance to the plane and depth relative to the hit, and a prediction sigma along the ray. `surface_offset` moves the plane toward the camera by that height before intersecting (for a tape lying above the soil); `ruler_scale.py` converts meters with its current estimate and iterates to a fixed point.
+- **Scale.** Every pair of resolved marks gives known |Na - Nb| cm over the dataparser distance. The estimate is the baseline-weighted median of the pair estimates; `std` is the larger of 1.4826 times the weighted MAD and the longest pair's propagated uncertainty. Collinearity (perpendicular deviation from the SVD line, spacing residual along it, and both leave-one-out with 4+ marks) is reported in mm; it never removes a mark. Only `--exclude`, Alex's decision, removes one.
+- **Leaves.** For each leaf with both ends, the chord in scene units (meters with `--scale`) and, with `--plant-asset`, the leaf whose points have the smallest median distance to the base-tip segment, with the margin to the second. Report only; it never relabels.
+
+### Limits
+
+- A single-view mark lies where its ray meets the surface below it. A tape suspended over a trough is placed on the trough floor unless the offset is given; the support-point distances and the collinearity checks are the evidence, and the offset is a stated input, not a measurement.
+- On the October 2 frame_00024 only 7% of the image area has 4 or more COLMAP keypoints within 40 px; with the ladder, 27%. Clicks elsewhere are refused.
+- One pair of marks gives no spread; the reported `std` is then only the propagated uncertainty.
+- The frame-chain check cannot tell whether a dataparser file belongs to the run; check its hash.
+
 ## Verification and design
 
 ### Record endpoint review
@@ -432,4 +562,13 @@ The real-data regression additionally compares every NPZ array, leaf membership 
 
 ## Click points on photographs
 
-Open click_points.html directly in a browser; it works offline. The viewer composites transparent PNG pixels over white in draw() while preserving source pixels and exported click coordinates.
+`click_points.html` is a single offline HTML file (no network, no install) for clicking labelled points on photographs and recording exact pixel coordinates. Open it by double-clicking it in Chrome or Edge.
+
+- Load images with "Open images..." (multiple selection) or by dropping files on the window. Pick an image from the list to display it.
+- Mouse wheel zooms around the cursor (up to 32x, with pixel grid at high zoom). Pan with right or middle mouse drag, or hold Space and drag with the left button. A left click without dragging places a point with the text in the Label box. Dragging an existing point with the left button moves it.
+- Quick label buttons: "tape_ cm" (type the number between tape_ and cm, e.g. tape_5cm), "{leaf}_base" and "{leaf}_tip" (leaf name from the Leaf name box, default A).
+- A label can be used only once per image; the same label on different images means the same physical point. Ctrl+Z undoes, F fits the image to the window.
+- Coordinates are full-resolution image pixels, floating point, x right, y down, origin at the top-left corner of the top-left pixel (pixel centres at i+0.5, the COLMAP convention). Images are read without EXIF rotation so coordinates match the stored pixels.
+- Export JSON downloads `clicks-YYYYMMDD-HHMM.json` with schema `image-clicks` (version 1): `images` (name, width, height; only images with points) and `points` (image, label, x, y). Import JSON adds points from an earlier export; they attach to images by file name. Points are also autosaved in the browser (localStorage) and offered for restore on reload.
+
+The viewer composites transparent PNG pixels over white in `draw()` while preserving source pixels and exported click coordinates.

@@ -7,13 +7,20 @@ def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=Non
     """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export."""
     with np.load(labels_path or out/'leaf_ids2.npz') as arrays:
         points = {}
+        point_labels = {}
         for leaf in bundle['leaves']:
             selected = arrays['X'][arrays['label']==leaf['id']]
             # Deterministic display sample; full data remain in the NPZ.
             positions = np.linspace(0,len(selected)-1,min(300,len(selected)),dtype=int)
-            points[str(leaf['id'])] = selected[positions].tolist()
+            sample = selected[positions]
+            points[str(leaf['id'])] = sample.tolist()
+            if len(sample):
+                center = sample.mean(axis=0)
+                anchor = int(np.argmin(np.sum((sample-center)**2, axis=1)))
+                point_labels[str(leaf['id'])] = sample[anchor].tolist()
     graph = bundle['source_graph'] or {'skeleton_nodes':[],'skeleton_edges':[],'leaves':[]}
-    data = {'capture':bundle['capture_id'],'points':points,'graph':graph,'leaves':bundle['leaves'],
+    data = {'capture':bundle['capture_id'],'points':points,'pointLabels':point_labels,
+            'graph':graph,'leaves':bundle['leaves'],
             'branchCandidates':candidates,'plantAsset':plant_asset}
     payload = json.dumps(data,allow_nan=False).replace('<','\\u003c')
     page = '''<!doctype html>
@@ -113,6 +120,25 @@ const X=Math.cos(yaw)*x-Math.sin(yaw)*y,Y=Math.sin(yaw)*x+Math.cos(yaw)*y;
 const up=Math.cos(pitch)*z-Math.sin(pitch)*Y,depth=Math.cos(pitch)*Y+Math.sin(pitch)*z;
 const s=Math.min(canvas.clientWidth,canvas.clientHeight)*.78/span*zoom;
 return[canvas.clientWidth/2+X*s,canvas.clientHeight/2-up*s,depth]}
+const clusterAnchors=Object.entries(D.pointLabels||{}).map(([id,point])=>({id:Number(id),point})).sort((a,b)=>a.id-b.id);
+function drawClusterLabels(){
+ const occupied=[];ctx.font='bold 13px system-ui';
+ function overlaps(a,b){return a.x<b.x+b.w+4&&a.x+a.w+4>b.x&&a.y<b.y+b.h+4&&a.y+a.h+4>b.y}
+ for(const item of clusterAnchors){
+  const anchor=project(item.point),text='C'+item.id,w=ctx.measureText(text).width+10,h=20;
+  const offsets=[[8,-h-4],[8,4],[-w-8,-h-4],[-w-8,4],[16,-2],[16,-h*2],[-w-16,-h*2],[-w-16,-2],[8,-h*3],[-w-8,-h*3],[32,-h],[-w-32,-h]];
+  let box=null;
+  for(const[dx,dy]of offsets){const candidate={x:anchor[0]+dx,y:anchor[1]+dy,w,h};
+   if(candidate.x>=2&&candidate.y>=2&&candidate.x+w<=canvas.clientWidth-2&&candidate.y+h<=canvas.clientHeight-2&&!occupied.some(other=>overlaps(candidate,other))){box=candidate;break}}
+  if(!box)box={x:Math.max(2,Math.min(canvas.clientWidth-w-2,anchor[0]+8)),y:Math.max(2,Math.min(canvas.clientHeight-h-2,anchor[1]-h-4)),w,h};
+  occupied.push(box);
+  const tx=Math.max(box.x,Math.min(anchor[0],box.x+box.w)),ty=Math.max(box.y,Math.min(anchor[1],box.y+box.h));
+  ctx.beginPath();ctx.moveTo(anchor[0],anchor[1]);ctx.lineTo(tx,ty);ctx.lineWidth=1;ctx.strokeStyle=colors[item.id%colors.length];ctx.stroke();
+  ctx.beginPath();ctx.arc(anchor[0],anchor[1],4,0,Math.PI*2);ctx.fillStyle='#10151b';ctx.fill();ctx.lineWidth=1.5;ctx.strokeStyle=colors[item.id%colors.length];ctx.stroke();
+  ctx.fillStyle='rgba(16,21,27,.94)';ctx.fillRect(box.x,box.y,box.w,box.h);ctx.strokeStyle=colors[item.id%colors.length];ctx.strokeRect(box.x,box.y,box.w,box.h);
+  ctx.fillStyle='#fff';ctx.fillText(text,box.x+5,box.y+14)
+ }
+}
 function draw(){ctx.font='12px system-ui';ctx.lineWidth=1;ctx.setLineDash([]);ctx.fillStyle='#10151b';ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight);
 if(document.getElementById('edges').checked)for(const e of D.graph.skeleton_edges){
 const candidate=candidateEdges.has([e.a,e.b].sort((a,b)=>a-b).join('-'));
@@ -125,6 +151,7 @@ ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineWidth=e.main
 if(e.classification==='inferred-petiole'){ctx.strokeStyle='#55e6ed';ctx.lineWidth=2.5;ctx.setLineDash([7,5])}ctx.stroke();ctx.setLineDash([])}
 if(document.getElementById('points').checked){const pts=[];for(const[id,arr]of Object.entries(D.points))for(const p of arr)pts.push([...project(p),Number(id)]);
 pts.sort((a,b)=>a[2]-b[2]);for(const p of pts){const dim=selectedLeaf!==null&&String(p[3])!==selectedLeaf;ctx.globalAlpha=dim?.18:1;ctx.beginPath();ctx.arc(p[0],p[1],selectedLeaf!==null&&!dim?3.2:2.2,0,Math.PI*2);ctx.fillStyle=colors[p[3]%colors.length];ctx.fill()}ctx.globalAlpha=1}
+if(document.getElementById('points').checked)drawClusterLabels();
 if(selectedLeaf!==null){const doc=PA.exports[selectedLeaf];if(doc.petiole){const line=doc.petiole.polyline.map(project),inferred=doc.petiole_status==='inferred-petiole';ctx.beginPath();line.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
 ctx.lineWidth=4;ctx.strokeStyle=inferred?'#55e6ed':'#ffe066';ctx.setLineDash(inferred?[7,5]:[]);ctx.stroke();ctx.setLineDash([]);const a=project(doc.attachment.xyz);ctx.beginPath();ctx.arc(a[0],a[1],7,0,Math.PI*2);ctx.lineWidth=2;ctx.strokeStyle='#ffe066';ctx.stroke();ctx.lineWidth=1}}
 for(const l of D.graph.leaves){const p=project(l.insertion_xyz);ctx.beginPath();ctx.arc(p[0],p[1],4.5,0,Math.PI*2);ctx.fillStyle=colors[l.leaf_id%colors.length];ctx.fill();ctx.strokeStyle='white';ctx.stroke();ctx.fillStyle='white';ctx.fillText(String(l.leaf_id)+(l.classification==='inferred-petiole'?' [inferred]':l.source_endpoint_id?' ['+l.source_endpoint_id+']':''),p[0]+7,p[1]-6)}

@@ -10,7 +10,10 @@ masks: [`pipeline/scripts/organ-analysis/`](pipeline/scripts/organ-analysis/READ
 It runs on CPU and does not change the reconstruction stages. It also provides
 an additive partial semantic package with saved source-bound identities and
 explicit unresolved insertion candidates. Accepted anatomical topology and
-backend adoption remain separate from this prototype.
+backend adoption remain separate from this prototype. Frame-calibration tools
+map a reconstruction into an upright, metric plant frame from the orientation
+stage and ruler marks clicked on photographs, and can transform a whole splat
+export into that frame (with an optional display-only copy for SuperSplat).
 
 ### [See a reconstruction in your browser](https://alex-feldman.github.io/jsps-dt4ag/)
 

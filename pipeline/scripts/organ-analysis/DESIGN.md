@@ -257,6 +257,71 @@ The first soil run on October 15 failed under a 2.4 GiB address-space cap, becau
 
 Changing a vote rule, threshold, slice rule, radius percentile or assignment ratio changes results and needs new regression evidence and a new output directory.
 
+## Frame calibration: the plant frame convention
+
+`frame_calibration.py` owns the contract; `calibrate_frame.py` is the command; the README owns the field table and usage. The record exists so that later stages, and metric measurements, can work in one named frame without moving any source data. Source points stay in the dataparser frame; the calibration is a separate, hash-bound sidecar.
+
+**The plant frame.**
+- +z is up: the soil-plane normal from the orientation stage (Alex, 2026-10-17: the ground is orthogonal to up), or the camera mean image-up when no soil plane exists, recorded as a fallback.
+- The origin is on the ground under the plant: the soil stage's base estimate projected onto the fitted soil plane. A point's plant z is therefore its height above the fitted bed plane, in scene units until scale is set.
+- +x is the source x axis projected onto the horizontal plane, and +y = z cross x, so the frame is right-handed.
+
+**Up axis setting (Alex, 2026-10-18).** The target up axis is recorded as `target_frame.up`, `+y` or `+z`, and `orient` defaults to `+y`. Viewers such as SuperSplat expect y-up.
+
+The y-up frame is the z-up frame followed by M = [[1,0,0],[0,0,1],[0,-1,0]] (det +1):
+- plant +x is unchanged;
+- the z-up +z (up) becomes +y;
+- the z-up +y becomes -z.
+
+So a y-up point is (x, height, -y_zup). The validator checks that R maps the recorded source-frame up vector to the target axis. Files written before the setting existed carry `+z`, and a missing value reads as `+z`, so the schema version stays 1.
+
+The x rule is a deterministic convention only. It refuses when source x lies within 1 degree of up, where the projection would be unstable.
+
+**Why three separate parts.** Rotation, origin and scale come from different evidence:
+- rotation and origin from the orientation stage;
+- scale from a separate scale-estimate built on Alex's decisions.
+
+Each part keeps its own method, inputs and diagnostics. One part can be refit without touching the others, and the record says exactly what each number rests on. `transform_4x4` is derived and recomputed on every save. Validation refuses a stored matrix that disagrees with the parts by more than 1e-12, so a hand-edited matrix cannot silently diverge.
+
+**Binding.** The source frame is bound by the hash of the run's `dataparser_transforms.json`. `orient` refuses a dataparser file the orientation run did not record. `scale` refuses an estimate input naming a different dataparser file. Extra hashes (the export PLY, `transforms.json`) can be bound with `--bind-file`.
+
+**Diagnostics are not decisions.** The camera-versus-soil angle and the orientation's disagreement flag are copied into `rotation.diagnostics`. They never change the rotation. No agent visual judgment enters the record: rotation status is `algorithmic`, or `human-decision` when Alex supplies it.
+
+**First real record (2026-10-18).** October 2 Welzo M1, from the soil-primary orientation run of 2026-10-17 (`oct02-soil-primary-r2`):
+- Up: 21.15 degrees from dataparser z, equal to the camera-versus-soil angle, because the camera mean image-up is dataparser z there.
+- Origin: about 0.037 scene units below the base estimate.
+
+Applied to the reviewed plant asset (package v0.3.0-alpha.6):
+- every leaf center lies above the fitted plane (minimum plant z 0.027);
+- the main axis rises on all 34 segments;
+- the axis chord is 13.6 degrees from +z, against 34.5 degrees from dataparser z before calibration.
+
+These are internal consistency checks, not validation of up against gravity.
+
+**Explicit origin (Alex, 2026-10-18).** For October 2 Alex decided the origin is the bottom of the main (base) stem, not the orientation stage's base estimate (0.096 scene units horizontally from the reviewed main-axis root). `orient --origin-from-asset` (or `--origin-point`) takes that decided point, projects it along the soil normal onto the fitted plane so the origin sits where the stem meets the soil, and records the decision, unprojected point, projection distance and shift from the default in `origin.diagnostics`. The rotation does not change, so lengths, areas and extents are unchanged; only plant-frame coordinates shift by a constant. The asset route refuses unless the asset's own hash-listed evidence names the same `dataparser_transforms.json` hash, which closes the frame assumption noted in the first record. The default origin is unchanged when the option is absent.
+
+## Splat transform
+
+`transform_splat.py` moves a whole Gaussian splat into the plant frame, so that viewers and later stages see the plant upright and metric without retraining.
+
+Under `p' = s R (p - o)`, a Gaussian with covariance R_q S S^T R_q^T becomes s^2 R R_q S S^T R_q^T R^T. So the quaternion becomes q_R * q (gsplat's w, x, y, z order; it normalizes when rendering, and the product keeps the stored norm) and each log scale gains log s.
+
+View-dependent color is f(d) with d the unit direction from the camera to the Gaussian, so after the transform it must satisfy f'(R d) = f(d). Real SH bands are invariant under rotation, so each band l has a (2l+1)^2 matrix D_l with c' = D_l c. Rather than port a Wigner-D convention, which must match gsplat's sign and ordering choices exactly, D_l is fitted by least squares: B_l(R d) D_l = B_l(d) over 4,096 random directions, using a line-for-line port of gsplat's `_eval_sh_bases_fast`. The fitted matrix is exact because the band is closed under rotation. The residual and the orthogonality deviation are recorded, and residuals above 1e-10 are refused.
+
+Verification (2026-10-18, gsplat 1.4.0):
+- **Basis port.** It equals the installed gsplat source exactly (maximum difference 0.0 over 10,000 directions; the source was executed with a numpy stand-in for torch).
+- **Synthetic color and covariance.** Ten random rotations, origins and scales on 2,000 Gaussians each, with SH color compared over 50 direction sets:
+
+  | Storage | SH color, max relative error | Covariance, max relative error |
+  |---|---|---|
+  | float64 | 3.3e-15 | 2.0e-15 |
+  | float32 | 4.4e-8 | 3.0e-7 |
+
+- **Fit quality.** SH fit residuals reached at most 2.6e-15.
+- **Real round trip.** The October 2 export was transformed to y-up meters and back. It agrees within float32 rounding: centers 3.0e-8, f_rest 6.0e-8, log scales 4.8e-7, quaternions 1.2e-7. f_dc, opacity and normals are bit-identical.
+
+**Viewer display copies are separate files (O30.T2.2, 2026-10-18).** "Viewers expect y-up" turned out not to be enough for SuperSplat: it rotates a y-up file 180 degrees about z on load, so the plant shows upside down. Alex confirmed visually that a copy pre-rotated 180 degrees about z appears upright. The fix is a viewer convention, not a property of the plant frame, so it is never folded into the calibration or the default output. `--viewer supersplat` writes an extra `-supersplat.ply` by applying the same Gaussian transform (R = diag(-1, -1, 1), no origin, scale 1) to the plain output as stored, plus a `splat-viewer-copy` sidecar marked `display_only`. Measurement uses the plain file only. On the October 2 export, the option's plain outputs (meters and scene units) were byte-identical to those made at a3c8144 (run before the version bump, which changes only the version in a provenance comment), and its display copies have vertex data byte-identical to the ad hoc copies Alex inspected (positions, quaternions and SH all differ by 0.0); only the header comment differs.
+
 ## Computed base and conservative apex candidates
 
 The opt-in integration lives in `computed_axis.orientation` (artifact validation)
@@ -355,6 +420,17 @@ The candidate signals share input geometry and associations; agreement is an
 internal consistency test, not independent anatomical validation. The automatic
 October 2 acceptance goal remains unmet, even though refusal is correct software
 behavior. This release is candidate diagnostics, not a finished apex detector.
+
+## Clicked image points and ruler scale
+
+Origin: the October 2 Welzo M1 export has no metric scale, and the only ruler is a tape measure in one photograph (frame_00024), so its marks cannot be triangulated. The design keeps human input to clicks (procedure 6b) and makes every later step a recorded rule.
+
+- **Why COLMAP frame first.** Clicked pixels refer to COLMAP's cameras. Working in that frame and mapping with `colmap_to_dataparser` avoids the transforms.json route, where using the saved dataparser transform directly is the applied_transform trap. Camera centers through both routes must agree; this also checks the frame-to-image mapping.
+- **Projection.** Verified against the model: the reprojection of every COLMAP point equals COLMAP's stored mean error to 1e-12 px. This model's own keypoint residuals reach 4 px, so the multi-view flag is set at 4 px (COLMAP's default filter).
+- **Single-view support.** Only points observed in the clicked image, so support is what that camera saw near the click. The ladder exists because keypoints are sparse (93% of frame_00024 has fewer than 4 within 40 px). The plane is a RANSAC consensus with a tolerance relative to depth; mixed surfaces, grazing planes and extrapolated hits are flagged, not hidden. The along-ray sigma is a prediction sigma; on held-out real points its ratio to the actual depth error has median 0.8 and p90 2.5.
+- **Surface offset.** A tape resting on raised bed edges is above the soil it crosses. The offset is Alex's stated height, applied along the plane normal toward the camera; because it is metric, it is converted with the current estimate and iterated. Scale sensitivity on October 2: about 1.2% per cm of offset.
+- **Scale combination.** All pairs, weighted median by known length: robust to one bad mark (synthetic: a mark misplaced by 4 cm moved the estimate by less than 1%), and longer baselines dominate. Pairs are not independent, so the spread is a check, not a standard error.
+- **Checks.** Synthetic cameras with OPENCV distortion (exact recovery, calibrated covariance, refusals, suspended-mark behavior, offset recovery); real-camera regression with COLMAP keypoints as fake clicks (multi-view median error 2e-11 scene units; single-view held-out median 0.16% of depth). Investigation: `/home/alex/data/investigations/click-points-20261018/`.
 
 ## Plant asset package and single-leaf export
 

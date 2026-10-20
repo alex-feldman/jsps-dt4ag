@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(HERE))
 import analyze_organs as cli
 from geometry import Geometry, load_ply
+from viewer import write_viewer
 
 
 class OrganAnalysisTests(unittest.TestCase):
@@ -71,6 +72,24 @@ class OrganAnalysisTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'No plant-minus-leaf'):
             self.invoke(self.root/'skeleton','--stage','skeleton','--labels-dir',str(out))
         self.assertEqual(cli.read(self.root/'skeleton/run-record.json')['status'],'failed')
+
+    def test_viewer_places_cluster_ids_at_rendered_points(self):
+        output=self.root/'viewer-labels'
+        output.mkdir()
+        points=np.array([[0.0,0.0,0.0],[0.1,0.0,0.0],[0.0,0.1,0.0],
+                         [0.005,0.0,0.0],[0.105,0.0,0.0],[0.005,0.1,0.0]])
+        labels=np.array([16,16,16,17,17,17])
+        labels_path=self.root/'viewer-points.npz'
+        np.savez(labels_path,X=points,label=labels)
+        bundle={'capture_id':'tiny-plant','leaves':[{'id':16},{'id':17}], 'source_graph':{}}
+        write_viewer(output,bundle,labels_path=labels_path)
+        page=(output/'viewer.html').read_text()
+        data=json.JSONDecoder().raw_decode(page.split('const D=',1)[1])[0]
+        for cluster in ('16','17'):
+            self.assertIn(data['pointLabels'][cluster],data['points'][cluster])
+        self.assertIn('const clusterAnchors=Object.entries(D.pointLabels||{})',page)
+        self.assertIn("const anchor=project(item.point),text='C'+item.id",page)
+        self.assertIn('drawClusterLabels()',page)
 
     def test_reused_labels_tampering_refused_before_output(self):
         out=self.root/'leaves'
