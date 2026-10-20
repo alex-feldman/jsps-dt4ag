@@ -1019,6 +1019,9 @@ v0.1.0 required of everyone and it still works.
 
 ### Video-derived image sequences
 
+**The whole video path as one set of copy-paste commands is [`VIDEO-WORKFLOW.md`](VIDEO-WORKFLOW.md).**
+This section is the reference for the extraction step it uses.
+
 The supported video workflow is to make a stable image capture first, then run
 the normal image pipeline. Store still frames under a new capture's `images/`
 directory. Keep the source movie outside `images/`; the pipeline will not decode
@@ -1036,10 +1039,11 @@ pipeline stage.
        --source /path/to/source.mp4 --review-root /path/to/review
    ```
 
-   This hashes the movie, records its stream metadata, and writes a coarse
-   contact sheet, candidate-interval sheets for the first 30 seconds
-   (`--preview-seconds 60` for a minute) and an `index.html` that labels every
-   tile with its time and builds the `extract` command, outside any capture. The
+   This hashes the movie, records its stream metadata, and in one decode writes
+   whole-clip thumbnails and a preview of the first 30 seconds
+   (`--preview-seconds 60` for a minute), plus an `index.html` that labels every
+   tile with its time, lets you pick the interval and prints the `extract`
+   command, all outside any capture. The
    overview helps choose a segment and sampling plan; it is not the final
    reconstruction frame set. A long, high-resolution clip takes time to decode.
 2. Choose sampling from camera movement, overlap, blur and scene motion.

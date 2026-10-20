@@ -41,7 +41,7 @@ by a real run.
 `fps` expression and the frame-count estimate, the PNG header reader, the
 refusals (existing capture, wrong or malformed hash, impossible range), the
 records left by a successful, a failed and a mixed-shape extraction, the review
-folder's contents and preview windows, and `subset` (linked, never copied, with
+folder's contents, the single decode and its preview window, the command the page shows, and `subset` (linked, never copied, with
 its refusals and its cleanup when links are impossible). ffmpeg and ffprobe are replaced by fakes, so the tests
 need neither; the real tools were checked only by a real run on a synthetic clip.
 

@@ -27,19 +27,38 @@ Dates are the tag date, not the commit date, where they differ.
   a wrong hash, and stops with a "do not train" status on no frames or mixed image
   shapes. It does not choose the interval or verify overlap, and never starts a
   pipeline stage.
-- `review` previews the first 30 seconds (`--preview-seconds`, for example 60) at
-  each candidate interval across as many sheets as needed, and writes an
-  offline `index.html` that prints the time on every tile and builds the exact
-  `extract` command from the interval and range you type.
+- `review` decodes the clip once and writes whole-clip thumbnails plus a preview
+  of the first 30 seconds (`--preview-seconds`, for example 60) at the finest
+  interval, and an offline `index.html` that prints the time on every tile, lets
+  you choose every 0.5, 1 or 2 s from that one preview, and shows the matching
+  `extract` command (quoted in Python, ending in `--dry-run`).
 - `subset`: makes a sparser capture (every Nth frame) from an extracted one as
   relative symlinks, with provenance and no copied photograph. It refuses, rather
   than copies, where links are impossible. Relative links survive moving or
   restoring the whole `datasets/` tree.
+- Sampling uses `fps=...:round=up`. ffmpeg's default rounding takes each frame from
+  the end of its time slot, so frames were late by up to half an interval and the
+  whole-clip overview labeled "0 s" and "5 s" showed 2.4 s and 7.4 s. Verified on a
+  clip whose brightness encodes its time: overview, preview and extracted frames now
+  sit within 0.1 s of their labels. Captures extracted before this have the old
+  lateness (visible in the command in their `extraction.json`). The frame-count
+  estimate is now `floor((duration - one frame) / interval) + 1`, exact for 23 of 24
+  whole-clip test cases and one or two high for a seeked range.
 - `extract` refuses a range that does not fit the clip (`--start` at or past the
   end, `--end` past it) before creating or copying anything. Frame-count
   estimates use `round(duration / interval)`, which matched ffmpeg's `fps` filter
   in every measured case. `review` validates its inputs before creating its
   folder, and the page escapes every character the HTML parser treats specially.
+
+- `pipeline/VIDEO-WORKFLOW.md`: the whole path from a video file to a splat as plain,
+  copy-paste commands (review page, choose the interval, extract, config, solve
+  cameras, camera review, train and export), usable by a person or an agent alike.
+- `pipeline/scripts/camera-review/camera-review.py`: the camera path over the sparse
+  points plus registration counts, reprojection error and missing frames, written after
+  the `colmap` and `process` stages and before training. It reproduces the recorded
+  Welzo bed-video solve exactly (180 of 181 registered, 152,783 points, 1.151 px). It
+  needs the pipeline environment (nerfstudio, matplotlib), so it has no unit test here
+  and was checked by that run.
 
 ### Changed
 

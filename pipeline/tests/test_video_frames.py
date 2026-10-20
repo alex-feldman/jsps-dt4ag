@@ -18,6 +18,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import struct
 import sys
@@ -71,9 +72,11 @@ class FakeRun:
         if cmd[-1].endswith("frame_%06d.png"):
             for index, (w, h) in enumerate(self.shapes, start=1):
                 (out.parent / f"frame_{index:06d}.png").write_bytes(png_header(w, h))
-        else:
-            name = out.name.replace("%02d", "01")
-            (out.parent / name).write_bytes(b"jpeg")
+        elif "-filter_complex" in cmd:
+            for pattern, count in (("ov_%03d.jpg", 3), ("pv_%03d.jpg", 5)):
+                target = Path(next(c for c in cmd if c.endswith(pattern)))
+                for k in range(1, count + 1):
+                    (target.parent / pattern.replace("%03d", f"{k:03d}")).write_bytes(b"jpeg")
 
         class Result:
             pass
@@ -123,18 +126,32 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(vf.interval_label(Fraction("0.5")), "0500ms")
         self.assertEqual(vf.interval_label(Fraction(2)), "2000ms")
 
-    def test_estimate_frames_matches_what_ffmpeg_produced(self):
-        # Measured against ffmpeg 9.0.1's fps filter on synthetic clips (the filter's
-        # output is round(duration / interval), halves up). A ceil() estimate was wrong
-        # for most of these, and agrees with round() only on the easy cases.
+    def test_fps_filter_samples_on_the_nominal_grid(self):
+        # ffmpeg's default rounding takes frames late (measured: fps=1/5 returned 2.4 s and 7.4 s,
+        # fps=2 about 0.2 s late). round=up returned 0.0, 4.99, 9.98 and 0.0, 0.47, 0.99.
+        self.assertEqual(vf.fps_filter(Fraction("0.5")), "fps=2:round=up")
+        self.assertEqual(vf.fps_filter(Fraction(5)), "fps=1/5:round=up")
+        self.assertEqual(vf.fps_filter(Fraction("0.3")), "fps=10/3:round=up")
+
+    def test_frame_seconds_comes_from_the_frame_rate(self):
+        self.assertEqual(vf.frame_seconds({"frame_rate": "24000/1001"}), Fraction(1001, 24000))
+        self.assertEqual(vf.frame_seconds({"frame_rate": "30/1"}), Fraction(1, 30))
+        self.assertEqual(vf.frame_seconds({"frame_rate": None}), 0)
+        self.assertEqual(vf.frame_seconds({"frame_rate": "0/0"}), 0)
+
+    def test_estimate_frames_matches_what_ffmpeg_produced_with_round_up(self):
+        # Counts from real ffmpeg 9.0.1 runs of fps=...:round=up on synthetic clips: a 10 s clip at
+        # 24 fps, a 10.29 s clip at 24 fps, a 7 s clip at 30 fps (whole clip, no seek).
+        one_24, one_30 = Fraction(1, 24), Fraction(1, 30)
         measured = [
-            (10.0, "0.3", 33), (10.0, "0.7", 14), (10.0, "3", 3), (10.0, "1", 10),
-            (10.0, "0.5", 20), (10.2917, "1", 10), (10.2917, "2", 5),
-            # recorded runs: a 3 s range at 0.5 s, the Welzo bed video, the cactus clip
-            (3.0, "0.5", 6), (90.4, "0.5", 181), (54.43, "0.5", 109),
+            (10.0, "0.3", one_24, 34), (10.0, "0.5", one_24, 20), (10.0, "0.7", one_24, 15),
+            (10.0, "1", one_24, 10), (10.0, "2", one_24, 5), (10.0, "3", one_24, 4),
+            (10.31, "0.5", one_24, 21), (7.0, "0.5", one_30, 14),
+            # the cactus clip, 23.976 fps: 109 frames were extracted
+            (54.429375, "0.5", Fraction(1001, 24000), 109),
         ]
-        for duration, interval, frames in measured:
-            self.assertEqual(vf.estimate_frames(duration, Fraction(interval)), frames,
+        for duration, interval, frame, frames in measured:
+            self.assertEqual(vf.estimate_frames(duration, Fraction(interval), frame), frames,
                              f"{duration} s at {interval} s")
         self.assertEqual(vf.estimate_frames(0, Fraction(1)), 0)
 
@@ -143,19 +160,45 @@ class TestHelpers(unittest.TestCase):
             with self.assertRaises(vf.ToolError, msg=bad):
                 vf.parse_interval(bad)
 
-    def test_plan_candidates_covers_the_window_in_sheets_of_twenty(self):
-        plan = vf.plan_candidates(90.0, Fraction(0), Fraction(30), [Fraction(2), Fraction(1), Fraction("0.5")])
-        self.assertEqual([(g["frames"], g["sheet_count"]) for g in plan], [(15, 1), (30, 2), (60, 3)])
-        self.assertEqual(plan[1]["label"], "1000ms")
-        self.assertEqual(plan[1]["pattern"], "candidate-1000ms-%02d.jpg")
-        sixty = vf.plan_candidates(90.0, Fraction(0), Fraction(60), [Fraction("0.5")])
-        self.assertEqual((sixty[0]["frames"], sixty[0]["sheet_count"]), (120, 6))
+    def test_plan_preview_counts_every_nth_frame_of_one_finest_pass(self):
+        plan = vf.plan_preview(90.0, Fraction(0), Fraction(30), Fraction("0.5"), [1, 2, 4])
+        self.assertEqual(plan["frames"], 61)
+        self.assertEqual([(s["n"], s["interval_seconds"], s["preview_frames"], s["whole_clip_frames"])
+                          for s in plan["steps"]],
+                         [(1, 0.5, 61, 181), (2, 1.0, 31, 91), (4, 2.0, 16, 46)])
+        self.assertEqual(plan["steps"][1]["label"], "1000ms")
+        sixty = vf.plan_preview(90.0, Fraction(0), Fraction(60), Fraction("0.5"), [1])
+        self.assertEqual(sixty["frames"], 121)
 
-    def test_plan_candidates_stops_at_the_end_of_the_clip(self):
-        plan = vf.plan_candidates(20.0, Fraction(10), Fraction(30), [Fraction(1)])
-        self.assertEqual((plan[0]["window_seconds"], plan[0]["frames"]), (10.0, 10))
+    def test_plan_preview_stops_at_the_end_of_the_clip_and_refuses_a_bad_start_or_step(self):
+        plan = vf.plan_preview(20.0, Fraction(10), Fraction(30), Fraction(1), [1])
+        self.assertEqual((plan["window_seconds"], plan["frames"]), (10.0, 11))
         with self.assertRaises(vf.ToolError):
-            vf.plan_candidates(20.0, Fraction(25), Fraction(30), [Fraction(1)])
+            vf.plan_preview(20.0, Fraction(25), Fraction(30), Fraction(1), [1])
+        with self.assertRaises(vf.ToolError):
+            vf.plan_preview(20.0, Fraction(0), Fraction(30), Fraction(1), [0])
+        with self.assertRaises(vf.ToolError):
+            vf.plan_preview(20.0, Fraction(0), Fraction(30), Fraction(1), [])
+
+    def test_the_review_decodes_once_for_both_outputs(self):
+        cmd = vf.review_command("ffmpeg", Path("/m.mp4"), Path("/r"), Fraction(5), Fraction(20),
+                                Fraction(30), Fraction("0.5"))
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        self.assertEqual(cmd.count("-i"), 1)
+        self.assertIn("split=2", graph)
+        self.assertIn("fps=1/5:round=up", graph)
+        self.assertIn("trim=start=20.0:duration=30.0,setpts=PTS-STARTPTS,fps=2:round=up", graph)
+        self.assertEqual([c for c in cmd if c.endswith(".jpg")], ["/r/overview/ov_%03d.jpg", "/r/preview/pv_%03d.jpg"])
+
+    def test_the_extract_command_template_is_shell_quoted_and_ends_in_dry_run(self):
+        template = vf.extract_command_template(Path("/m/my clip's.mp4"), "a" * 64, "/d/datasets",
+                                               Path("/opt/ff bin"))
+        self.assertIn("--source " + shlex.quote("/m/my clip's.mp4"), template)
+        self.assertIn("--capture /d/datasets/my-clip-s-__LABEL__-v1", template)
+        self.assertIn("--interval __INTERVAL__", template)
+        self.assertIn("--ffmpeg-prefix '/opt/ff bin'", template)
+        self.assertTrue(template.endswith("--dry-run"))
+        self.assertIn(" \\\n    --sha256 " + "a" * 64, template)
 
     def test_capture_root_is_guessed_only_from_an_evals_layout(self):
         self.assertEqual(vf.guess_capture_root(Path("/d/evals/subject")), str(Path("/d/datasets")))
@@ -261,7 +304,7 @@ class TestExtract(Base):
         self.assertIn("-n", cmd)
         self.assertEqual(cmd[cmd.index("-map") + 1], "0:v:0")
         self.assertEqual(cmd[cmd.index("-hwaccel") + 1], "none")
-        self.assertEqual(cmd[cmd.index("-vf") + 1], "fps=2,showinfo")
+        self.assertEqual(cmd[cmd.index("-vf") + 1], "fps=2:round=up,showinfo")
         self.assertEqual(cmd[cmd.index("-threads") + 1], "2")
         self.assertNotIn("-ss", cmd)
         self.assertNotIn("-t", cmd)
@@ -425,18 +468,23 @@ class TestReview(Base):
         self.assertEqual(len(found), 1)
         return found[0]
 
-    def test_review_writes_provenance_and_sheets_only_in_a_new_directory(self):
+    def test_review_writes_provenance_and_thumbnails_only_in_a_new_directory(self):
         code, out, _ = self.run_review()
         self.assertEqual(code, 0, out)
         review = self.review_dir()
         names = {p.name for p in review.iterdir()}
         for expected in ("source.sha256", "ffprobe.json", "summary.json", "review-notes.json",
-                         "index.html", "contact-01.jpg", "candidate-2000ms-01.jpg",
-                         "candidate-1000ms-01.jpg", "candidate-0500ms-01.jpg"):
+                         "index.html", "ffmpeg-review.log", "overview", "preview"):
             self.assertIn(expected, names)
+        self.assertEqual(len(list((review / "overview").glob("ov_*.jpg"))), 3)
+        self.assertEqual(len(list((review / "preview").glob("pv_*.jpg"))), 5)
         self.assertIn(MOVIE_SHA, (review / "source.sha256").read_text())
         self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["clip.mp4", "evals"])
         self.assertEqual(self.source.read_bytes(), MOVIE_BYTES)
+
+    def test_review_runs_ffmpeg_exactly_once(self):
+        self.run_review()
+        self.assertEqual(len(self.fake.commands), 1)
 
     def test_review_leaves_every_human_decision_empty(self):
         self.run_review()
@@ -446,36 +494,29 @@ class TestReview(Base):
             self.assertIsNone(notes[key], key)
         self.assertTrue(notes["selected_interval_does_not_verify_overlap"])
 
-    def test_summary_estimates_frames_per_interval(self):
+    def test_summary_records_the_preview_plan_and_whole_clip_estimates(self):
         self.run_review()
         summary = json.loads((self.review_dir() / "summary.json").read_text())
-        self.assertEqual(summary["estimated_frames_by_interval_seconds"]["0.5"], 109)
+        steps = {s["n"]: s for s in summary["preview"]["steps"]}
+        self.assertEqual(steps[1]["whole_clip_frames"], 109)      # 54.43 s at 0.5 s, 23.976 fps
+        self.assertEqual(steps[4]["whole_clip_frames"], 28)       # 54.43 s at 2 s
+        self.assertEqual(summary["preview"]["window_seconds"], 30.0)
         self.assertEqual(summary["width"], 3840)
 
-    def test_candidate_sheets_cover_the_preview_window_in_numbered_sheets(self):
-        self.run_review("--candidate-intervals", "1", "--candidate-start", "20")
-        candidate = [c for c in self.fake.commands if c[-1].endswith("candidate-1000ms-%02d.jpg")][0]
-        self.assertEqual(candidate[candidate.index("-ss") + 1], "20.0")
-        # 54.43 s clip, start 20: the 30 s default window fits.
-        self.assertEqual(candidate[candidate.index("-t") + 1], "30.0")
-        self.assertNotIn("-frames:v", candidate)
-        coarse = [c for c in self.fake.commands if c[-1].endswith("contact-%02d.jpg")][0]
-        self.assertIn("fps=1/5,scale=320:-1,tile=5x4", coarse)
-        self.assertNotIn("-ss", coarse)
+    def test_preview_start_and_seconds_set_the_window_and_it_is_cut_at_the_clip_end(self):
+        self.run_review("--preview-start", "20", "--preview-seconds", "60")
+        graph = self.fake.commands[0][self.fake.commands[0].index("-filter_complex") + 1]
+        self.assertIn("trim=start=20.0:duration=34.429375", graph)
 
-    def test_preview_seconds_widens_the_window_and_is_cut_at_the_clip_end(self):
-        self.run_review("--candidate-intervals", "1", "--preview-seconds", "60")
-        candidate = [c for c in self.fake.commands if c[-1].endswith("candidate-1000ms-%02d.jpg")][0]
-        self.assertEqual(candidate[candidate.index("-t") + 1], str(float(Fraction(str(54.429375)))))
-
-    def test_index_page_carries_the_hash_groups_and_no_placeholder(self):
+    def test_index_page_carries_the_hash_thumbnails_and_a_ready_command(self):
         self.run_review()
         page = (self.review_dir() / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("__DATA__", page)
         self.assertIn(MOVIE_SHA, page)
-        self.assertIn("candidate-1000ms-%02d.jpg", page)
-        self.assertIn("Build the extract command", page)
-        self.assertIn(str(self.tmp / "datasets"), page)
+        self.assertIn("preview/pv_001.jpg", page)
+        self.assertIn("overview/ov_003.jpg", page)
+        self.assertIn(str(self.tmp / "datasets"), page.replace("\\/", "/"))
+        self.assertIn("--dry-run", page)
 
     def test_index_page_cannot_be_broken_out_of_by_its_data(self):
         out = self.tmp / "page"
@@ -492,18 +533,19 @@ class TestReview(Base):
         page = (self.review_dir() / "index.html").read_text(encoding="utf-8")
         self.assertIn("python3 " + str(Path(vf.__file__).resolve()), page.replace("\\/", "/"))
 
-    def test_a_bad_candidate_start_leaves_nothing_behind(self):
-        code, _, err = self.run_review("--candidate-start", "100")
+    def test_a_bad_preview_start_leaves_nothing_behind(self):
+        code, _, err = self.run_review("--preview-start", "100")
         self.assertEqual(code, 2)
         self.assertIn("past the end", err)
         self.assertEqual(list((self.tmp / "evals").glob("*")) if (self.tmp / "evals").exists() else [], [])
         self.assertEqual(self.fake.commands, [])
 
-    def test_sheet_failure_is_reported(self):
+    def test_a_decode_failure_is_reported_and_names_the_log(self):
         self.fake.returncode = 1
         code, _, err = self.run_review()
         self.assertEqual(code, 2)
-        self.assertIn("sheets failed", err)
+        self.assertIn("review decode failed", err)
+        self.assertIn("ffmpeg-review.log", err)
 
     def test_missing_source_is_refused(self):
         code, _, err = self.run_main("review", "--source", str(self.tmp / "nope.mp4"),

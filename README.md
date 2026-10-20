@@ -75,8 +75,10 @@ alpha before the stages. A movie can be used by first extracting a curated,
 reviewed set of ordered
 frames into a normal capture `images/` directory, then running the image
 pipeline. Keep the extraction interval and timestamp provenance with the
-capture; [`pipeline/scripts/video-frames/`](pipeline/scripts/video-frames/README.md)
-does that review and extraction with provenance. See the
+capture; the whole path from a video to a splat, as plain commands, is
+[`pipeline/VIDEO-WORKFLOW.md`](pipeline/VIDEO-WORKFLOW.md), and
+[`pipeline/scripts/video-frames/`](pipeline/scripts/video-frames/README.md)
+does the review and extraction with provenance. See the
 [video-derived image sequence workflow](pipeline/QUICKSTART.md#video-derived-image-sequences)
 for the verified steps and timestamp limits. Raw images can also be
 reconstructed with `use_masks = false`, including their background.

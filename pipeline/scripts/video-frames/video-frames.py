@@ -57,6 +57,8 @@ import hashlib
 import json
 import math
 import os
+import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -69,19 +71,19 @@ TOOL = "video-frames.py"
 
 DEFAULT_THREADS = 2
 COARSE_SECONDS = 5.0
-CANDIDATE_INTERVALS = (2.0, 1.0, 0.5)
+FINEST_INTERVAL = 0.5             # the preview is decoded once at this interval
+PREVIEW_STEPS = (1, 2, 4)         # the page offers every 1st, 2nd and 4th preview frame
 PREVIEW_SECONDS = 30.0
 END_TOLERANCE = Fraction(1, 20)   # seconds an --end may overshoot the probed duration (rounding)
-ESTIMATE_INTERVALS = (4.0, 2.0, 1.0, 0.5, 0.25)
-SHEET_COLUMNS = 5
-SHEET_ROWS = 4
-PREVIEW_WIDTH = 320
+THUMB_WIDTH = 480
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 TIMESTAMP_WARNING = (
-    "output_grid_seconds is the fps filter's output grid, not an exact "
-    "source-frame timestamp; source_seconds_approx adds the range start"
+    "output_grid_seconds is the fps filter's nominal output grid (round=up, which samples on the "
+    "grid to within one source frame); it is not an exact source-frame timestamp. "
+    "source_seconds_approx adds the range start. Captures extracted before 2026-10-20 used ffmpeg's "
+    "default rounding, which takes frames up to half an interval LATER than their label."
 )
 
 STATUS_PENDING_REVIEW = "extraction_finished_pending_visual_review"
@@ -123,18 +125,42 @@ def fps_expression(interval: Fraction) -> str:
     return str(rate.numerator) if rate.denominator == 1 else f"{rate.numerator}/{rate.denominator}"
 
 
+def fps_filter(interval: Fraction) -> str:
+    """The ``fps`` filter for one frame every ``interval`` seconds, ON the nominal grid.
+
+    ffmpeg's default rounding (``near``) takes each output frame from the END of its time slot,
+    so frames come out late by up to half an interval: measured 2026-10-20 on a clip whose
+    brightness encodes its time, ``fps=1/5`` returned frames from 2.4 s and 7.4 s, and ``fps=2``
+    from about 0.2 s, 0.7 s, 1.2 s. ``round=up`` returned 0.0, 4.99, 9.98 and 0.0, 0.47, 0.99:
+    the nominal times, to within one source frame.
+    """
+    return f"fps={fps_expression(interval)}:round=up"
+
+
+def frame_seconds(facts: Dict) -> Fraction:
+    """Duration of one source frame, from ``r_frame_rate`` (``24000/1001``); zero if unknown."""
+    try:
+        num, den = str(facts.get("frame_rate")).split("/")
+        return Fraction(int(den), int(num))
+    except (ValueError, ZeroDivisionError):
+        return Fraction(0)
+
+
 def interval_label(interval: Fraction) -> str:
     """Filename-safe milliseconds label: 0.5 s becomes ``0500ms``."""
     return f"{int(round(interval * 1000)):04d}ms"
 
 
-def estimate_frames(duration: float, interval: Fraction) -> int:
-    """Approximate count: ffmpeg's ``fps`` filter output equals
-    ``round(duration / interval)``, halves rounding up. Measured against ffmpeg 9.0.1
-    on synthetic clips (10 s at 0.3, 0.7, 1, 3 s and a 10.29 s clip at 1 and 2 s)."""
+def estimate_frames(duration: float, interval: Fraction, frame_seconds: Fraction = Fraction(0)) -> int:
+    """Approximate count for ``fps=...:round=up``: one frame at 0, then one per interval up to
+    the last source frame, ``floor((duration - one frame) / interval) + 1``. Measured against
+    ffmpeg 9.0.1 on small synthetic clips: exact for 23 of 24 whole-clip cases (a 23.976 fps clip
+    was one low), and one or two HIGH for a seeked range, where the seek lands inside a frame.
+    It is a guide for the dry run and the page, never a record; the real count is written after."""
     if duration <= 0:
         return 0
-    return int(math.floor(Fraction(str(duration)) / interval + Fraction(1, 2)))
+    last = Fraction(str(duration)) - frame_seconds
+    return 0 if last < 0 else int(math.floor(last / interval)) + 1
 
 
 def read_png_size(path: Path) -> Tuple[int, int]:
@@ -220,51 +246,51 @@ def ffmpeg_version(ffmpeg: str) -> str:
     return out.splitlines()[0].strip() if out else "unknown"
 
 
-def sheet_command(ffmpeg: str, source: Path, vf: str, out_pattern: str,
-                  seek: Optional[Fraction] = None, window: Optional[Fraction] = None) -> List[str]:
-    """One contact-sheet pass; ``seek`` and ``window`` limit it to a stretch of the clip."""
-    cmd = [ffmpeg, "-n", "-hide_banner", "-hwaccel", "none", "-threads", str(DEFAULT_THREADS)]
-    if seek:
-        cmd += ["-ss", str(float(seek))]
-    if window is not None:
-        cmd += ["-t", str(float(window))]
-    cmd += ["-i", str(source), "-map", "0:v:0", "-an", "-vf", vf, "-filter_threads", "1",
-            "-fps_mode", "passthrough", out_pattern]
-    return cmd
+def review_command(ffmpeg: str, source: Path, review: Path, coarse: Fraction, start: Fraction,
+                   window: Fraction, finest: Fraction) -> List[str]:
+    """ONE decode of the clip, two outputs: an overview of the whole clip at ``coarse``
+    seconds, and the preview window at the finest interval. Coarser preview intervals are
+    every Nth of the finest one, so they need no decode of their own."""
+    graph = (
+        f"[0:v:0]split=2[a][b];"
+        f"[a]{fps_filter(coarse)},scale={THUMB_WIDTH}:-1[ov];"
+        f"[b]trim=start={float(start)}:duration={float(window)},setpts=PTS-STARTPTS,"
+        f"{fps_filter(finest)},scale={THUMB_WIDTH}:-1[fine]"
+    )
+    return [ffmpeg, "-n", "-hide_banner", "-hwaccel", "none", "-threads", str(DEFAULT_THREADS),
+            "-i", str(source), "-filter_complex", graph, "-filter_complex_threads", "1", "-an",
+            "-map", "[ov]", "-fps_mode", "passthrough", "-q:v", "4", str(review / "overview" / "ov_%03d.jpg"),
+            "-map", "[fine]", "-fps_mode", "passthrough", "-q:v", "4", str(review / "preview" / "pv_%03d.jpg")]
 
 
-def plan_candidates(duration: float, start: Fraction, preview: Fraction,
-                    intervals: Sequence[Fraction]) -> List[Dict]:
-    """What each candidate interval's sheets will cover, before any are made.
-
-    The window is the first ``preview`` seconds from ``start``, cut short by the
-    end of the clip. Sheets hold ``SHEET_COLUMNS * SHEET_ROWS`` frames each, so a
-    longer window or a finer interval simply makes more sheets.
-    """
+def plan_preview(duration: float, start: Fraction, preview: Fraction, finest: Fraction,
+                 steps: Sequence[int], frame_seconds: Fraction = Fraction(0)) -> Dict:
+    """What the preview will cover, decided before anything is created. The window is
+    ``preview`` seconds from ``start``, cut short by the end of the clip."""
     if start >= Fraction(str(duration)):
-        raise ToolError(f"--candidate-start {float(start)} is past the end of the {duration:.2f} s clip")
+        raise ToolError(f"--preview-start {float(start)} is past the end of the {duration:.2f} s clip")
+    chosen = sorted(set(steps))
+    if not chosen or chosen[0] < 1:
+        raise ToolError("--steps must be whole numbers of 1 or more")
     window = min(preview, Fraction(str(duration)) - start)
-    per_sheet = SHEET_COLUMNS * SHEET_ROWS
-    groups = []
-    for interval in intervals:
-        frames = estimate_frames(float(window), interval)
-        label = interval_label(interval)
-        groups.append({
-            "interval_seconds": float(interval),
-            "label": label,
-            "pattern": f"candidate-{label}-%02d.jpg",
-            "start_seconds": float(start),
-            "window_seconds": float(window),
-            "frames": frames,
-            "frames_per_sheet": per_sheet,
-            "sheet_count": int(math.ceil(frames / per_sheet)),
-        })
-    return groups
+    return {
+        "start_seconds": float(start),
+        "window_seconds": float(window),
+        "finest_interval_seconds": float(finest),
+        "frames": estimate_frames(float(window), finest, frame_seconds),
+        "steps": [{
+            "n": n,
+            "interval_seconds": float(finest * n),
+            "label": interval_label(finest * n),
+            "preview_frames": len(range(0, estimate_frames(float(window), finest, frame_seconds), n)),
+            "whole_clip_frames": estimate_frames(duration, finest * n, frame_seconds),
+        } for n in chosen],
+    }
 
 
 def guess_capture_root(review_root: Path) -> str:
     """``{data_root}/datasets`` when the review sits at ``{data_root}/evals/{subject}``
-    (the layout the operating procedure uses), else empty so the page asks."""
+    (the layout the pipeline's LAYOUT.md describes), else empty."""
     for parent in (review_root, *review_root.parents):
         if parent.name == "evals":
             return str(parent.parent / "datasets")
@@ -272,9 +298,8 @@ def guess_capture_root(review_root: Path) -> str:
 
 
 def write_index(review: Path, data: Dict) -> Path:
-    """Write ``index.html``: the sheets with a time on every tile, and a form that
-    builds the exact ``extract`` command from the interval and range you choose.
-    The page is static and offline; all of its content comes from ``data``."""
+    """Write ``index.html``: labeled thumbnails, a choice of interval, and the ready-made
+    ``extract`` command for it. Static and offline; all of its content comes from ``data``."""
     template = (Path(__file__).resolve().parent / "review-index.template.html").read_text(encoding="utf-8")
     # Inside a script element, "<!--<script" stops the next "</script>" from closing it, and a
     # plain "</" can close it early. Escape every character that matters to the HTML parser.
@@ -282,6 +307,20 @@ def write_index(review: Path, data: Dict) -> Path:
     page = review / "index.html"
     page.write_text(template.replace("__DATA__", payload), encoding="utf-8")
     return page
+
+
+def extract_command_template(source: Path, digest: str, capture_root: str, prefix: Optional[Path]) -> str:
+    """The extract command with ``__INTERVAL__`` and ``__LABEL__`` left for the page to fill.
+    Quoting is done here, in tested Python, not in the page."""
+    stem = re.sub(r"[^a-z0-9]+", "-", source.stem.lower()).strip("-") or "capture"
+    root = capture_root or str(Path.cwd() / "captures")
+    parts = [f"python3 {shlex.quote(str(Path(__file__).resolve()))} extract",
+             f"--source {shlex.quote(str(source))}", f"--sha256 {digest}",
+             f"--capture {shlex.quote(f'{root}/{stem}-__LABEL__-v1')}", "--interval __INTERVAL__"]
+    if prefix:
+        parts.append(f"--ffmpeg-prefix {shlex.quote(str(prefix))}")
+    parts.append("--dry-run")
+    return " \\\n    ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -300,65 +339,46 @@ def cmd_review(args: argparse.Namespace) -> int:
     facts = summarize_probe(data)
     duration = facts["duration_seconds"]
     coarse = parse_interval(str(args.coarse_seconds))
-    start = Fraction(str(args.candidate_start))
+    finest = parse_interval(str(args.finest_interval))
+    start = Fraction(str(args.preview_start))
     preview = Fraction(str(args.preview_seconds))
     if start < 0 or preview <= 0:
-        raise ToolError("--candidate-start must not be negative and --preview-seconds must be positive")
-    groups = plan_candidates(duration, start, preview,
-                             [parse_interval(str(v)) for v in args.candidate_intervals])
+        raise ToolError("--preview-start must not be negative and --preview-seconds must be positive")
+    plan = plan_preview(duration, start, preview, finest, args.steps, frame_seconds(facts))
 
     review_root = Path(args.review_root).expanduser().resolve()
     review = review_root / f"sampling-review-{now_stamp()}"
     review.mkdir(parents=True, exist_ok=False)
+    (review / "overview").mkdir()
+    (review / "preview").mkdir()
     print(f"review dir: {review}", flush=True)
 
     digest = sha256_of(source)
     (review / "source.sha256").write_text(f"{digest}  {source}\n")
     (review / "ffprobe.json").write_text(json.dumps(data, indent=2))
-
-    estimates = {
-        str(float(i)): estimate_frames(duration, Fraction(str(i))) for i in ESTIMATE_INTERVALS
-    }
     summary = {
-        "source": str(source),
-        "sha256": digest,
-        "tool": TOOL,
-        **facts,
-        "estimated_frames_by_interval_seconds": estimates,
-        "estimate_note": "approximate: round(duration / interval); the real count is in extraction.json",
+        "source": str(source), "sha256": digest, "tool": TOOL, **facts,
+        "preview": plan,
+        "estimate_note": "approximate; the real count is in extraction.json",
     }
     (review / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    tile = f"tile={SHEET_COLUMNS}x{SHEET_ROWS}"
-    scale = f"scale={PREVIEW_WIDTH}:-1"
-    steps = [("contact-%02d.jpg", f"fps={fps_expression(coarse)},{scale},{tile}", None, None,
-              "coarse overview")]
-    for group in groups:
-        steps.append((group["pattern"],
-                      f"fps={fps_expression(Fraction(str(group['interval_seconds'])))},{scale},{tile}",
-                      start, Fraction(str(group["window_seconds"])),
-                      f"{group['interval_seconds']} s candidate ({group['window_seconds']} s window)"))
-    for name, vf, seek, window, label in steps:
-        print(f"making {label} sheets", flush=True)
-        cmd = sheet_command(ffmpeg, source, vf, str(review / name), seek, window)
-        with (review / "ffmpeg-sheets.log").open("a") as log:
-            log.write("$ " + " ".join(cmd) + "\n")
-            log.flush()
-            result = subprocess.run(cmd, stdout=log, stderr=log)
-        if result.returncode != 0:
-            raise ToolError(f"{label} sheets failed; see {review / 'ffmpeg-sheets.log'}")
-    for group in groups:
-        group["files"] = sorted(p.name for p in review.glob(f"candidate-{group['label']}-*.jpg"))
-    sheets = sorted(p.name for p in review.glob("*.jpg"))
+    cmd = review_command(ffmpeg, source, review, coarse, start, Fraction(str(plan["window_seconds"])), finest)
+    print("decoding the clip once for the overview and the preview ...", flush=True)
+    with (review / "ffmpeg-review.log").open("w") as log:
+        log.write("$ " + " ".join(cmd) + "\n")
+        log.flush()
+        result = subprocess.run(cmd, stdout=log, stderr=log)
+    if result.returncode != 0:
+        raise ToolError(f"the review decode failed; see {review / 'ffmpeg-review.log'}")
+    overview = sorted(p.name for p in (review / "overview").glob("ov_*.jpg"))
+    frames = sorted(p.name for p in (review / "preview").glob("pv_*.jpg"))
 
     index = write_index(review, {
-        "source": str(source), "sha256": digest, "facts": facts, "estimates": estimates,
-        "coarse": {"interval_seconds": float(coarse),
-                   "files": sorted(p.name for p in review.glob("contact-*.jpg"))},
-        "groups": groups, "columns": SHEET_COLUMNS, "rows": SHEET_ROWS,
-        "ffmpeg_prefix": str(prefix) if prefix else "",
-        "tool": f"python3 {Path(__file__).resolve()}",
-        "capture_root": guess_capture_root(review_root),
+        "source": str(source), "sha256": digest, "facts": facts,
+        "overview": {"interval_seconds": float(coarse), "files": [f"overview/{n}" for n in overview]},
+        "preview": {**plan, "files": [f"preview/{n}" for n in frames]},
+        "command_template": extract_command_template(source, digest, guess_capture_root(review_root), prefix),
     })
 
     notes = {
@@ -366,7 +386,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         "sha256": digest,
         "purpose": "Disposable CPU-only sampling review; not frozen pipeline input",
         "autorotation": "FFmpeg default pixel autorotation enabled in the previews",
-        "sheets": sheets,
+        "thumbnails": {"overview": len(overview), "preview": len(frames)},
         "human_source_identity": None,
         "human_selected_range": None,
         "human_selected_interval_seconds": None,
@@ -379,11 +399,11 @@ def cmd_review(args: argparse.Namespace) -> int:
     print(f"sha256: {digest}")
     print(f"video : {facts['codec']} {facts['width']}x{facts['height']} "
           f"{facts['frame_rate']} fps, {duration:.2f} s, rotation={facts['rotation']}")
-    print("approximate frames by interval (s): " +
-          ", ".join(f"{k}: {v}" for k, v in estimates.items()))
-    print("sheets: " + ", ".join(sheets))
-    print(f"open this to look at the sheets and build the extract command: {index}")
-    print("Choose the range and interval yourself from the sheets, then run extract.")
+    print("whole clip at each offered interval, approximate frames: " +
+          ", ".join(f"{st['interval_seconds']} s: {st['whole_clip_frames']}" for st in plan["steps"]))
+    print(f"thumbnails: {len(overview)} overview, {len(frames)} preview")
+    print(f"open this, choose an interval, copy the extract command: {index}")
+    print("The interval and range are your decision; the page does not check overlap.")
     return 0
 
 
@@ -400,7 +420,7 @@ def extract_command(ffmpeg: str, staged: Path, images: Path, interval: Fraction,
         cmd += ["-t", str(float(end - (start or 0)))]
     cmd += [
         "-i", str(staged), "-map", "0:v:0", "-an",
-        "-vf", f"fps={fps_expression(interval)},showinfo",
+        "-vf", f"{fps_filter(interval)},showinfo",
         "-filter_threads", "1", "-fps_mode", "passthrough",
         str(images / "frame_%06d.png"),
     ]
@@ -461,7 +481,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
     window = (end if end is not None else Fraction(str(duration))) - (start or 0)
     if window <= 0:
         raise ToolError(f"the chosen range is outside the {duration:.2f} s clip")
-    count = estimate_frames(float(window), interval)
+    count = estimate_frames(float(window), interval, frame_seconds(facts))
 
     staged = capture / "source" / source.name
     images = capture / "images"
@@ -469,7 +489,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
     print(f"source   : {source}  ({facts['width']}x{facts['height']}, {duration:.2f} s, rotation={facts['rotation']})")
     print(f"range    : {float(start or 0)} to {float(end) if end is not None else 'end'} s")
-    print(f"interval : {float(interval)} s (fps={fps_expression(interval)}); about {count} frames")
+    print(f"interval : {float(interval)} s ({fps_filter(interval)}); about {count} frames (a guide; the real count is recorded)")
     print(f"capture  : {capture}")
     print("command  : " + " ".join(cmd))
     if args.dry_run:
@@ -605,6 +625,9 @@ def cmd_subset(args: argparse.Namespace) -> int:
                 # Relative links, so moving or restoring the whole datasets tree keeps them valid.
                 relative = os.path.relpath(resolved / row["filename"], (capture / "images"))
                 (capture / "images" / row["filename"]).symlink_to(relative)
+            except ValueError as err:     # Windows: the two captures are on different drives
+                raise ToolError(f"cannot make a relative link between these locations ({err}); "
+                                f"put the new capture on the same drive as its parent.")
             except (OSError, NotImplementedError) as err:
                 raise ToolError(f"cannot make symlinks here ({err}); this tool never copies photographs. "
                                 f"Use a filesystem that supports links (ext4, not exFAT).")
@@ -660,14 +683,15 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--review-root", required=True,
                         help="directory that will hold a new sampling-review-{timestamp}/ folder")
     review.add_argument("--coarse-seconds", type=float, default=COARSE_SECONDS,
-                        help="seconds between coarse overview samples (default 5)")
-    review.add_argument("--candidate-intervals", type=float, nargs="*", default=list(CANDIDATE_INTERVALS),
-                        help="intervals (s) to preview as candidate sheets (default 2 1 0.5)")
+                        help="seconds between overview thumbnails of the whole clip (default 5)")
+    review.add_argument("--finest-interval", type=float, default=FINEST_INTERVAL,
+                        help="seconds between preview thumbnails; the clip is decoded once at this (default 0.5)")
+    review.add_argument("--steps", type=int, nargs="*", default=list(PREVIEW_STEPS),
+                        help="the page offers every Nth preview frame for each N (default 1 2 4)")
     review.add_argument("--preview-seconds", type=float, default=PREVIEW_SECONDS,
-                        help="how much of the clip each candidate interval's sheets cover (default 30; "
-                             "use 60 for a longer look)")
-    review.add_argument("--candidate-start", type=float, default=0.0,
-                        help="where in the clip the candidate sheets begin (s)")
+                        help="how much of the clip the preview covers (default 30; use 60 for a minute)")
+    review.add_argument("--preview-start", type=float, default=0.0,
+                        help="where in the clip the preview begins (s)")
     review.add_argument("--ffmpeg-prefix", help="directory holding ffmpeg and ffprobe (default: PATH)")
     review.set_defaults(func=cmd_review)
 
