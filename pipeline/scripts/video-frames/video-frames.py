@@ -18,6 +18,13 @@ front of it. It has two subcommands and neither launches a pipeline stage.
     whose hash is not the one you name, and stops (non-zero, record kept) when
     it produced no frames or frames of more than one shape.
 
+``subset``
+    Makes a sparser capture from an extracted one: every Nth frame becomes a
+    symlink in a new capture's ``images/``, with its own provenance. It copies no
+    photograph and refuses, rather than copying, where links are impossible.
+    Used to compare sampling densities of one video (0.5, 1 and 2 s from one
+    0.5 s extraction).
+
 What it deliberately does not do: it does not choose the interval, it does not
 measure overlap, and the times it records are the ``fps`` filter's output grid,
 not source-frame timestamps. A chosen interval is the person's decision and
@@ -59,6 +66,7 @@ TOOL = "video-frames.py"
 DEFAULT_THREADS = 2
 COARSE_SECONDS = 5.0
 CANDIDATE_INTERVALS = (2.0, 1.0, 0.5)
+PREVIEW_SECONDS = 30.0
 ESTIMATE_INTERVALS = (4.0, 2.0, 1.0, 0.5, 0.25)
 SHEET_COLUMNS = 5
 SHEET_ROWS = 4
@@ -207,15 +215,65 @@ def ffmpeg_version(ffmpeg: str) -> str:
 
 
 def sheet_command(ffmpeg: str, source: Path, vf: str, out_pattern: str,
-                  seek: Optional[Fraction] = None, one_frame: bool = False) -> List[str]:
+                  seek: Optional[Fraction] = None, window: Optional[Fraction] = None) -> List[str]:
+    """One contact-sheet pass; ``seek`` and ``window`` limit it to a stretch of the clip."""
     cmd = [ffmpeg, "-n", "-hide_banner", "-hwaccel", "none", "-threads", str(DEFAULT_THREADS)]
     if seek:
         cmd += ["-ss", str(float(seek))]
-    cmd += ["-i", str(source), "-map", "0:v:0", "-an", "-vf", vf, "-filter_threads", "1"]
-    if one_frame:
-        cmd += ["-frames:v", "1"]
-    cmd += ["-fps_mode", "passthrough", out_pattern]
+    if window is not None:
+        cmd += ["-t", str(float(window))]
+    cmd += ["-i", str(source), "-map", "0:v:0", "-an", "-vf", vf, "-filter_threads", "1",
+            "-fps_mode", "passthrough", out_pattern]
     return cmd
+
+
+def plan_candidates(duration: float, start: Fraction, preview: Fraction,
+                    intervals: Sequence[Fraction]) -> List[Dict]:
+    """What each candidate interval's sheets will cover, before any are made.
+
+    The window is the first ``preview`` seconds from ``start``, cut short by the
+    end of the clip. Sheets hold ``SHEET_COLUMNS * SHEET_ROWS`` frames each, so a
+    longer window or a finer interval simply makes more sheets.
+    """
+    if start >= Fraction(str(duration)):
+        raise ToolError(f"--candidate-start {float(start)} is past the end of the {duration:.2f} s clip")
+    window = min(preview, Fraction(str(duration)) - start)
+    per_sheet = SHEET_COLUMNS * SHEET_ROWS
+    groups = []
+    for interval in intervals:
+        frames = estimate_frames(float(window), interval)
+        label = interval_label(interval)
+        groups.append({
+            "interval_seconds": float(interval),
+            "label": label,
+            "pattern": f"candidate-{label}-%02d.jpg",
+            "start_seconds": float(start),
+            "window_seconds": float(window),
+            "frames": frames,
+            "frames_per_sheet": per_sheet,
+            "sheet_count": int(math.ceil(frames / per_sheet)),
+        })
+    return groups
+
+
+def guess_capture_root(review_root: Path) -> str:
+    """``{data_root}/datasets`` when the review sits at ``{data_root}/evals/{subject}``
+    (the layout the operating procedure uses), else empty so the page asks."""
+    for parent in (review_root, *review_root.parents):
+        if parent.name == "evals":
+            return str(parent.parent / "datasets")
+    return ""
+
+
+def write_index(review: Path, data: Dict) -> Path:
+    """Write ``index.html``: the sheets with a time on every tile, and a form that
+    builds the exact ``extract`` command from the interval and range you choose.
+    The page is static and offline; all of its content comes from ``data``."""
+    template = (Path(__file__).resolve().parent / "review-index.template.html").read_text(encoding="utf-8")
+    payload = json.dumps(data).replace("</", "<\\/")
+    page = review / "index.html"
+    page.write_text(template.replace("__DATA__", payload), encoding="utf-8")
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -253,28 +311,43 @@ def cmd_review(args: argparse.Namespace) -> int:
     }
     (review / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    coarse = Fraction(str(args.coarse_seconds))
+    coarse = parse_interval(str(args.coarse_seconds))
+    start = Fraction(str(args.candidate_start))
+    preview = Fraction(str(args.preview_seconds))
+    if start < 0 or preview <= 0:
+        raise ToolError("--candidate-start must not be negative and --preview-seconds must be positive")
+    groups = plan_candidates(duration, start, preview,
+                             [parse_interval(str(v)) for v in args.candidate_intervals])
     tile = f"tile={SHEET_COLUMNS}x{SHEET_ROWS}"
-    steps = [
-        (f"contact-%02d.jpg", f"fps={fps_expression(coarse)},scale={PREVIEW_WIDTH}:-1,{tile}", None, False, "coarse")
-    ]
-    for value in args.candidate_intervals:
-        interval = parse_interval(str(value))
-        steps.append((
-            f"candidate-{interval_label(interval)}.jpg",
-            f"fps={fps_expression(interval)},scale={PREVIEW_WIDTH}:-1,{tile}",
-            Fraction(str(args.candidate_start)), True, f"candidate {float(interval)} s",
-        ))
-    for name, vf, seek, one_frame, label in steps:
-        print(f"making {label} sheet", flush=True)
-        cmd = sheet_command(ffmpeg, source, vf, str(review / name), seek, one_frame)
+    scale = f"scale={PREVIEW_WIDTH}:-1"
+    steps = [("contact-%02d.jpg", f"fps={fps_expression(coarse)},{scale},{tile}", None, None,
+              "coarse overview")]
+    for group in groups:
+        steps.append((group["pattern"],
+                      f"fps={fps_expression(Fraction(str(group['interval_seconds'])))},{scale},{tile}",
+                      start, Fraction(str(group["window_seconds"])),
+                      f"{group['interval_seconds']} s candidate ({group['window_seconds']} s window)"))
+    for name, vf, seek, window, label in steps:
+        print(f"making {label} sheets", flush=True)
+        cmd = sheet_command(ffmpeg, source, vf, str(review / name), seek, window)
         with (review / "ffmpeg-sheets.log").open("a") as log:
             log.write("$ " + " ".join(cmd) + "\n")
             log.flush()
             result = subprocess.run(cmd, stdout=log, stderr=log)
         if result.returncode != 0:
-            raise ToolError(f"{label} sheet failed; see {review / 'ffmpeg-sheets.log'}")
+            raise ToolError(f"{label} sheets failed; see {review / 'ffmpeg-sheets.log'}")
+    for group in groups:
+        group["files"] = sorted(p.name for p in review.glob(f"candidate-{group['label']}-*.jpg"))
     sheets = sorted(p.name for p in review.glob("*.jpg"))
+
+    index = write_index(review, {
+        "source": str(source), "sha256": digest, "facts": facts, "estimates": estimates,
+        "coarse": {"interval_seconds": float(coarse),
+                   "files": sorted(p.name for p in review.glob("contact-*.jpg"))},
+        "groups": groups, "columns": SHEET_COLUMNS, "rows": SHEET_ROWS,
+        "ffmpeg_prefix": args.ffmpeg_prefix or "", "tool": "python pipeline/scripts/video-frames/video-frames.py",
+        "capture_root": guess_capture_root(Path(args.review_root)),
+    })
 
     notes = {
         "source": str(source),
@@ -297,6 +370,7 @@ def cmd_review(args: argparse.Namespace) -> int:
     print("approximate frames by interval (s): " +
           ", ".join(f"{k}: {v}" for k, v in estimates.items()))
     print("sheets: " + ", ".join(sheets))
+    print(f"open this to look at the sheets and build the extract command: {index}")
     print("Choose the range and interval yourself from the sheets, then run extract.")
     return 0
 
@@ -443,6 +517,114 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# subset
+# ---------------------------------------------------------------------------
+
+MIN_SUBSET_FRAMES = 3
+
+
+def read_frames_csv(path: Path) -> List[Dict[str, str]]:
+    with path.open(newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def cmd_subset(args: argparse.Namespace) -> int:
+    """Make a sparser capture from an extracted one without copying a photograph.
+
+    Every Nth frame of the parent becomes a symlink in a NEW capture's
+    ``images/``. The pipeline already stages photographs by link
+    (``run_pipeline.stage_sfm_inputs``), so a capture of links runs like any other.
+    This never falls back to copying: if links cannot be made it stops and removes
+    only what it created.
+    """
+    parent = Path(args.parent)
+    capture = Path(args.capture)
+    every = args.every
+    offset = args.offset
+    if every < 2:
+        raise ToolError("--every must be at least 2 (1 would be the parent itself)")
+    if not 0 <= offset < every:
+        raise ToolError(f"--offset must be from 0 to {every - 1}")
+    manifest_path = parent / "provenance" / "extraction.json"
+    frames_csv = parent / "provenance" / "frames.csv"
+    if not manifest_path.is_file() or not frames_csv.is_file():
+        raise ToolError(f"{parent} is not a capture made by extract: it needs "
+                        f"provenance/extraction.json and provenance/frames.csv")
+    parent_record = json.loads(manifest_path.read_text())
+    if parent_record.get("status") != STATUS_PENDING_REVIEW:
+        raise ToolError(f"the parent's status is {parent_record.get('status')!r}, not "
+                        f"{STATUS_PENDING_REVIEW!r}; do not derive from a capture that is not good")
+    if capture.exists():
+        raise ToolError(f"REFUSED: {capture} already exists. Preserve it and choose a new capture name.")
+
+    rows = read_frames_csv(frames_csv)
+    images = parent / "images"
+    on_disk = sorted(p.name for p in images.glob("frame_*.png"))
+    if [r["filename"] for r in rows] != on_disk:
+        raise ToolError("the parent's frames.csv does not match the frames in its images/; "
+                        "it has changed since extraction")
+    chosen = rows[offset::every]
+    if len(chosen) < MIN_SUBSET_FRAMES:
+        raise ToolError(f"every {every} from offset {offset} leaves {len(chosen)} of {len(rows)} frames; "
+                        f"need at least {MIN_SUBSET_FRAMES}")
+
+    interval = Fraction(str(parent_record["interval_seconds"])) * every
+    print(f"parent   : {parent}  ({len(rows)} frames at {parent_record['interval_seconds']} s)")
+    print(f"subset   : every {every}th from offset {offset} = {len(chosen)} frames at {float(interval)} s")
+    print(f"capture  : {capture}")
+    if args.dry_run:
+        print("dry run: nothing written.")
+        return 0
+
+    capture.mkdir(parents=True, exist_ok=False)
+    try:
+        (capture / "images").mkdir()
+        (capture / "provenance").mkdir()
+        resolved = images.resolve()
+        for row in chosen:
+            try:
+                (capture / "images" / row["filename"]).symlink_to(resolved / row["filename"])
+            except (OSError, NotImplementedError) as err:
+                raise ToolError(f"cannot make symlinks here ({err}); this tool never copies photographs. "
+                                f"Use a filesystem that supports links (ext4, not exFAT).")
+    except ToolError:
+        shutil.rmtree(capture)
+        raise
+
+    with (capture / "provenance" / "frames.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(chosen[0].keys()))
+        writer.writeheader()
+        writer.writerows(chosen)
+    record = {
+        "tool": TOOL,
+        "kind": "subset of an extracted capture, by symlink; no photograph was copied",
+        "parent_capture": str(parent),
+        "parent_extraction_sha256": sha256_of(manifest_path),
+        "parent_source_sha256": parent_record.get("source_sha256"),
+        "parent_interval_seconds": parent_record["interval_seconds"],
+        "every": every,
+        "offset": offset,
+        "interval_seconds": float(interval),
+        "frame_count": len(chosen),
+        "frames": [r["filename"] for r in chosen],
+        "link_target_dir": str(resolved),
+        "dimensions": parent_record.get("dimensions"),
+        "warning": "the links point at the parent's images/; moving or deleting the parent breaks them",
+        "status": STATUS_PENDING_REVIEW,
+    }
+    (capture / "provenance" / "subset.json").write_text(json.dumps(record, indent=2))
+
+    broken = [n for n in record["frames"] if not (capture / "images" / n).is_file()]
+    if broken:
+        record["status"] = STATUS_NEEDS_REVIEW
+        (capture / "provenance" / "subset.json").write_text(json.dumps(record, indent=2))
+        raise ToolError(f"{len(broken)} links do not resolve to a file; do not train")
+    print(f"frames: {len(chosen)} linked (no copies); capture: {capture}")
+    print("Pending visual review; no pipeline stage was launched.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -458,6 +640,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="seconds between coarse overview samples (default 5)")
     review.add_argument("--candidate-intervals", type=float, nargs="*", default=list(CANDIDATE_INTERVALS),
                         help="intervals (s) to preview as candidate sheets (default 2 1 0.5)")
+    review.add_argument("--preview-seconds", type=float, default=PREVIEW_SECONDS,
+                        help="how much of the clip each candidate interval's sheets cover (default 30; "
+                             "use 60 for a longer look)")
     review.add_argument("--candidate-start", type=float, default=0.0,
                         help="where in the clip the candidate sheets begin (s)")
     review.add_argument("--ffmpeg-prefix", help="directory holding ffmpeg and ffprobe (default: PATH)")
@@ -480,6 +665,15 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--dry-run", action="store_true",
                          help="verify the source and print the plan; write nothing")
     extract.set_defaults(func=cmd_extract)
+
+    subset = sub.add_parser("subset", help="make a sparser capture from an extracted one, by symlink; copies nothing")
+    subset.add_argument("--from", dest="parent", required=True, help="the extracted capture to thin out")
+    subset.add_argument("--capture", required=True, help="the NEW capture directory; must not exist")
+    subset.add_argument("--every", type=int, required=True,
+                        help="keep every Nth frame (2 doubles the interval, 4 quadruples it)")
+    subset.add_argument("--offset", type=int, default=0, help="which frame to start from, 0 to N-1 (default 0)")
+    subset.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+    subset.set_defaults(func=cmd_subset)
     return parser
 
 

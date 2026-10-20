@@ -27,6 +27,13 @@ Dates are the tag date, not the commit date, where they differ.
   a wrong hash, and stops with a "do not train" status on no frames or mixed image
   shapes. It does not choose the interval or verify overlap, and never starts a
   pipeline stage.
+- `review` previews the first 30 seconds (`--preview-seconds`, for example 60) at
+  each candidate interval across as many sheets as needed, and writes an
+  offline `index.html` that prints the time on every tile and builds the exact
+  `extract` command from the interval and range you type.
+- `subset`: makes a sparser capture (every Nth frame) from an extracted one as
+  symlinks, with provenance and no copied photograph. It refuses, rather than
+  copies, where links are impossible.
 
 ### Changed
 

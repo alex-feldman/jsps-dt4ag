@@ -1037,7 +1037,9 @@ pipeline stage.
    ```
 
    This hashes the movie, records its stream metadata, and writes a coarse
-   contact sheet and candidate-interval sheets outside any capture. The
+   contact sheet, candidate-interval sheets for the first 30 seconds
+   (`--preview-seconds 60` for a minute) and an `index.html` that labels every
+   tile with its time and builds the `extract` command, outside any capture. The
    overview helps choose a segment and sampling plan; it is not the final
    reconstruction frame set. A long, high-resolution clip takes time to decode.
 2. Choose sampling from camera movement, overlap, blur and scene motion.
@@ -1059,6 +1061,9 @@ pipeline stage.
    default pixel autorotation is enabled and recorded. The `fps` filter's
    output-grid timestamps are not an exact mapping to original source-frame
    PTS; keep an explicit source-frame/PTS mapping if that precision is required.
+   To compare sampling densities of one video, extract at the finest interval
+   once and make sparser captures from it with `video-frames.py subset`, which
+   links frames instead of copying them (see its README).
 4. Review the extracted set for consistent orientation and dimensions, blur,
    duplicate views, abrupt zoom/exposure changes, moving subjects and adequate
    camera motion. Freeze the reviewed set; a changed sampling plan is a new

@@ -135,6 +135,24 @@ class TestHelpers(unittest.TestCase):
             with self.assertRaises(vf.ToolError, msg=bad):
                 vf.parse_interval(bad)
 
+    def test_plan_candidates_covers_the_window_in_sheets_of_twenty(self):
+        plan = vf.plan_candidates(90.0, Fraction(0), Fraction(30), [Fraction(2), Fraction(1), Fraction("0.5")])
+        self.assertEqual([(g["frames"], g["sheet_count"]) for g in plan], [(15, 1), (30, 2), (60, 3)])
+        self.assertEqual(plan[1]["label"], "1000ms")
+        self.assertEqual(plan[1]["pattern"], "candidate-1000ms-%02d.jpg")
+        sixty = vf.plan_candidates(90.0, Fraction(0), Fraction(60), [Fraction("0.5")])
+        self.assertEqual((sixty[0]["frames"], sixty[0]["sheet_count"]), (120, 6))
+
+    def test_plan_candidates_stops_at_the_end_of_the_clip(self):
+        plan = vf.plan_candidates(20.0, Fraction(10), Fraction(30), [Fraction(1)])
+        self.assertEqual((plan[0]["window_seconds"], plan[0]["frames"]), (10.0, 10))
+        with self.assertRaises(vf.ToolError):
+            vf.plan_candidates(20.0, Fraction(25), Fraction(30), [Fraction(1)])
+
+    def test_capture_root_is_guessed_only_from_an_evals_layout(self):
+        self.assertEqual(vf.guess_capture_root(Path("/d/evals/subject")), str(Path("/d/datasets")))
+        self.assertEqual(vf.guess_capture_root(Path("/somewhere/else")), "")
+
     def test_png_size_read_and_refusal(self):
         with tempfile.TemporaryDirectory() as tmp:
             good, bad = Path(tmp) / "a.png", Path(tmp) / "b.png"
@@ -259,6 +277,107 @@ class TestExtract(Base):
         self.assertTrue((self.capture / "source" / "clip.mp4").is_file())
 
 
+class TestSubset(Base):
+    """``subset`` thins an extracted capture by symlink; it must never copy."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake.shapes = [(8, 6)] * 12
+        code, _, _ = self.extract()
+        self.assertEqual(code, 0)
+        self.child = self.tmp / "datasets" / "child"
+
+    def subset(self, *extra, every="2"):
+        return self.run_main("subset", "--from", str(self.capture), "--capture", str(self.child),
+                             "--every", every, *extra)
+
+    def test_every_second_frame_is_linked_not_copied(self):
+        code, out, _ = self.subset()
+        self.assertEqual(code, 0, out)
+        links = sorted((self.child / "images").iterdir())
+        self.assertEqual([p.name for p in links],
+                         [f"frame_{i:06d}.png" for i in (1, 3, 5, 7, 9, 11)])
+        for link in links:
+            self.assertTrue(link.is_symlink(), link.name)
+            self.assertEqual(link.resolve(), (self.capture / "images" / link.name).resolve())
+        record = json.loads((self.child / "provenance" / "subset.json").read_text())
+        self.assertEqual((record["every"], record["offset"], record["frame_count"]), (2, 0, 6))
+        self.assertEqual(record["interval_seconds"], 1.0)
+        self.assertEqual(record["parent_source_sha256"], MOVIE_SHA)
+        self.assertEqual(record["status"], vf.STATUS_PENDING_REVIEW)
+        with (self.child / "provenance" / "frames.csv").open() as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual([r["filename"] for r in rows], record["frames"])
+        self.assertEqual(rows[1]["output_grid_seconds"], "1.0")
+
+    def test_every_fourth_with_an_offset(self):
+        code, _, _ = self.subset("--offset", "1", every="4")
+        self.assertEqual(code, 0)
+        self.assertEqual([p.name for p in sorted((self.child / "images").iterdir())],
+                         [f"frame_{i:06d}.png" for i in (2, 6, 10)])
+        record = json.loads((self.child / "provenance" / "subset.json").read_text())
+        self.assertEqual(record["interval_seconds"], 2.0)
+
+    def test_dry_run_writes_nothing(self):
+        code, out, _ = self.subset("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("dry run", out)
+        self.assertFalse(self.child.exists())
+
+    def test_refuses_nonsense_selections(self):
+        for argv, fragment in (
+            (["--every", "1"], "at least 2"),
+            (["--every", "4", "--offset", "4"], "--offset"),
+            (["--every", "6"], "need at least"),
+        ):
+            code, _, err = self.run_main("subset", "--from", str(self.capture),
+                                         "--capture", str(self.child), *argv)
+            self.assertEqual(code, 2, argv)
+            self.assertIn(fragment, err)
+            self.assertFalse(self.child.exists())
+
+    def test_refuses_an_existing_capture(self):
+        self.child.mkdir(parents=True)
+        code, _, err = self.subset()
+        self.assertEqual(code, 2)
+        self.assertIn("already exists", err)
+
+    def test_refuses_a_parent_that_is_not_an_extracted_capture(self):
+        code, _, err = self.run_main("subset", "--from", str(self.tmp), "--capture", str(self.child),
+                                     "--every", "2")
+        self.assertEqual(code, 2)
+        self.assertIn("not a capture made by extract", err)
+
+    def test_refuses_a_parent_that_needs_review(self):
+        manifest = self.capture / "provenance" / "extraction.json"
+        record = json.loads(manifest.read_text())
+        record["status"] = vf.STATUS_NEEDS_REVIEW
+        manifest.write_text(json.dumps(record))
+        code, _, err = self.subset()
+        self.assertEqual(code, 2)
+        self.assertIn("not good", err)
+        self.assertFalse(self.child.exists())
+
+    def test_refuses_a_parent_whose_frames_changed_since_extraction(self):
+        (self.capture / "images" / "frame_000003.png").unlink()
+        code, _, err = self.subset()
+        self.assertEqual(code, 2)
+        self.assertIn("changed since extraction", err)
+
+    def test_never_falls_back_to_copying_when_links_are_impossible(self):
+        real = Path.symlink_to
+
+        def refuse(self_path, target, *a, **k):
+            raise OSError("symlinks not permitted")
+        Path.symlink_to = refuse
+        self.addCleanup(setattr, Path, "symlink_to", real)
+        code, _, err = self.subset()
+        self.assertEqual(code, 2)
+        self.assertIn("never copies", err)
+        self.assertFalse(self.child.exists())
+        self.assertEqual(len(list((self.capture / "images").glob("frame_*.png"))), 12)
+
+
 class TestReview(Base):
     def run_review(self, *extra):
         return self.run_main("review", "--source", str(self.source),
@@ -275,8 +394,8 @@ class TestReview(Base):
         review = self.review_dir()
         names = {p.name for p in review.iterdir()}
         for expected in ("source.sha256", "ffprobe.json", "summary.json", "review-notes.json",
-                         "contact-01.jpg", "candidate-2000ms.jpg", "candidate-1000ms.jpg",
-                         "candidate-0500ms.jpg"):
+                         "index.html", "contact-01.jpg", "candidate-2000ms-01.jpg",
+                         "candidate-1000ms-01.jpg", "candidate-0500ms-01.jpg"):
             self.assertIn(expected, names)
         self.assertIn(MOVIE_SHA, (review / "source.sha256").read_text())
         self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["clip.mp4", "evals"])
@@ -296,19 +415,43 @@ class TestReview(Base):
         self.assertEqual(summary["estimated_frames_by_interval_seconds"]["0.5"], 109)
         self.assertEqual(summary["width"], 3840)
 
-    def test_candidate_sheets_seek_and_stop_after_one_frame(self):
+    def test_candidate_sheets_cover_the_preview_window_in_numbered_sheets(self):
         self.run_review("--candidate-intervals", "1", "--candidate-start", "20")
-        candidate = [c for c in self.fake.commands if c[-1].endswith("candidate-1000ms.jpg")][0]
+        candidate = [c for c in self.fake.commands if c[-1].endswith("candidate-1000ms-%02d.jpg")][0]
         self.assertEqual(candidate[candidate.index("-ss") + 1], "20.0")
-        self.assertEqual(candidate[candidate.index("-frames:v") + 1], "1")
+        # 54.43 s clip, start 20: the 30 s default window fits.
+        self.assertEqual(candidate[candidate.index("-t") + 1], "30.0")
+        self.assertNotIn("-frames:v", candidate)
         coarse = [c for c in self.fake.commands if c[-1].endswith("contact-%02d.jpg")][0]
         self.assertIn("fps=1/5,scale=320:-1,tile=5x4", coarse)
+        self.assertNotIn("-ss", coarse)
+
+    def test_preview_seconds_widens_the_window_and_is_cut_at_the_clip_end(self):
+        self.run_review("--candidate-intervals", "1", "--preview-seconds", "60")
+        candidate = [c for c in self.fake.commands if c[-1].endswith("candidate-1000ms-%02d.jpg")][0]
+        self.assertEqual(candidate[candidate.index("-t") + 1], str(float(Fraction(str(54.429375)))))
+
+    def test_index_page_carries_the_hash_groups_and_no_placeholder(self):
+        self.run_review()
+        page = (self.review_dir() / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("__DATA__", page)
+        self.assertIn(MOVIE_SHA, page)
+        self.assertIn("candidate-1000ms-%02d.jpg", page)
+        self.assertIn("Build the extract command", page)
+        self.assertIn(str(self.tmp / "datasets"), page)
+
+    def test_index_page_cannot_be_broken_out_of_by_its_data(self):
+        out = self.tmp / "page"
+        out.mkdir()
+        page = vf.write_index(out, {"source": "x</script><b>y", "facts": {}}).read_text(encoding="utf-8")
+        self.assertEqual(page.count("</script>"), 1)
+        self.assertIn("<\\/script>", page)
 
     def test_sheet_failure_is_reported(self):
         self.fake.returncode = 1
         code, _, err = self.run_review()
         self.assertEqual(code, 2)
-        self.assertIn("sheet failed", err)
+        self.assertIn("sheets failed", err)
 
     def test_missing_source_is_refused(self):
         code, _, err = self.run_main("review", "--source", str(self.tmp / "nope.mp4"),

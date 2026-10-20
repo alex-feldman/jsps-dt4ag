@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame interval review</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #5d5b55; --line: #d9d6cc;
+    --accent: #1f6f4a; --accent-ink: #ffffff; --chip: rgba(0, 0, 0, .68); --chip-ink: #ffffff; --code: #efede6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151614; --panel: #1f201d; --ink: #ecebe5; --muted: #a7a59b; --line: #3a3b36;
+            --accent: #5fb98a; --accent-ink: #0d1a12; --chip: rgba(0, 0, 0, .75); --code: #2a2b27; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 6px; }
+  p, li { max-width: 78ch; }
+  .muted { color: var(--muted); }
+  .facts { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0 0; padding: 0; list-style: none; }
+  .facts li { white-space: nowrap; }
+  .facts b { font-weight: 600; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 16px; }
+  .sheet { position: relative; margin: 10px 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; }
+  .sheet img { display: block; width: 100%; height: auto; }
+  .grid { position: absolute; inset: 0; display: grid; pointer-events: none; }
+  .tile { position: relative; box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .25); }
+  .tile span { position: absolute; left: 4px; top: 4px; padding: 1px 6px; border-radius: 4px;
+               background: var(--chip); color: var(--chip-ink); font: 600 12px/1.4 ui-monospace, Consolas, monospace; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 16px; }
+  label { display: grid; gap: 4px; font-weight: 600; font-size: 13px; }
+  label small { font-weight: 400; color: var(--muted); }
+  input[type=text], input[type=number] { font: inherit; padding: 6px 8px; border: 1px solid var(--line);
+        border-radius: 6px; background: var(--bg); color: var(--ink); width: 100%; }
+  label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+  pre { background: var(--code); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 12px 0 8px; white-space: pre-wrap; word-break: break-all; }
+  .note { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Frame interval review</h1>
+  <p class="muted" id="source"></p>
+  <ul class="facts" id="facts"></ul>
+
+  <div class="panel">
+    <b>How to use this page.</b>
+    <ol>
+      <li>Read the sheets below. Each tile is labeled with its time in the clip.</li>
+      <li>Look for the smallest change between neighboring tiles that still shows the camera moving. Too similar wastes space and time; too different may not overlap.</li>
+      <li>Type the interval and range you want in the builder at the bottom, then copy the command it prints. Run it with <code>--dry-run</code> first.</li>
+    </ol>
+    <p class="note">These are previews for choosing only. Choosing an interval here does not check that frames overlap; the camera review before training does.</p>
+  </div>
+
+  <div id="sheets"></div>
+
+  <h2>Build the extract command</h2>
+  <div class="panel">
+    <form id="form" autocomplete="off">
+      <label>Interval (seconds between frames)<input type="number" id="interval" step="any" min="0.01" placeholder="for example 0.5"></label>
+      <label>Start (seconds)<small>blank = start of clip</small><input type="number" id="start" step="any" min="0"></label>
+      <label>End (seconds)<small>blank = end of clip</small><input type="number" id="end" step="any" min="0"></label>
+      <label>Capture directory<small>must not exist yet; {data_root}/datasets/{name}</small><input type="text" id="capture"></label>
+      <label>What the footage shows<small>recorded verbatim</small><input type="text" id="identity"></label>
+      <label>FFmpeg prefix<small>blank = ffmpeg is on PATH</small><input type="text" id="prefix"></label>
+      <label class="check"><input type="checkbox" id="dry" checked> add --dry-run (writes nothing)</label>
+    </form>
+    <p id="estimate" class="note"></p>
+    <pre id="cmd"></pre>
+    <div class="row"><button class="primary" id="copy" type="button">Copy command</button><span id="copied" class="note" role="status"></span></div>
+  </div>
+</main>
+<script>
+const DATA = __DATA__;
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => { const r = Math.round(n * 100) / 100; return String(r); };
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const f = DATA.facts;
+
+$("source").textContent = DATA.source;
+for (const [k, v] of [
+  ["video", `${f.codec} ${f.width}x${f.height}`], ["frame rate", f.frame_rate],
+  ["duration", `${fmt(f.duration_seconds)} s`], ["rotation tag", f.rotation == null ? "none" : String(f.rotation)],
+  ["SHA-256", DATA.sha256.slice(0, 12) + "..."],
+]) { const li = el("li"); li.append(el("b", null, k + " "), document.createTextNode(String(v))); $("facts").append(li); }
+
+function sheetsFor(titleText, noteText, files, startSeconds, interval, frames, useInterval) {
+  const wrap = el("section");
+  const h = el("h2", null, titleText);
+  wrap.append(h, el("p", "muted", noteText));
+  if (useInterval) {
+    const b = el("button", null, `Use ${fmt(interval)} s`);
+    b.type = "button";
+    b.addEventListener("click", () => { $("interval").value = interval; $("interval").focus(); rebuild(); });
+    wrap.append(b);
+  }
+  const perSheet = DATA.columns * DATA.rows;
+  files.forEach((file, s) => {
+    const box = el("div", "sheet");
+    const img = el("img"); img.src = file; img.alt = `${titleText}, sheet ${s + 1}`; img.loading = "lazy";
+    const grid = el("div", "grid");
+    grid.style.gridTemplateColumns = `repeat(${DATA.columns}, 1fr)`;
+    grid.style.gridTemplateRows = `repeat(${DATA.rows}, 1fr)`;
+    for (let t = 0; t < perSheet; t++) {
+      const idx = s * perSheet + t;
+      const tile = el("div", "tile");
+      if (idx < frames) tile.append(el("span", null, fmt(startSeconds + idx * interval) + " s"));
+      grid.append(tile);
+    }
+    box.append(img, grid);
+    wrap.append(box);
+  });
+  if (!files.length) wrap.append(el("p", null, "No sheet files were found for this interval."));
+  $("sheets").append(wrap);
+}
+
+const c = DATA.coarse;
+sheetsFor("Whole clip overview", `One frame every ${fmt(c.interval_seconds)} s across the whole clip. Use it to find the part worth reconstructing.`,
+          c.files, 0, c.interval_seconds, Math.ceil(f.duration_seconds / c.interval_seconds), false);
+for (const g of DATA.groups) {
+  sheetsFor(`Every ${fmt(g.interval_seconds)} s`,
+            `${g.frames} frames covering ${fmt(g.start_seconds)} to ${fmt(g.start_seconds + g.window_seconds)} s. The whole clip at this interval would be about ${DATA.estimates[String(g.interval_seconds)] ?? Math.ceil(f.duration_seconds / g.interval_seconds)} frames.`,
+            g.files, g.start_seconds, g.interval_seconds, g.frames, true);
+}
+
+const sq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+const stem = DATA.source.split(/[\\/]/).pop().replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+let captureEdited = false;
+$("prefix").value = DATA.ffmpeg_prefix || "";
+$("capture").addEventListener("input", () => { captureEdited = true; rebuild(); });
+
+function rebuild() {
+  const interval = parseFloat($("interval").value);
+  const start = $("start").value === "" ? null : parseFloat($("start").value);
+  const end = $("end").value === "" ? null : parseFloat($("end").value);
+  if (!captureEdited) {
+    const label = interval > 0 ? String(Math.round(interval * 1000)).padStart(4, "0") + "ms" : "{interval}ms";
+    $("capture").value = `${DATA.capture_root || "{data_root}/datasets"}/${stem}-${label}-v1`;
+  }
+  const problems = [];
+  if (!(interval > 0)) problems.push("Enter an interval.");
+  if (start != null && end != null && end <= start) problems.push("End must be after start.");
+  if (end != null && end > f.duration_seconds + 0.01) problems.push(`End is past the ${fmt(f.duration_seconds)} s clip.`);
+  if (/[{}]/.test($("capture").value)) problems.push("The capture directory still holds a {placeholder}; enter an interval, and replace {data_root} with your real data root if it is shown.");
+  const span = (end != null ? end : f.duration_seconds) - (start || 0);
+  $("estimate").textContent = problems.length ? problems.join(" ")
+    : `About ${Math.ceil(span / interval)} frames of ${f.width}x${f.height}. The real count is recorded when it runs.`;
+  const parts = [DATA.tool + " extract", `--source ${sq(DATA.source)}`, `--sha256 ${DATA.sha256}`,
+                 `--capture ${sq($("capture").value)}`, `--interval ${interval > 0 ? interval : "{interval}"}`];
+  if (start != null) parts.push(`--start ${start}`);
+  if (end != null) parts.push(`--end ${end}`);
+  if ($("identity").value.trim()) parts.push(`--identity ${sq($("identity").value.trim())}`);
+  if ($("prefix").value.trim()) parts.push(`--ffmpeg-prefix ${sq($("prefix").value.trim())}`);
+  if ($("dry").checked) parts.push("--dry-run");
+  $("cmd").textContent = parts.join(" \\\n    ");
+  $("copy").disabled = problems.length > 0;
+}
+for (const id of ["interval", "start", "end", "identity", "prefix", "dry"]) $(id).addEventListener("input", rebuild);
+$("dry").addEventListener("change", rebuild);
+$("copy").addEventListener("click", async () => {
+  const text = $("cmd").textContent;
+  try { await navigator.clipboard.writeText(text); $("copied").textContent = "Copied."; }
+  catch (e) {
+    const r = document.createRange(); r.selectNodeContents($("cmd"));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $("copied").textContent = "Selected. Press Ctrl+C.";
+  }
+});
+rebuild();
+</script>
+</body>
+</html>
