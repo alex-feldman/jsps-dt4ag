@@ -12,6 +12,14 @@ today, read the commit log.
 Versioning is [SemVer](https://semver.org/) while pre-1.0: MINOR for new
 capability, PATCH for fixes. Milestones are annotated git tags.
 
+**Alpha numbering (PROPOSED, needs a decision).** A `v0.3.0-alpha.N` is a preview release, and N only
+counts previews. Feature branches do not change the version. A release is one commit on `main` that
+renames the changelog's Unreleased section, bumps `pyproject.toml` and `uv.lock`, and is tagged, made
+when a coherent set of features is finished and tested, so numbers are assigned in the order releases
+are made. Before this rule each feature branch bumped the version itself: parallel branches then took
+the same or out-of-order numbers (`alpha.10` reached `main` after `alpha.12`; two lines both claimed
+`alpha.13` and `alpha.14` on 2026-10-20).
+
 ---
 
 ## v0.1.0 — alpha: supports pre-made masked images
@@ -67,14 +75,35 @@ anything by hand.
 
 ---
 
-## v0.3.0-alpha.1: experimental organ-analysis preview
+## The v0.3.0-alpha line: plant-analysis tools (experimental preview)
 
-Adds a separate CPU command for leaf-label lifting and provisional skeleton
-extraction from an existing reconstruction and masks. Inputs and apex choice
-are explicit, outputs preserve provenance/uncertainty, and a real Welzo run
-must match the saved baseline. This preview does not claim that the collection
-batching and run-record milestone below is complete, or that a phytomer
-representation has been selected. See `pipeline/scripts/organ-analysis/`.
+**DRAFT for review, 2026-10-20.** Since 2026-10-16 every `v0.3.0-alpha.N` has shipped a tool that works
+on a finished reconstruction, or prepares a capture for one. None of them is the collection batching or
+run records that define v0.3.0 below, and the first alpha said so. They are one body of work with no
+entry in this file until now:
+
+| Area | What it does | Alpha |
+|---|---|---|
+| Organ analysis | leaf-label lifting and a provisional skeleton from an export, cameras and masks; leaf-free branch review; per-endpoint review viewer | 1 to 4 |
+| Plant separation and orientation | memory-lean clustering of a multi-plant export; the soil plane as the scene's up, plant axes, detached-cluster stacking | 5, 7 |
+| Plant asset | a versioned, capture-scoped plant-asset contract with a validator; base and apex candidates; a partial semantic package | 6, 8, 9 |
+| Frame calibration and measurement | a frame-calibration record, clicked image points to 3D, ruler scale, splat transform with a SuperSplat display copy | 10 |
+| Reconstruction catalog | opt-in atomic job records for a run (see "overlap" under v0.3.0) | 11 |
+| Viewers | click-viewer legibility, leaf-cluster IDs drawn beside the point cloud | 12, 13 |
+| Video to capture | `video-frames` (review page, extract, subset), `camera-review`, `VIDEO-WORKFLOW.md` | 14 |
+
+**Status:** experimental. Schemas carry their own version (`plant-asset`, `frame-calibration`,
+`image-clicks`, `scale-estimate`); there is no stability promise between alphas.
+
+**What the number means:** an alpha counts previews of this line, nothing more. It does not measure
+distance to v0.3.0, which is gated only by the batching and run-record criteria below plus the exit
+decision here.
+
+**When does this line stop being alpha? NOT DECIDED.** Candidates, for Alex to choose among or replace:
+(a) the plant representation is chosen (PM outcome O25.T2 is open: MTG, JSON and OpenUSD all pass the
+acceptance fixtures and none is selected); (b) a reviewed plant asset exists for a second plant and species,
+not only the Welzo cucumber; (c) a collaborator reproduces a result from the documentation alone. Until one
+is chosen the line stays alpha by definition, and that is fine.
 
 ---
 
@@ -120,6 +149,11 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
       records, so a drifted index is never authoritative
 - [ ] Batch records under `runs/batches/`, since a batch spans captures and has
       no home under any one of them
+
+**Overlap to reconcile (2026-10-20):** the Plant Reconstruction Catalog (alpha.11) writes atomic
+running and final job records with exact INI settings, selected inputs, frozen configs, command logs and
+verified export artifacts. That overlaps the per-run record items above. It is opt-in and per run. Whether
+it satisfies them, replaces them, or sits beside them is undecided, so none of those items is ticked.
 
 **Acceptance:** point it at a collection, walk away, and afterwards be able to
 say for every capture whether it succeeded, how long it took, what it produced,
