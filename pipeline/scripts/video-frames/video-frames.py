@@ -3,7 +3,7 @@
 
 The pipeline starts from an image sequence and never decodes a movie
 (``pipeline/QUICKSTART.md``, section 7). This tool is the preparation step in
-front of it. It has two subcommands and neither launches a pipeline stage.
+front of it. It has three subcommands and none launches a pipeline stage.
 
 ``review``
     Read-only on the source. Hashes the movie, records ``ffprobe`` output and
@@ -36,12 +36,16 @@ Standard library only; needs ``ffmpeg`` and ``ffprobe`` on ``PATH`` or under
 
 Usage::
 
-    python pipeline/scripts/video-frames/video-frames.py review \\
+    python3 pipeline/scripts/video-frames/video-frames.py review \\
         --source /path/to/movie.mp4 --review-root /path/to/evals/subject-video
 
-    python pipeline/scripts/video-frames/video-frames.py extract \\
+    python3 pipeline/scripts/video-frames/video-frames.py extract \\
         --source /path/to/movie.mp4 --sha256 {hash from the review} \\
         --capture {data_root}/datasets/{new-capture-id} --interval 0.5 [--dry-run]
+
+    python3 pipeline/scripts/video-frames/video-frames.py subset \\
+        --from {data_root}/datasets/{extracted-capture} \\
+        --capture {data_root}/datasets/{new-capture-id} --every 2 [--dry-run]
 """
 
 from __future__ import annotations
@@ -67,6 +71,7 @@ DEFAULT_THREADS = 2
 COARSE_SECONDS = 5.0
 CANDIDATE_INTERVALS = (2.0, 1.0, 0.5)
 PREVIEW_SECONDS = 30.0
+END_TOLERANCE = Fraction(1, 20)   # seconds an --end may overshoot the probed duration (rounding)
 ESTIMATE_INTERVALS = (4.0, 2.0, 1.0, 0.5, 0.25)
 SHEET_COLUMNS = 5
 SHEET_ROWS = 4
@@ -124,11 +129,12 @@ def interval_label(interval: Fraction) -> str:
 
 
 def estimate_frames(duration: float, interval: Fraction) -> int:
-    """Approximate count: ffmpeg's ``fps`` filter keeps a frame at the start and
-    one per interval, and drops the one that would land at the clip's end."""
+    """Approximate count: ffmpeg's ``fps`` filter output equals
+    ``round(duration / interval)``, halves rounding up. Measured against ffmpeg 9.0.1
+    on synthetic clips (10 s at 0.3, 0.7, 1, 3 s and a 10.29 s clip at 1 and 2 s)."""
     if duration <= 0:
         return 0
-    return int(math.ceil(Fraction(str(duration)) / interval))
+    return int(math.floor(Fraction(str(duration)) / interval + Fraction(1, 2)))
 
 
 def read_png_size(path: Path) -> Tuple[int, int]:
@@ -270,7 +276,9 @@ def write_index(review: Path, data: Dict) -> Path:
     builds the exact ``extract`` command from the interval and range you choose.
     The page is static and offline; all of its content comes from ``data``."""
     template = (Path(__file__).resolve().parent / "review-index.template.html").read_text(encoding="utf-8")
-    payload = json.dumps(data).replace("</", "<\\/")
+    # Inside a script element, "<!--<script" stops the next "</script>" from closing it, and a
+    # plain "</" can close it early. Escape every character that matters to the HTML parser.
+    payload = (json.dumps(data).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"))
     page = review / "index.html"
     page.write_text(template.replace("__DATA__", payload), encoding="utf-8")
     return page
@@ -281,22 +289,32 @@ def write_index(review: Path, data: Dict) -> Path:
 # ---------------------------------------------------------------------------
 
 def cmd_review(args: argparse.Namespace) -> int:
-    source = Path(args.source)
+    source = Path(args.source).expanduser().resolve()
     if not source.is_file():
         raise ToolError(f"source not found: {source}")
-    prefix = Path(args.ffmpeg_prefix) if args.ffmpeg_prefix else None
+    prefix = Path(args.ffmpeg_prefix).expanduser() if args.ffmpeg_prefix else None
     ffmpeg, ffprobe = find_tool("ffmpeg", prefix), find_tool("ffprobe", prefix)
 
-    review = Path(args.review_root) / f"sampling-review-{now_stamp()}"
+    # Everything that can be refused is checked before anything is created.
+    data = probe(ffprobe, source)
+    facts = summarize_probe(data)
+    duration = facts["duration_seconds"]
+    coarse = parse_interval(str(args.coarse_seconds))
+    start = Fraction(str(args.candidate_start))
+    preview = Fraction(str(args.preview_seconds))
+    if start < 0 or preview <= 0:
+        raise ToolError("--candidate-start must not be negative and --preview-seconds must be positive")
+    groups = plan_candidates(duration, start, preview,
+                             [parse_interval(str(v)) for v in args.candidate_intervals])
+
+    review_root = Path(args.review_root).expanduser().resolve()
+    review = review_root / f"sampling-review-{now_stamp()}"
     review.mkdir(parents=True, exist_ok=False)
     print(f"review dir: {review}", flush=True)
 
     digest = sha256_of(source)
     (review / "source.sha256").write_text(f"{digest}  {source}\n")
-    data = probe(ffprobe, source)
     (review / "ffprobe.json").write_text(json.dumps(data, indent=2))
-    facts = summarize_probe(data)
-    duration = facts["duration_seconds"]
 
     estimates = {
         str(float(i)): estimate_frames(duration, Fraction(str(i))) for i in ESTIMATE_INTERVALS
@@ -307,17 +325,10 @@ def cmd_review(args: argparse.Namespace) -> int:
         "tool": TOOL,
         **facts,
         "estimated_frames_by_interval_seconds": estimates,
-        "estimate_note": "approximate: ceil(duration / interval); the real count is in extraction.json",
+        "estimate_note": "approximate: round(duration / interval); the real count is in extraction.json",
     }
     (review / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    coarse = parse_interval(str(args.coarse_seconds))
-    start = Fraction(str(args.candidate_start))
-    preview = Fraction(str(args.preview_seconds))
-    if start < 0 or preview <= 0:
-        raise ToolError("--candidate-start must not be negative and --preview-seconds must be positive")
-    groups = plan_candidates(duration, start, preview,
-                             [parse_interval(str(v)) for v in args.candidate_intervals])
     tile = f"tile={SHEET_COLUMNS}x{SHEET_ROWS}"
     scale = f"scale={PREVIEW_WIDTH}:-1"
     steps = [("contact-%02d.jpg", f"fps={fps_expression(coarse)},{scale},{tile}", None, None,
@@ -345,8 +356,9 @@ def cmd_review(args: argparse.Namespace) -> int:
         "coarse": {"interval_seconds": float(coarse),
                    "files": sorted(p.name for p in review.glob("contact-*.jpg"))},
         "groups": groups, "columns": SHEET_COLUMNS, "rows": SHEET_ROWS,
-        "ffmpeg_prefix": args.ffmpeg_prefix or "", "tool": "python pipeline/scripts/video-frames/video-frames.py",
-        "capture_root": guess_capture_root(Path(args.review_root)),
+        "ffmpeg_prefix": str(prefix) if prefix else "",
+        "tool": f"python3 {Path(__file__).resolve()}",
+        "capture_root": guess_capture_root(review_root),
     })
 
     notes = {
@@ -410,8 +422,8 @@ def write_frames_csv(path: Path, frames: Sequence[Path], interval: Fraction,
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    source = Path(args.source)
-    capture = Path(args.capture)
+    source = Path(args.source).expanduser().resolve()
+    capture = Path(args.capture).expanduser().resolve()
     interval = parse_interval(args.interval)
     start = Fraction(str(args.start)) if args.start else None
     end = Fraction(str(args.end)) if args.end is not None else None
@@ -430,7 +442,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
     if capture.exists():
         raise ToolError(f"REFUSED: {capture} already exists. Preserve it and choose a new capture "
                         f"name or version; a changed sampling plan is a new capture.")
-    prefix = Path(args.ffmpeg_prefix) if args.ffmpeg_prefix else None
+    prefix = Path(args.ffmpeg_prefix).expanduser() if args.ffmpeg_prefix else None
     ffmpeg, ffprobe = find_tool("ffmpeg", prefix), find_tool("ffprobe", prefix)
 
     actual = sha256_of(source)
@@ -439,6 +451,13 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
     facts = summarize_probe(probe(ffprobe, source))
     duration = facts["duration_seconds"]
+    # A range that does not fit the clip is refused here, before anything is created or copied.
+    # (A typo such as --end 90 on a 54 s clip is refused, not clamped, so the record never states
+    # a range the clip does not have.)
+    if start is not None and start >= Fraction(str(duration)):
+        raise ToolError(f"--start {float(start)} is at or past the end of the {duration:.2f} s clip")
+    if end is not None and end > Fraction(str(duration)) + END_TOLERANCE:
+        raise ToolError(f"--end {float(end)} is past the end of the {duration:.2f} s clip")
     window = (end if end is not None else Fraction(str(duration))) - (start or 0)
     if window <= 0:
         raise ToolError(f"the chosen range is outside the {duration:.2f} s clip")
@@ -506,7 +525,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
         record["status"] = STATUS_NEEDS_REVIEW
         manifest.write_text(json.dumps(record, indent=2))
         raise ToolError(f"{len(frames)} frames in {len(shapes)} shapes; do not train. "
-                        f"A single COLMAP camera needs one image shape (operating-jsps-dt4ag.md, section 4).")
+                        f"A single COLMAP camera needs one image shape; see pipeline/QUICKSTART.md, section 7, step 4.")
     record["status"] = STATUS_PENDING_REVIEW
     manifest.write_text(json.dumps(record, indent=2))
 
@@ -537,8 +556,8 @@ def cmd_subset(args: argparse.Namespace) -> int:
     This never falls back to copying: if links cannot be made it stops and removes
     only what it created.
     """
-    parent = Path(args.parent)
-    capture = Path(args.capture)
+    parent = Path(args.parent).expanduser().resolve()
+    capture = Path(args.capture).expanduser().resolve()
     every = args.every
     offset = args.offset
     if every < 2:
@@ -583,7 +602,9 @@ def cmd_subset(args: argparse.Namespace) -> int:
         resolved = images.resolve()
         for row in chosen:
             try:
-                (capture / "images" / row["filename"]).symlink_to(resolved / row["filename"])
+                # Relative links, so moving or restoring the whole datasets tree keeps them valid.
+                relative = os.path.relpath(resolved / row["filename"], (capture / "images"))
+                (capture / "images" / row["filename"]).symlink_to(relative)
             except (OSError, NotImplementedError) as err:
                 raise ToolError(f"cannot make symlinks here ({err}); this tool never copies photographs. "
                                 f"Use a filesystem that supports links (ext4, not exFAT).")
@@ -608,8 +629,10 @@ def cmd_subset(args: argparse.Namespace) -> int:
         "frame_count": len(chosen),
         "frames": [r["filename"] for r in chosen],
         "link_target_dir": str(resolved),
+        "link_style": "relative",
         "dimensions": parent_record.get("dimensions"),
-        "warning": "the links point at the parent's images/; moving or deleting the parent breaks them",
+        "warning": "the links point at the parent's images/ by relative path; moving or deleting the "
+                   "parent on its own breaks them, moving the whole datasets tree does not",
         "status": STATUS_PENDING_REVIEW,
     }
     (capture / "provenance" / "subset.json").write_text(json.dumps(record, indent=2))

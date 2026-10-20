@@ -1032,7 +1032,7 @@ pipeline stage.
 1. Review the footage:
 
    ```bash
-   python pipeline/scripts/video-frames/video-frames.py review \
+   python3 pipeline/scripts/video-frames/video-frames.py review \
        --source /path/to/source.mp4 --review-root /path/to/review
    ```
 
@@ -1050,7 +1050,7 @@ pipeline stage.
    with `--dry-run` first:
 
    ```bash
-   python pipeline/scripts/video-frames/video-frames.py extract \
+   python3 pipeline/scripts/video-frames/video-frames.py extract \
        --source /path/to/source.mp4 --sha256 {hash from the review} \
        --capture /path/to/data/datasets/{new-capture-id} --interval 0.5
    ```

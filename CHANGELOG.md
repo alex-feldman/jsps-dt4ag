@@ -32,8 +32,14 @@ Dates are the tag date, not the commit date, where they differ.
   offline `index.html` that prints the time on every tile and builds the exact
   `extract` command from the interval and range you type.
 - `subset`: makes a sparser capture (every Nth frame) from an extracted one as
-  symlinks, with provenance and no copied photograph. It refuses, rather than
-  copies, where links are impossible.
+  relative symlinks, with provenance and no copied photograph. It refuses, rather
+  than copies, where links are impossible. Relative links survive moving or
+  restoring the whole `datasets/` tree.
+- `extract` refuses a range that does not fit the clip (`--start` at or past the
+  end, `--end` past it) before creating or copying anything. Frame-count
+  estimates use `round(duration / interval)`, which matched ffmpeg's `fps` filter
+  in every measured case. `review` validates its inputs before creating its
+  folder, and the page escapes every character the HTML parser treats specially.
 
 ### Changed
 

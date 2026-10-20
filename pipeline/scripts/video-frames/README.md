@@ -25,7 +25,7 @@ comes with the COLMAP recipe in QUICKSTART section 3 is enough.
 ### review
 
 ```bash
-python pipeline/scripts/video-frames/video-frames.py review \
+python3 pipeline/scripts/video-frames/video-frames.py review \
     --source /path/to/movie.mp4 \
     --review-root {data_root}/evals/{subject}-video
 ```
@@ -51,7 +51,7 @@ machine; `--preview-seconds 60` takes longer).
 ### extract
 
 ```bash
-python pipeline/scripts/video-frames/video-frames.py extract \
+python3 pipeline/scripts/video-frames/video-frames.py extract \
     --source /path/to/movie.mp4 --sha256 {hash from source.sha256} \
     --capture {data_root}/datasets/{new-capture-id} \
     --interval 0.5 [--start 0 --end 90] \
@@ -93,7 +93,7 @@ standard error. A failed extraction is preserved, never cleaned up.
 ### subset
 
 ```bash
-python pipeline/scripts/video-frames/video-frames.py subset \
+python3 pipeline/scripts/video-frames/video-frames.py subset \
     --from {data_root}/datasets/{extracted-capture} \
     --capture {data_root}/datasets/{new-capture-id} --every 2 [--offset 0] [--dry-run]
 ```
@@ -113,8 +113,9 @@ result under 3 frames.
 
 Things to know:
 
-- The links point at the parent's `images/`. Moving or deleting the parent breaks
-  them. The pipeline still writes its own per-run copies and downscaled
+- The links are relative and point at the parent's `images/`, so moving or
+  restoring the whole `datasets/` tree keeps them valid. Moving or deleting the
+  parent on its own breaks them. The pipeline still writes its own per-run copies and downscaled
   pyramids (nerfstudio's `ns-process-data`), which no capture layout avoids.
 - Subsets of one video share frames. They show what sampling density costs and
   buys; they are not independent replicates.
@@ -141,9 +142,9 @@ Things to know:
   reconstructable by sampling.** The review is where to notice that.
 - It extracts PNG only, and decodes on the CPU (`-hwaccel none`).
 
-How to choose an interval from camera motion and blur, and the resource limits
-that apply to long jobs on a Windows host, are the workspace's procedure, not
-repeated here.
+How to choose an interval from camera motion and blur is a judgment this tool
+does not make. Decoding 4K footage on the CPU is memory-hungry: the default of
+two ffmpeg threads is deliberate, and `--threads` raises it.
 
 ## Tests
 

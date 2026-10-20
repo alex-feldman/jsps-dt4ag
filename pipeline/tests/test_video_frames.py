@@ -17,6 +17,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -121,13 +123,19 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(vf.interval_label(Fraction("0.5")), "0500ms")
         self.assertEqual(vf.interval_label(Fraction(2)), "2000ms")
 
-    def test_estimate_frames_matches_observed_runs(self):
-        # Observed: a 10.00 s synthetic clip at 1 s gave 10 frames and a 3 s
-        # range at 0.5 s gave 6; the Welzo bed video (about 90.4 s) gave 181.
-        self.assertEqual(vf.estimate_frames(10.0, Fraction(1)), 10)
-        self.assertEqual(vf.estimate_frames(3.0, Fraction("0.5")), 6)
-        self.assertEqual(vf.estimate_frames(90.4, Fraction("0.5")), 181)
-        self.assertEqual(vf.estimate_frames(54.43, Fraction("0.5")), 109)
+    def test_estimate_frames_matches_what_ffmpeg_produced(self):
+        # Measured against ffmpeg 9.0.1's fps filter on synthetic clips (the filter's
+        # output is round(duration / interval), halves up). A ceil() estimate was wrong
+        # for most of these, and agrees with round() only on the easy cases.
+        measured = [
+            (10.0, "0.3", 33), (10.0, "0.7", 14), (10.0, "3", 3), (10.0, "1", 10),
+            (10.0, "0.5", 20), (10.2917, "1", 10), (10.2917, "2", 5),
+            # recorded runs: a 3 s range at 0.5 s, the Welzo bed video, the cactus clip
+            (3.0, "0.5", 6), (90.4, "0.5", 181), (54.43, "0.5", 109),
+        ]
+        for duration, interval, frames in measured:
+            self.assertEqual(vf.estimate_frames(duration, Fraction(interval)), frames,
+                             f"{duration} s at {interval} s")
         self.assertEqual(vf.estimate_frames(0, Fraction(1)), 0)
 
     def test_parse_interval_refuses_nonsense(self):
@@ -207,6 +215,23 @@ class TestExtract(Base):
         code, _, err = self.extract(sha="abc")
         self.assertEqual(code, 2)
         self.assertIn("64-character", err)
+
+    def test_refuses_a_range_outside_the_clip_before_creating_anything(self):
+        # The probed clip is 54.43 s long.
+        for argv, fragment in (
+            (["--start", "100", "--end", "110"], "past the end"),
+            (["--start", "54.5"], "past the end"),
+            (["--end", "90"], "past the end"),
+        ):
+            code, _, err = self.extract(*argv)
+            self.assertEqual(code, 2, argv)
+            self.assertIn(fragment, err)
+            self.assertFalse(self.capture.exists(), argv)
+            self.assertEqual(self.fake.commands, [])
+
+    def test_an_end_within_rounding_of_the_clip_end_is_accepted(self):
+        code, out, _ = self.extract("--end", "54.45", "--dry-run")
+        self.assertEqual(code, 0, out)
 
     def test_refuses_a_range_that_ends_before_it_starts(self):
         code, _, err = self.extract("--start", "10", "--end", "5")
@@ -309,6 +334,18 @@ class TestSubset(Base):
             rows = list(csv.DictReader(handle))
         self.assertEqual([r["filename"] for r in rows], record["frames"])
         self.assertEqual(rows[1]["output_grid_seconds"], "1.0")
+
+    def test_links_are_relative_and_survive_moving_the_whole_datasets_tree(self):
+        self.subset()
+        link = self.child / "images" / "frame_000001.png"
+        self.assertFalse(Path(os.readlink(link)).is_absolute())
+        moved = self.tmp / "restored" / "datasets"
+        moved.parent.mkdir()
+        shutil.move(str(self.tmp / "datasets"), str(moved))
+        for name in ("frame_000001.png", "frame_000011.png"):
+            self.assertTrue((moved / "child" / "images" / name).is_file(), name)
+        self.assertEqual((moved / "child" / "images" / "frame_000001.png").resolve(),
+                         (moved / "new-capture" / "images" / "frame_000001.png").resolve())
 
     def test_every_fourth_with_an_offset(self):
         code, _, _ = self.subset("--offset", "1", every="4")
@@ -443,9 +480,24 @@ class TestReview(Base):
     def test_index_page_cannot_be_broken_out_of_by_its_data(self):
         out = self.tmp / "page"
         out.mkdir()
-        page = vf.write_index(out, {"source": "x</script><b>y", "facts": {}}).read_text(encoding="utf-8")
-        self.assertEqual(page.count("</script>"), 1)
-        self.assertIn("<\\/script>", page)
+        for hostile in ("x</script><b>y", "a<!--<script>b", "q&amp;<z>"):
+            page = vf.write_index(out, {"source": hostile, "facts": {}}).read_text(encoding="utf-8")
+            self.assertEqual(page.count("</script>"), 1, hostile)
+            self.assertNotIn("<!--<script", page, hostile)
+            self.assertNotIn(hostile, page, hostile)
+            self.assertIn("\\u003c", page)
+
+    def test_page_command_uses_python3_and_an_absolute_script_path(self):
+        self.run_review()
+        page = (self.review_dir() / "index.html").read_text(encoding="utf-8")
+        self.assertIn("python3 " + str(Path(vf.__file__).resolve()), page.replace("\\/", "/"))
+
+    def test_a_bad_candidate_start_leaves_nothing_behind(self):
+        code, _, err = self.run_review("--candidate-start", "100")
+        self.assertEqual(code, 2)
+        self.assertIn("past the end", err)
+        self.assertEqual(list((self.tmp / "evals").glob("*")) if (self.tmp / "evals").exists() else [], [])
+        self.assertEqual(self.fake.commands, [])
 
     def test_sheet_failure_is_reported(self):
         self.fake.returncode = 1

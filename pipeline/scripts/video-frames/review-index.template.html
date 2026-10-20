@@ -126,10 +126,10 @@ function sheetsFor(titleText, noteText, files, startSeconds, interval, frames, u
 
 const c = DATA.coarse;
 sheetsFor("Whole clip overview", `One frame every ${fmt(c.interval_seconds)} s across the whole clip. Use it to find the part worth reconstructing.`,
-          c.files, 0, c.interval_seconds, Math.ceil(f.duration_seconds / c.interval_seconds), false);
+          c.files, 0, c.interval_seconds, Math.round(f.duration_seconds / c.interval_seconds), false);
 for (const g of DATA.groups) {
   sheetsFor(`Every ${fmt(g.interval_seconds)} s`,
-            `${g.frames} frames covering ${fmt(g.start_seconds)} to ${fmt(g.start_seconds + g.window_seconds)} s. The whole clip at this interval would be about ${DATA.estimates[String(g.interval_seconds)] ?? Math.ceil(f.duration_seconds / g.interval_seconds)} frames.`,
+            `${g.frames} frames covering ${fmt(g.start_seconds)} to ${fmt(g.start_seconds + g.window_seconds)} s. The whole clip at this interval would be about ${DATA.estimates[String(g.interval_seconds)] ?? Math.round(f.duration_seconds / g.interval_seconds)} frames.`,
             g.files, g.start_seconds, g.interval_seconds, g.frames, true);
 }
 
@@ -151,10 +151,11 @@ function rebuild() {
   if (!(interval > 0)) problems.push("Enter an interval.");
   if (start != null && end != null && end <= start) problems.push("End must be after start.");
   if (end != null && end > f.duration_seconds + 0.01) problems.push(`End is past the ${fmt(f.duration_seconds)} s clip.`);
+  if (/^~/.test($("capture").value.trim())) problems.push("Use an absolute capture path: a leading ~ is not expanded inside the quotes.");
   if (/[{}]/.test($("capture").value)) problems.push("The capture directory still holds a {placeholder}; enter an interval, and replace {data_root} with your real data root if it is shown.");
   const span = (end != null ? end : f.duration_seconds) - (start || 0);
   $("estimate").textContent = problems.length ? problems.join(" ")
-    : `About ${Math.ceil(span / interval)} frames of ${f.width}x${f.height}. The real count is recorded when it runs.`;
+    : `About ${Math.round(span / interval)} frames of ${f.width}x${f.height}. The real count is recorded when it runs.`;
   const parts = [DATA.tool + " extract", `--source ${sq(DATA.source)}`, `--sha256 ${DATA.sha256}`,
                  `--capture ${sq($("capture").value)}`, `--interval ${interval > 0 ? interval : "{interval}"}`];
   if (start != null) parts.push(`--start ${start}`);
