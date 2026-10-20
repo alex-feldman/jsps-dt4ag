@@ -14,6 +14,8 @@ machines and a tag records a milestone permanently at zero merge cost.
 
 Dates are the tag date, not the commit date, where they differ.
 
+## [Unreleased]
+
 ## [0.3.0-alpha.14] - 2026-10-20
 
 ### Added
@@ -303,7 +305,7 @@ in this source snapshot.
   label arrays, source-instance associations and full skeleton JSON. This is
   exploratory geometry, not biological accuracy validation.
 
-## [Unreleased]
+## [Pre-alpha, included in 0.3.0-alpha.1]
 
 ### Added
 

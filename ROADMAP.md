@@ -12,13 +12,13 @@ today, read the commit log.
 Versioning is [SemVer](https://semver.org/) while pre-1.0: MINOR for new
 capability, PATCH for fixes. Milestones are annotated git tags.
 
-**Alpha numbering (PROPOSED, needs a decision).** A `v0.3.0-alpha.N` is a preview release, and N only
-counts previews. Feature branches do not change the version. A release is one commit on `main` that
-renames the changelog's Unreleased section, bumps `pyproject.toml` and `uv.lock`, and is tagged, made
-when a coherent set of features is finished and tested, so numbers are assigned in the order releases
-are made. Before this rule each feature branch bumped the version itself: parallel branches then took
-the same or out-of-order numbers (`alpha.10` reached `main` after `alpha.12`; two lines both claimed
-`alpha.13` and `alpha.14` on 2026-10-20).
+**Versioning at release, not per feature (adopted 2026-10-20).** A feature commit adds its changelog
+entry under Unreleased and does not change the version or create a tag. A release is one commit on
+`main`, made when a coherent set of features is finished and tested: it renames Unreleased to the new
+version, bumps `pyproject.toml` and `uv.lock`, and is tagged. Published tags are never renumbered. Before
+this rule each feature branch bumped the version itself, so parallel branches took out-of-order numbers:
+on local `main`, `alpha.10` arrived after `alpha.12`, and `alpha.14` was numbered before `alpha.13` had
+been merged.
 
 ---
 
@@ -77,8 +77,8 @@ anything by hand.
 
 ## The v0.3.0-alpha line: plant-analysis tools (experimental preview)
 
-**DRAFT for review, 2026-10-20.** Since 2026-10-16 every `v0.3.0-alpha.N` has shipped a tool that works
-on a finished reconstruction, or prepares a capture for one. None of them is the collection batching or
+Since 2026-10-16 the `v0.3.0-alpha.N` prereleases have shipped plant-analysis tools, viewer fixes,
+capture preparation and one reconstruction-side addition (the catalog, alpha.11). None of them is the collection batching or
 run records that define v0.3.0 below, and the first alpha said so. They are one body of work with no
 entry in this file until now:
 
@@ -90,26 +90,29 @@ entry in this file until now:
 | Frame calibration and measurement | a frame-calibration record, clicked image points to 3D, ruler scale, splat transform with a SuperSplat display copy | 10 |
 | Reconstruction catalog | opt-in atomic job records for a run (see "overlap" under v0.3.0) | 11 |
 | Viewers | click-viewer legibility, leaf-cluster IDs drawn beside the point cloud | 12, 13 |
-| Video to capture | `video-frames` (review page, extract, subset), `camera-review`, `VIDEO-WORKFLOW.md` | 14 |
+| Video to capture | `video-frames` (review page, extract, subset), `camera-review`, `VIDEO-WORKFLOW.md` (serves the v1.0.0 video criteria) | 14 |
 
 **Status:** experimental. Schemas carry their own version (`plant-asset`, `frame-calibration`,
-`image-clicks`, `scale-estimate`); there is no stability promise between alphas.
+`image-clicks`, `scale-estimate`, `Plant Reconstruction Catalog v1`, `plant-asset-decisions`,
+`splat-viewer-copy`); there is no stability promise between alphas.
 
-**What the number means:** an alpha counts previews of this line, nothing more. It does not measure
-distance to v0.3.0, which is gated only by the batching and run-record criteria below plus the exit
-decision here.
+**What the number means:** an alpha counts previews, nothing more. It does not measure distance to
+v0.3.0, whose criteria are the batching and run-record items below.
 
-**When does this line stop being alpha? NOT DECIDED.** Candidates, for Alex to choose among or replace:
-(a) the plant representation is chosen (PM outcome O25.T2 is open: MTG, JSON and OpenUSD all pass the
-acceptance fixtures and none is selected); (b) a reviewed plant asset exists for a second plant and species,
-not only the Welzo cucumber; (c) a collaborator reproduces a result from the documentation alone. Until one
-is chosen the line stays alpha by definition, and that is fine.
+**When does this line stop being alpha? Not decided.** Under SemVer a `0.3.0-alpha.N` ends only by
+becoming a `0.3.0` beta, rc or release, so any exit has to be reconciled with the v0.3.0 criteria below.
+Options include: (a) a plant representation is chosen (MTG, JSON and OpenUSD all pass the acceptance
+fixtures and none is selected); (b) a reviewed plant asset exists for a second plant and species; (c) a
+collaborator reproduces a result from the documentation alone; (d) the line ends when v0.3.0's batching
+and run-record criteria are met; (e) the analysis tools move to their own version, or batching moves to a
+later minor. Until a decision is recorded here, releases stay `0.3.0-alpha.N`.
 
 ---
 
 ## v0.3.0 — run a whole collection, and know what every run did
 
-Not started. Two halves of one story: driving many captures without a hand-written
+In progress: one run-record item is half done (2026-08-21), and the alpha.11 catalog overlaps the rest
+(see below). Two halves of one story: driving many captures without a hand-written
 loop, and being able to answer afterwards what each run did and how far it got.
 Today a batch is a shell loop over one config per capture, with no resume and no
 record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
