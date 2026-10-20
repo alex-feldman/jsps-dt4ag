@@ -78,9 +78,8 @@ anything by hand.
 ## The v0.3.0-alpha line: plant-analysis tools (experimental preview)
 
 Since 2026-10-16 the `v0.3.0-alpha.N` prereleases have shipped plant-analysis tools, viewer fixes,
-capture preparation and one reconstruction-side addition (the catalog, alpha.11). None of them is the collection batching or
-run records that define v0.3.0 below, and the first alpha said so. They are one body of work with no
-entry in this file until now:
+capture preparation and one reconstruction-side addition (the catalog, alpha.11). These releases do not yet fulfill the collection-batching and run-record acceptance criteria
+for v0.3.0 below. The preview capabilities are grouped here:
 
 | Area | What it does | Alpha |
 |---|---|---|
@@ -99,20 +98,20 @@ entry in this file until now:
 **What the number means:** an alpha counts previews, nothing more. It does not measure distance to
 v0.3.0, whose criteria are the batching and run-record items below.
 
-**When does this line stop being alpha? Not decided.** Under SemVer a `0.3.0-alpha.N` ends only by
-becoming a `0.3.0` beta, rc or release, so any exit has to be reconciled with the v0.3.0 criteria below.
-Options include: (a) a plant representation is chosen (MTG, JSON and OpenUSD all pass the acceptance
-fixtures and none is selected); (b) a reviewed plant asset exists for a second plant and species; (c) a
-collaborator reproduces a result from the documentation alone; (d) the line ends when v0.3.0's batching
-and run-record criteria are met; (e) the analysis tools move to their own version, or batching moves to a
-later minor. Until a decision is recorded here, releases stay `0.3.0-alpha.N`.
+**Alpha exit (decided 2026-10-20).** Stay on `0.3.0-alpha.N` until the batching and
+run-record acceptance criteria below work end to end. Then publish `0.3.0-beta.1`
+for independent testing. Publish `0.3.0` after the documented acceptance test
+passes and release validation is complete. A representation choice or a second
+species asset alone does not satisfy this gate. Plant-analysis schemas remain
+experimental unless their own documentation explicitly promises stability.
+
+See [the ordered path to v0.3.0](docs/v0.3.0-release-plan.md).
 
 ---
 
 ## v0.3.0 — run a whole collection, and know what every run did
 
-In progress: one run-record item is half done (2026-08-21), and the alpha.11 catalog overlaps the rest
-(see below). Two halves of one story: driving many captures without a hand-written
+Two halves of one story: driving many captures without a hand-written
 loop, and being able to answer afterwards what each run did and how far it got.
 Today a batch is a shell loop over one config per capture, with no resume and no
 record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).

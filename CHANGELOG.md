@@ -16,6 +16,11 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Changed
+
+- Reconcile the alpha release history and adopt release-time versioning. Define
+  the v0.3.0 alpha, beta and release gates, with an ordered release plan.
+
 ## [0.3.0-alpha.14] - 2026-10-20
 
 ### Added
