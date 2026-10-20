@@ -170,6 +170,17 @@ in `QUICKSTART.md` section 6.
   GPU. Check `nvidia-smi` *inside* WSL, not on Windows. A laptop in an "eco" or hybrid power mode switches
   the NVIDIA GPU off; set it to a mode that keeps it on. After a driver update or sleep, close other WSL work
   and run `wsl --shutdown` in PowerShell.
+- **A run is stopped or refused for low Windows RAM, though little is in use inside WSL (often at
+  `ns-process-data`):** WSL keeps every file it reads or writes in its file cache (`buff/cache` in
+  `free -m`), Windows counts that as used (`vmmemWSL` in Task Manager) and WSL does not give it back. One
+  measurement, 2026-10-20: 841 MiB used inside WSL, 9.6 GiB cached, `vmmemWSL` 10.4 GiB, Windows free
+  2.7 GiB of 31.9. `ns-process-data` copies the full-size images and added several GB in seconds: on a
+  55-frame 3840x2880 capture Windows free RAM fell from 4.5 GiB to 0.9 GiB in about five seconds. Running
+  that stage on two CPUs (`taskset -c 0,1`) was enough for 28 frames and not for 55. Free the cache before a
+  run: `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. If Windows free RAM barely moves, close other
+  WSL work and run `wsl --shutdown` in PowerShell, which does return it. Not verified: setting
+  `autoMemoryReclaim=gradual` under `[experimental]` in `%UserProfile%\.wslconfig` (needs a `wsl --shutdown`
+  to take effect) may make this automatic.
 - **WSL dies or runs out of memory during COLMAP or masking:** free Windows RAM, lower `--num_threads`, and
   check free space on the Windows drive that holds the WSL disk (QUICKSTART, WSL2 section).
 - **Unattended runs:** `uv` and the COLMAP prefix must be on `PATH` (the first block above), and one GPU job

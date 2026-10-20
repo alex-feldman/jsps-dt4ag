@@ -50,6 +50,8 @@ Dates are the tag date, not the commit date, where they differ.
   in every measured case. `review` validates its inputs before creating its
   folder, and the page escapes every character the HTML parser treats specially.
 
+- `VIDEO-WORKFLOW.md` troubleshooting: a run refused or stopped for low Windows RAM while little is in use
+  inside WSL is usually WSL's file cache (measured: 9.6 GiB cached, 841 MiB used), and how to free it.
 - `pipeline/VIDEO-WORKFLOW.md`: the whole path from a video file to a splat as plain,
   copy-paste commands (review page, choose the interval, extract, config, solve
   cameras, camera review, train and export), usable by a person or an agent alike.
