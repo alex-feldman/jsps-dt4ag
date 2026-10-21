@@ -419,6 +419,15 @@ class Dt4agConfig:
     export_3dgs: bool
     gauss_to_pc_script: str
 
+    # [host]  (optional section; empty values change no command)
+    #: ``[host] memory_high``: a cgroup v2 ``MemoryHigh`` for every external
+    #: stage command (colmap, ns-process-data, ns-train, ns-export), applied by
+    #: wrapping it in ``systemd-run --user --scope``. Empty: no cap.
+    memory_high: str = ""
+    #: ``[host] process_cpus``: a ``taskset -c`` CPU list for ns-process-data
+    #: only. Empty: every CPU.
+    process_cpus: str = ""
+
     _resolved_run_id: Optional[str] = field(default=None, repr=False)
 
     #: Things the loader accepted but wants on the record: one line each, in
@@ -682,6 +691,13 @@ class Dt4agConfig:
             "use_masks": str(self.use_masks).lower(),
             "mask_variant": self.mask_variant,
         }
+        # Host limits shape how a run behaved on the machine, not what it
+        # computed, so they are recorded only when set: an archive of a config
+        # without [host] reads exactly as it did before the section existed.
+        if self.memory_high:
+            record["memory_high"] = self.memory_high
+        if self.process_cpus:
+            record["process_cpus"] = self.process_cpus
         record.update({k: str(v) for k, v in extra.items() if v not in (None, "")})
 
         lines = [
@@ -835,6 +851,8 @@ class Dt4agConfig:
             f"checkpoint_interval: {self.checkpoint_interval or '(final only)'}",
             f"export_format      : {self.export_format}",
             f"export_3dgs        : {self.export_3dgs}",
+            f"memory_high        : {self.memory_high or '(none: no cap)'}",
+            f"process_cpus       : {self.process_cpus or '(none: every CPU)'}",
         ]
         return "\n".join(lines)
 
@@ -884,6 +902,68 @@ def _validate_mask_variant(value: str, source: Path) -> None:
             f"'<capture>/masks/'. It is a name, not a path, so it cannot "
             f"point outside the capture (see pipeline/LAYOUT.md)."
         )
+
+
+#: Smallest ``[host] memory_high`` accepted. MemoryHigh never kills; it
+#: throttles, so a cap far below what a stage needs does not fail, it makes the
+#: stage crawl. Anything under this is a typo (``8M`` for ``8G``), not a choice.
+MIN_MEMORY_HIGH_BYTES = 512 * 1024 ** 2
+
+_SIZE_RE = re.compile(r"^([1-9][0-9]*)([KMGT]?)$")
+_CPU_LIST_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
+
+
+def parse_memory_high(value: str, source: Path) -> str:
+    """Validate ``[host] memory_high`` and return it as systemd will read it.
+
+    A positive whole number of bytes with an optional ``K``, ``M``, ``G`` or
+    ``T`` suffix (powers of 1024, as systemd reads them). Lowercase suffixes
+    are accepted and upper-cased, since systemd itself only knows the
+    uppercase ones. Percentages and ``infinity`` are refused: the first depends
+    on the machine, the second is the same as leaving the key empty.
+    """
+    normalised = value.strip().upper()
+    match = _SIZE_RE.match(normalised)
+    if not match:
+        raise ConfigError(
+            f"key 'memory_high' in section [host] of config file {source} must "
+            f"be a size such as 8G or 6000M (a whole number with an optional K, "
+            f"M, G or T suffix), or empty for no cap; got {value!r}"
+        )
+    number, suffix = int(match.group(1)), match.group(2)
+    size = number * 1024 ** " KMGT".index(suffix or " ")
+    if size < MIN_MEMORY_HIGH_BYTES:
+        raise ConfigError(
+            f"key 'memory_high' in section [host] of config file {source} is "
+            f"{value!r}, below the 512M minimum. MemoryHigh throttles rather "
+            f"than kills, so a cap that small would make every stage crawl; "
+            f"use for example 8G"
+        )
+    return normalised
+
+
+def parse_cpu_list(value: str, key: str, source: Path) -> str:
+    """Validate a ``taskset -c`` CPU list such as ``0,1`` or ``0-3,6``.
+
+    Only the syntax and the order of each range are checked here. Whether the
+    CPUs exist is a property of the machine that runs the config, so the runner
+    checks that at run time, not the loader.
+    """
+    normalised = value.replace(" ", "")
+    if not _CPU_LIST_RE.match(normalised):
+        raise ConfigError(
+            f"key '{key}' in section [host] of config file {source} must be a "
+            f"CPU list such as 0,1 or 0-3 (as taskset -c reads it), or empty "
+            f"for every CPU; got {value!r}"
+        )
+    for part in normalised.split(","):
+        low, _, high = part.partition("-")
+        if high and int(high) < int(low):
+            raise ConfigError(
+                f"key '{key}' in section [host] of config file {source} has the "
+                f"range {part!r}, whose end is below its start"
+            )
+    return normalised
 
 
 def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
@@ -1358,6 +1438,28 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"is required when export_3dgs = true"
         )
 
+    # [host]  Optional as a whole: a config written before it existed has no
+    # such section and runs every command exactly as before.
+    memory_high = ""
+    process_cpus = ""
+    if parser.has_section("host"):
+        # A new section can afford to refuse what it does not know: a
+        # misspelled memory_high would otherwise leave the run uncapped while
+        # the config reads as capped.
+        unknown = sorted(set(parser.options("host")) - set(parser.defaults())
+                         - {"memory_high", "process_cpus"})
+        if unknown:
+            raise ConfigError(
+                f"unknown key(s) {', '.join(unknown)} in section [host] of config "
+                f"file {source}; the section knows memory_high and process_cpus"
+            )
+        raw =_get_str(parser, "host", "memory_high", source, "", allow_empty=True)
+        if raw:
+            memory_high = parse_memory_high(raw, source)
+        raw = _get_str(parser, "host", "process_cpus", source, "", allow_empty=True)
+        if raw:
+            process_cpus = parse_cpu_list(raw, "process_cpus", source)
+
     return Dt4agConfig(
         source=source,
         data_root=data_root,
@@ -1408,6 +1510,8 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         platform_label=platform_label,
         export_3dgs=export_3dgs,
         gauss_to_pc_script=gauss_to_pc_script,
+        memory_high=memory_high,
+        process_cpus=process_cpus,
     )
 
 

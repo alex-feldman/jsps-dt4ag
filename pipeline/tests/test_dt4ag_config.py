@@ -60,7 +60,8 @@ SECTIONS = ("paths", "dataset", "run", "colmap", "nerfstudio", "train", "export"
 def render_ini(sections) -> str:
     """Render an ordered mapping of section -> {key: value} as INI text."""
     chunks = []
-    for name in SECTIONS:
+    # Optional sections (such as [host]) are written only when a test names them.
+    for name in list(SECTIONS) + [s for s in sections if s not in SECTIONS]:
         chunks.append(f"[{name}]")
         for key, value in (sections.get(name) or {}).items():
             chunks.append(f"{key} = {value}")
@@ -1461,6 +1462,77 @@ class TestCommittedExampleConfig(unittest.TestCase):
                     f"the committed notebook must stay object-agnostic, but it "
                     f"mentions {term!r}. Clear the cell outputs before "
                     f"committing an executed notebook.")
+
+
+# --------------------------------------------------------------------------
+# [host]: machine limits, optional
+# --------------------------------------------------------------------------
+
+class TestHostSection(TempDirTestCase):
+    """``[host]`` is optional, validated, and recorded only when set."""
+
+    def _load(self, **host):
+        return ConfigFixture(self.tmp, extra={"host": host} if host else None).load()
+
+    def test_absent_section_means_no_limits(self):
+        cfg = self._load()
+        self.assertEqual(cfg.memory_high, "")
+        self.assertEqual(cfg.process_cpus, "")
+
+    def test_empty_keys_mean_no_limits(self):
+        cfg = self._load(memory_high="", process_cpus="")
+        self.assertEqual((cfg.memory_high, cfg.process_cpus), ("", ""))
+
+    def test_valid_values_are_normalised(self):
+        for raw, expected in (("8G", "8G"), ("6000M", "6000M"), ("8g", "8G"),
+                              (" 1T ", "1T"), ("536870912", "536870912")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._load(memory_high=raw).memory_high, expected)
+        for raw, expected in (("0,1", "0,1"), ("0-3", "0-3"), ("0-3, 6", "0-3,6")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._load(process_cpus=raw).process_cpus, expected)
+
+    def test_malformed_memory_high_is_refused(self):
+        for raw in ("8GB", "eight", "8.5G", "-8G", "infinity", "0G"):
+            with self.subTest(raw=raw):
+                fixture = ConfigFixture(self.tmp, extra={"host": {"memory_high": raw}})
+                self.assertConfigError(fixture.path, "memory_high", "host", fixture.path)
+
+    def test_a_cap_below_the_floor_is_refused(self):
+        fixture = ConfigFixture(self.tmp, extra={"host": {"memory_high": "8M"}})
+        message = self.assertConfigError(fixture.path, "memory_high", fixture.path)
+        self.assertIn("512M", message)
+
+    def test_malformed_process_cpus_is_refused(self):
+        for raw in ("0;1", "a,b", "0,", "-1", "3-1", "0..3"):
+            with self.subTest(raw=raw):
+                fixture = ConfigFixture(self.tmp, extra={"host": {"process_cpus": raw}})
+                self.assertConfigError(fixture.path, "process_cpus", "host", fixture.path)
+
+    def test_an_unknown_key_is_refused_not_ignored(self):
+        fixture = ConfigFixture(self.tmp, extra={"host": {"memory-high": "8G"}})
+        self.assertConfigError(fixture.path, "memory-high", "host", fixture.path)
+
+    def test_archive_records_set_values_only(self):
+        run = {"date": "260807", "run_count": "01", "colmap_version": "312"}
+        plain = ConfigFixture(self.tmp, extra={"run": run}).load()
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(plain.archive_run_config("run_260807-01-312"), encoding="utf-8")
+        self.assertNotIn("memory_high", parser["run-record"])
+        self.assertNotIn("process_cpus", parser["run-record"])
+
+        capped = ConfigFixture(self.tmp, extra={
+            "run": run, "host": {"memory_high": "8G", "process_cpus": "0,1"}}).load()
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(capped.archive_run_config("run_260807-01-312"), encoding="utf-8")
+        self.assertEqual(parser["run-record"]["memory_high"], "8G")
+        self.assertEqual(parser["run-record"]["process_cpus"], "0,1")
+        # The verbatim part still carries the section itself.
+        self.assertEqual(parser["host"]["memory_high"], "8G")
+
+    def test_example_ini_leaves_host_limits_off(self):
+        cfg = load_config(EXAMPLE_INI, validate_paths=False)
+        self.assertEqual((cfg.memory_high, cfg.process_cpus), ("", ""))
 
 
 # --------------------------------------------------------------------------

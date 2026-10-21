@@ -74,6 +74,8 @@ __all__ = [
     "train_command",
     "export_command",
     "export_filename",
+    "host_command",
+    "check_host_limits",
     "resolve_downscale_factor",
     "count_images",
     "read_ply_vertex_count",
@@ -529,6 +531,36 @@ def gauss_to_pc_command(cfg: Dt4agConfig, ply: Path, workspace: Path) -> List[st
         "--transform_path", str(workspace),
         "--output_path", output,
     ]
+
+
+def host_command(cfg: Dt4agConfig, command: Sequence[str], stage: str) -> List[str]:
+    """Apply the config's ``[host]`` limits to one stage's external command.
+
+    ``memory_high`` wraps the command in a transient cgroup v2 scope,
+    ``systemd-run --user --scope --quiet -p MemoryHigh=<value>``. That cap
+    covers the page cache the command creates as well as its own memory, and
+    the cache is what matters on WSL2: every image a stage reads or writes stays
+    cached in the Linux VM, which grows into Windows' RAM to hold it and does
+    not hand it back while the run continues. At the cap the kernel evicts the
+    scope's own cache instead. MemoryHigh throttles and never kills.
+
+    ``process_cpus`` pins ns-process-data, and only that stage, to a CPU list
+    with ``taskset -c``. Its ffmpeg downscale otherwise runs on every core and
+    fills the cache in seconds.
+
+    With both keys empty the command is returned unchanged, so a config
+    without ``[host]`` runs exactly what it always ran. Applied before
+    ``run_command`` prints the command, so ``--dry-run`` shows the real line.
+    """
+    wrapped = list(command)
+    if stage == "process" and cfg.process_cpus:
+        wrapped = ["taskset", "-c", cfg.process_cpus] + wrapped
+    if cfg.memory_high:
+        wrapped = [
+            "systemd-run", "--user", "--scope", "--quiet",
+            "-p", f"MemoryHigh={cfg.memory_high}",
+        ] + wrapped
+    return wrapped
 
 
 # --------------------------------------------------------------------------
@@ -1167,6 +1199,111 @@ def check_prerequisites(stages: Sequence[str]) -> None:
     log("all prerequisites satisfied")
 
 
+#: The command that proves a memory-capped scope can be created: the same
+#: wrapper ``host_command`` uses, around a command that does nothing.
+SCOPE_PROBE = ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryHigh=64M", "true"]
+
+
+def _cpu_ids(cpu_list: str) -> set:
+    """``0,2-3`` -> ``{0, 2, 3}``. The syntax was validated by the loader."""
+    ids = set()
+    for part in cpu_list.split(","):
+        low, _, high = part.partition("-")
+        ids.update(range(int(low), int(high or low) + 1))
+    return ids
+
+
+def _user_memory_delegated() -> Optional[bool]:
+    """Does the systemd user manager hand the ``memory`` controller to its scopes?
+
+    Without delegation ``systemd-run --user -p MemoryHigh=...`` still exits 0,
+    and the cap silently does nothing. None when the file is not where a
+    systemd cgroup v2 host keeps it, in which case only the probe can tell.
+    """
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    if uid is None:
+        return None
+    control = Path(
+        f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/cgroup.subtree_control"
+    )
+    try:
+        return "memory" in control.read_text().split()
+    except OSError:
+        return None
+
+
+def check_host_limits(cfg: Dt4agConfig, stages: Sequence[str]) -> None:
+    """Refuse a run whose ``[host]`` limits cannot be applied, before it starts.
+
+    A cap that was asked for and not applied is the dangerous case, so this
+    never drops it: it raises with the reason and the two ways out (make the
+    scope work, or empty the key). Nothing here runs when both keys are empty.
+    """
+    if not (cfg.memory_high or (cfg.process_cpus and "process" in stages)):
+        return
+    log_banner("host limits")
+    if cfg.memory_high:
+        fix = (
+            "  It needs cgroup v2, systemd as PID 1 and a systemd user session "
+            "that delegates the memory controller. On WSL2, set systemd=true under "
+            "[boot] in /etc/wsl.conf and restart the distro.\n"
+            f"  Or remove [host] memory_high from {cfg.source} to run without the "
+            "cap; the runner never drops a cap it was asked for."
+        )
+        try:
+            probe = subprocess.run(SCOPE_PROBE, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise StageError(
+                f"[host] memory_high = {cfg.memory_high} needs systemd-run, which "
+                f"could not run: {exc}\n{fix}"
+            ) from exc
+        if probe.returncode != 0:
+            detail = (probe.stderr or probe.stdout).strip() or "no output"
+            raise StageError(
+                f"[host] memory_high = {cfg.memory_high}, but a memory-capped "
+                f"scope could not be created: `{render(SCOPE_PROBE)}` exited "
+                f"{probe.returncode} ({detail[:300]}).\n{fix}"
+            )
+        if _user_memory_delegated() is False:
+            raise StageError(
+                f"[host] memory_high = {cfg.memory_high}, but the systemd user "
+                f"manager does not delegate the memory controller, so the cap "
+                f"would be accepted and then ignored.\n{fix}"
+            )
+        log(f"memory_high       : {cfg.memory_high} per stage command "
+            f"(systemd-run scope works)")
+    if cfg.process_cpus and "process" in stages:
+        if shutil.which("taskset") is None:
+            raise StageError(
+                f"[host] process_cpus = {cfg.process_cpus} needs taskset, which is "
+                f"not on PATH (Debian and Ubuntu ship it in util-linux)."
+            )
+        if hasattr(os, "sched_getaffinity"):
+            missing = sorted(_cpu_ids(cfg.process_cpus) - os.sched_getaffinity(0))
+            if missing:
+                raise StageError(
+                    f"[host] process_cpus = {cfg.process_cpus} names CPU(s) "
+                    f"{', '.join(map(str, missing))}, which this process cannot "
+                    f"use. Available: {render_cpu_set(os.sched_getaffinity(0))}."
+                )
+        log(f"process_cpus      : ns-process-data on CPUs {cfg.process_cpus}")
+
+
+def render_cpu_set(cpus: Iterable[int]) -> str:
+    """``{0, 1, 2, 5}`` -> ``0-2,5``, the form taskset reads."""
+    ordered = sorted(cpus)
+    parts: List[str] = []
+    start = previous = None
+    for cpu in ordered + [None]:
+        if start is not None and (cpu is None or cpu != previous + 1):
+            parts.append(str(start) if start == previous else f"{start}-{previous}")
+            start = None
+        if cpu is not None and start is None:
+            start = cpu
+        previous = cpu
+    return ",".join(parts)
+
+
 # --------------------------------------------------------------------------
 # argument handling
 # --------------------------------------------------------------------------
@@ -1348,6 +1485,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
 
     if not dry_run:
         check_prerequisites(stages)
+        check_host_limits(cfg, stages)
 
     run_id = args.run_id or cfg.make_run_id()
     workspace = cfg.colmap_workspace(run_id)
@@ -1368,6 +1506,12 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         log(f"note              : {line}")
     log(f"colmap workspace  : {workspace}")
     log(f"training output   : {cfg.output_parent}")
+    if cfg.memory_high or cfg.process_cpus:
+        log(f"host limits       : "
+            + ", ".join(part for part in (
+                f"MemoryHigh={cfg.memory_high} per stage" if cfg.memory_high else "",
+                f"ns-process-data on CPUs {cfg.process_cpus}" if cfg.process_cpus else "",
+            ) if part))
 
     images = count_images(cfg.images_path)
     if not images:
@@ -1452,7 +1596,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                     staged = sfm_input_path(cfg, workspace)
                     staged_files = stage_sfm_inputs(cfg, staged)
                     log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
-            run_command(colmap_command(cfg, workspace), "colmap", dry_run)
+            run_command(host_command(cfg, colmap_command(cfg, workspace), stage), "colmap", dry_run)
             sparse = workspace / "sparse" / "0"
             if not dry_run and not (sparse / "cameras.bin").is_file():
                 raise StageError(
@@ -1467,7 +1611,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 staged = sfm_input_path(cfg, workspace)
                 staged_files = stage_sfm_inputs(cfg, staged)
                 log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
-            run_command(process_command(cfg, workspace), "ns-process-data", dry_run)
+            run_command(host_command(cfg, process_command(cfg, workspace), stage),
+                        "ns-process-data", dry_run)
             transforms = workspace / "transforms.json"
             if not dry_run and not transforms.is_file():
                 raise StageError(
@@ -1537,7 +1682,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                    if cfg.downscale_factor
                    else f"downscale {effective_downscale or '?'} "
                         f"(auto, resolved from the pyramid on disk)"))
-            run_command(train_command(cfg, workspace), "ns-train", dry_run)
+            run_command(host_command(cfg, train_command(cfg, workspace), stage), "ns-train", dry_run)
 
         elif stage == "export":
             if dry_run:
@@ -1597,7 +1742,9 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 )
                 ply = export_dir / filename
                 run_command(
-                    export_command(cfg, target_config, export_dir, filename),
+                    host_command(
+                        cfg, export_command(cfg, target_config, export_dir, filename), stage
+                    ),
                     "ns-export",
                     dry_run,
                 )
