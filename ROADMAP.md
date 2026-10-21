@@ -125,6 +125,9 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
       capture
 - [ ] Re-running a partly failed batch skips what already completed instead of
       silently duplicating it under new run ids
+- [ ] Optionally stop after every capture's camera solve, with a camera review
+      written for each, then train and export only the captures the operator
+      approves; without the option a collection runs straight through
 - [ ] Concurrent runs cannot silently contend for one GPU
 
 **Run records**
