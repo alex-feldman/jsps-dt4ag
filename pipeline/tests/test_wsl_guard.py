@@ -634,7 +634,8 @@ class TestEmulateVm(unittest.TestCase):
 
     def test_preflight_reports_a_scope_problem_only_when_emulating(self):
         runner = Path(__file__)       # any existing file
-        with mock.patch.object(wg, "scope_problem", return_value="no scopes here") as probe:
+        with mock.patch.object(wg, "scope_problem", return_value="no scopes here") as probe, \
+                mock.patch.object(wg, "interpreter_problem", return_value=""):
             host, reason = wg.preflight(args_for("--runner", str(runner)),
                                         wsl=lambda: True, powershell=lambda: "/ps")
             self.assertIsNotNone(host)
@@ -643,6 +644,57 @@ class TestEmulateVm(unittest.TestCase):
                                         wsl=lambda: True, powershell=lambda: "/ps")
             self.assertIsNone(host)
             self.assertEqual(reason, "no scopes here")
+
+
+
+class TestInterpreter(unittest.TestCase):
+    """The guard refuses an interpreter that cannot find torch (found 2026-10-21)."""
+
+    def _done(self, code, out="/env"):
+        return mock.Mock(returncode=code, stdout=out + "\n", stderr="")
+
+    def test_stages_from_the_passthrough(self):
+        self.assertEqual(wg.passthrough_stages(["--config", "x.ini", "--stage", "colmap,process"]),
+                         {"colmap", "process"})
+        self.assertEqual(wg.passthrough_stages(["--stage=train"]), {"train"})
+        self.assertIsNone(wg.passthrough_stages(["--config", "x.ini"]))
+        self.assertIsNone(wg.passthrough_stages(["--from-stage", "process"]))
+
+    def test_solve_only_runs_skip_the_check(self):
+        probe = mock.Mock()
+        self.assertEqual(wg.interpreter_problem("/py", ["--stage", "colmap,process"], probe), "")
+        probe.assert_not_called()
+
+    def test_dry_runs_skip_the_check(self):
+        probe = mock.Mock()
+        self.assertEqual(wg.interpreter_problem("/py", ["--dry-run"], probe), "")
+        probe.assert_not_called()
+
+    def test_training_with_torch_passes(self):
+        probe = mock.Mock(return_value=self._done(0))
+        self.assertEqual(wg.interpreter_problem("/venv/bin/python", ["--stage", "train"], probe), "")
+        self.assertEqual(probe.call_args[0][0][0], "/venv/bin/python")
+
+    def test_training_without_torch_names_the_interpreter_and_the_trap(self):
+        probe = mock.Mock(return_value=self._done(3, "/home/u/opt/colmap-prefix"))
+        problem = wg.interpreter_problem("/home/u/opt/colmap-prefix/bin/python", [], probe)
+        self.assertIn("/home/u/opt/colmap-prefix/bin/python", problem)
+        self.assertIn("environment /home/u/opt/colmap-prefix", problem)
+        self.assertIn("ships its own", problem)
+        self.assertIn("uv run python", problem)
+
+    def test_an_interpreter_that_will_not_start_is_reported(self):
+        def boom(*a, **k):
+            raise FileNotFoundError("no such file: /nope")
+        self.assertIn("could not be started", wg.interpreter_problem("/nope", [], boom))
+
+    def test_preflight_refuses_on_an_interpreter_problem(self):
+        runner = Path(__file__)
+        with mock.patch.object(wg, "interpreter_problem", return_value="wrong python"):
+            host, reason = wg.preflight(args_for("--runner", str(runner)),
+                                        wsl=lambda: True, powershell=lambda: "/ps")
+        self.assertIsNone(host)
+        self.assertEqual(reason, "wrong python")
 
 
 if __name__ == "__main__":

@@ -71,6 +71,8 @@ MIN_EMULATE_MIB = 512
 
 PROC_ROOT = "/proc"
 CGROUP_ROOT = "/sys/fs/cgroup"
+#: Stages that import torch. The guard checks the interpreter can find it first.
+TORCH_STAGES = {"train", "export"}
 
 
 class GuardError(Exception):
@@ -749,11 +751,65 @@ def preflight(args: argparse.Namespace,
                       "/etc/wsl.conf).")
     if not args.runner.is_file():
         return None, f"run_pipeline.py not found at {args.runner}; pass --runner."
+    problem = interpreter_problem(args.python, args.passthrough)
+    if problem:
+        return None, problem
     if args.emulate_vm:
         problem = scope_problem(args.emulate_vm)
         if problem:
             return None, problem
     return Host(found, args.drive), ""
+
+
+def passthrough_stages(passthrough: Sequence[str]) -> Optional[set]:
+    """The stages ``--stage`` names in the run_pipeline.py arguments, or None.
+
+    None means run_pipeline.py decides (all stages, or everything from
+    ``--from-stage`` on), which always includes training.
+    """
+    for i, arg in enumerate(passthrough):
+        if arg == "--stage" and i + 1 < len(passthrough):
+            value = passthrough[i + 1]
+        elif arg.startswith("--stage="):
+            value = arg.split("=", 1)[1]
+        else:
+            continue
+        return {part.strip() for part in value.split(",") if part.strip()}
+    return None
+
+
+def interpreter_problem(python: str, passthrough: Sequence[str],
+                        run_probe: Callable[..., "subprocess.CompletedProcess"] = subprocess.run) -> str:
+    """Why ``python`` cannot run the requested stages, or ``""``.
+
+    Found 2026-10-21: the COLMAP prefix (QUICKSTART section 3) ships its own
+    ``python``, so after ``export PATH=$HOME/opt/colmap-prefix/bin:$PATH`` a bare
+    ``python`` or ``$(which python)`` is COLMAP's, which has no torch. The
+    pipeline then fails its prerequisite check, with a hint about uv that does
+    not name the interpreter. ``find_spec`` locates torch without importing it,
+    so this costs well under a second.
+    """
+    if "--dry-run" in passthrough:
+        return ""
+    stages = passthrough_stages(passthrough)
+    if stages is not None and not stages & TORCH_STAGES:
+        return ""
+    code = ("import importlib.util, sys; print(sys.prefix); "
+            "sys.exit(0 if importlib.util.find_spec('torch') else 3)")
+    try:
+        done = run_probe([python, "-c", code], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"the interpreter {python!r} (--python) could not be started: {exc}"
+    if done.returncode == 0:
+        return ""
+    prefix = (done.stdout or "").strip() or "unknown"
+    return (f"the interpreter that would run the pipeline, {python} (environment "
+            f"{prefix}), cannot find torch, so training would fail. This is usually "
+            "the wrong python: the COLMAP prefix ($HOME/opt/colmap-prefix/bin) ships "
+            "its own, so after exporting it onto PATH a bare 'python' or "
+            "'$(which python)' can be COLMAP's. Start the guard with 'uv run python "
+            "pipeline/scripts/wsl-guard/wsl-guard.py ...', or pass --python with the "
+            "venv's full path ({repository}/.venv/bin/python).")
 
 
 def scope_problem(emulate_vm: str,

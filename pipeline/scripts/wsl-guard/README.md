@@ -5,12 +5,17 @@ optionally free space on a Windows drive, so a run cannot empty the Windows host
 Stdlib only.
 
 ```bash
-python pipeline/scripts/wsl-guard/wsl-guard.py --drive D -- \
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
+uv run python pipeline/scripts/wsl-guard/wsl-guard.py --drive D -- \
     --config "$DATA/configs/$NAME.ini" --stage colmap,process
 ```
 
 Everything after `--` goes to `run_pipeline.py` unchanged. The guard starts it
-with the same Python it runs under (`--python` to change that).
+with the same Python it runs under (`--python` to change that), so start the
+guard with `uv run python`, as above. A bare `python`, or `--python "$(which
+python)"`, can pick up the COLMAP prefix's own `python`, which has no torch;
+for a run that trains or exports, the guard checks the interpreter can find
+torch and refuses (exit 76, naming the interpreter) if it cannot.
 
 ## Why it exists
 
@@ -156,7 +161,7 @@ Beside the log, with the log's name minus its extension:
 |---|---|
 | the run's own | `0`, `1`, `2`, `130` as `run_pipeline.py` returns them; a run killed by a signal reports 128 + the signal |
 | `75` | the guard stopped the run (RAM or disk) |
-| `76` | refused to start: not WSL2, no `powershell.exe`, a failed first probe, not enough headroom, a test scope that did not get the `--emulate-vm` limit, or the named log exists |
+| `76` | refused to start: not WSL2, no `powershell.exe`, an interpreter that cannot find torch for a run that trains or exports, a failed first probe, not enough headroom, a test scope that did not get the `--emulate-vm` limit, or the named log exists |
 | `2` | usage error |
 
 ## What it does not do

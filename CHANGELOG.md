@@ -60,6 +60,16 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Fixed
 
+- `wsl-guard.py` refuses to start a run that trains or exports when the
+  interpreter it would use cannot find torch, and names that interpreter. The
+  COLMAP prefix ships its own `python`, so after `export
+  PATH=$HOME/opt/colmap-prefix/bin:$PATH` a bare `python` or `$(which python)`
+  was COLMAP's and the run failed its prerequisite check with a hint that did
+  not say which Python ran. `run_pipeline.py`'s torch check now names the
+  interpreter and its environment, its hint warns about the prefix's `python`,
+  and QUICKSTART (section 3, the wsl-guard examples, Troubleshooting) and the
+  wsl-guard README start the guard with `uv run python`.
+
 - `VIDEO-WORKFLOW.md` told readers to drop WSL's file cache before a run to avoid
   running Windows out of RAM. That does not work: the run refills the cache. The
   troubleshooting entry, its config table and a new QUICKSTART subsection ("Memory:

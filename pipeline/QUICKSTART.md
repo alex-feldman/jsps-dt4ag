@@ -287,10 +287,16 @@ runner's own scope would start inside the emulated one and escape it, so the
 guard refuses that combination):
 
 ```bash
-python pipeline/scripts/wsl-guard/wsl-guard.py --emulate-vm 8G:4G \
-    --python "$(which python)" -- \
+export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
+uv run python pipeline/scripts/wsl-guard/wsl-guard.py --emulate-vm 8G:4G -- \
     --config my-run.ini --stage colmap,process,train,export
 ```
+
+Start it with `uv run python`, as in section 5, and the guard runs the pipeline
+with the venv's Python. Do not use a bare `python` or `--python "$(which
+python)"`: the COLMAP prefix has its own `python`, so after the `export` above
+those can be COLMAP's, which has no torch (see "torch could not be imported"
+under Troubleshooting). The guard refuses that case before starting.
 
 `--print-command` shows the wrapped command without running anything. **Pass
 means exit 0 and `"scope_oom_kills": 0`** in the run's `-status.json` (next to
@@ -307,7 +313,7 @@ without headroom, releases the cache when RAM runs low and stops its own run
 before Windows runs out:
 
 ```bash
-python pipeline/scripts/wsl-guard/wsl-guard.py --drive D -- --config my-run.ini --stage colmap,process
+uv run python pipeline/scripts/wsl-guard/wsl-guard.py --drive D -- --config my-run.ini --stage colmap,process
 ```
 
 **Releasing the cache by hand,** after a run or between stages:
@@ -607,6 +613,16 @@ export MAMBA_ROOT_PREFIX=~/opt/mamba-root
 #    and it covers ffmpeg as well as colmap.
 export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
 ```
+
+**The prefix also contains a `python`** (`python`, `python3` and `python3.14`,
+pulled in as conda-forge dependencies). After the `export`, a bare `python` or
+`python3` is COLMAP's, not the pipeline's, and it has no torch or nerfstudio.
+That is harmless as long as the pipeline is started with `uv run python ...`,
+which puts the venv first, or with the venv's full path
+(`.venv/bin/python`, which also needs the venv's `bin/` on `PATH`, see section 5).
+It bites when a command uses whatever `python` is first on `PATH`, for example
+`$(which python)`. If you activate the venv instead (`source .venv/bin/activate`),
+do it after the `export`, so the venv comes first.
 
 Do **not** fetch micromamba from `micro.mamba.pm`: that endpoint serves a
 `.tar.bz2`, and a minimal Ubuntu image has no `bzip2`, so `tar` fails. The
@@ -1300,6 +1316,18 @@ built a venv by hand rather than with `uv sync --frozen`.
 **Training starts and never finishes, with no output**
 `[train] quit_on_train_completion = false` leaves the viewer running forever. The
 runner refuses to start in that state; set it to `true` for unattended runs.
+
+**`torch could not be imported (No module named 'torch')` although `uv sync` succeeded**
+
+The pipeline is running under a different Python from the venv's. The message
+names the interpreter and its environment; if that is
+`$HOME/opt/colmap-prefix/bin/python`, the COLMAP prefix's own `python` came
+first on `PATH` (see section 3, "The prefix also contains a `python`"). Start
+the command with `uv run python ...`, or give the venv's full path. Found
+2026-10-21 with `wsl-guard.py --python "$(which python)"`, which now refuses
+that interpreter before starting. On Ubuntu a bare `python` may not exist at
+all (`Command 'python' not found`); the fix is the same, not
+`apt install python-is-python3`.
 
 **Running the notebook and COLMAP is not found, but it works in your shell**
 A Jupyter kernelspec activates nothing and inherits only the environment it is
