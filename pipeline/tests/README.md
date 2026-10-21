@@ -74,3 +74,6 @@ not part of this stdlib-only suite.
 - **No nerfstudio.** `ns-process-data`, `ns-train` and `ns-export` are outside
   the scope of this suite. `test_run_pipeline.py` asserts on the argument
   vectors the runner would execute, and executes none of them.
+
+Catalog job progress and failure-path fixtures are in `test_plant_catalog.py`;
+see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for the producer contract.

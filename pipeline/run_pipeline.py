@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import datetime as _dt
+from dataclasses import asdict
 import json
 import os
 import re
@@ -1346,12 +1347,19 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             "if you really intend to stop the run by hand."
         )
 
+    job = getattr(args, "catalog_job", None) if not dry_run else None
     if not dry_run:
         check_prerequisites(stages)
+        if job:
+            job.milestone("prereqs_ok")
 
     run_id = args.run_id or cfg.make_run_id()
     workspace = cfg.colmap_workspace(run_id)
     method_dir = cfg.output_dir(run_id) / cfg.train_method
+    if job:
+        job.resolved(run_id=run_id, workspace=str(workspace), output_dir=str(cfg.output_dir(run_id)),
+                     images_path=str(cfg.images_path), masks_path=str(cfg.masks_path) if cfg.use_masks else None,
+                     stages=list(stages), eval_mode=cfg.eval_mode)
 
     log_banner(f"run {run_id}")
     log(f"config            : {cfg.source}")
@@ -1409,6 +1417,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
     if cfg.use_masks and not dry_run and {"colmap", "process"} & set(stages):
         for line in composite_masked_images(cfg):
             log(line)
+        if job:
+            job.milestone("masks_composited")
 
     # Provenance only: it names what was imaged, never where anything is, and
     # a run is identical with or without it (LAYOUT.md, "Capture metadata").
@@ -1443,6 +1453,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
 
     for stage in stages:
         stage_start = time.time()
+        if job:
+            job.start_stage(stage)
         log_banner(f"stage {STAGES.index(stage) + 1}/{len(STAGES)}: {stage}")
 
         if stage == "colmap":
@@ -1476,10 +1488,14 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 )
             if not dry_run:
                 log(f"transforms.json   : {transforms.stat().st_size} bytes")
+                if job:
+                    job.milestone("transforms_ok")
                 for line in verify_downscale_pyramid(
                     workspace, allow_full_resolution=args.allow_full_resolution
                 ):
                     log(line)
+                if job:
+                    job.milestone("pyramid_ok")
                 # ns-process-data has copied the photographs into images/ and
                 # nothing downstream reads the staged tree, so drop it. On a
                 # filesystem that supports neither symlinks nor hardlinks it is
@@ -1532,6 +1548,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             train_started = time.time()
             if not dry_run:
                 effective_downscale = resolve_downscale_factor(cfg, workspace)
+                if job:
+                    job.resolved(effective_downscale=effective_downscale)
             log(f"train resolution  : "
                 + (f"downscale {cfg.downscale_factor} (pinned)"
                    if cfg.downscale_factor
@@ -1547,6 +1565,9 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                 run_dir, config_yml, checkpoint = discover_checkpoint(
                     method_dir, not_before=train_started
                 )
+                if job:
+                    job.resolved(checkpoint=str(checkpoint), training_config=str(config_yml))
+                    job.milestone("checkpoint_found")
                 log(f"selected run dir  : {run_dir.name}")
                 log(f"config.yml        : {config_yml}")
                 log(f"checkpoint        : {checkpoint.name} "
@@ -1563,6 +1584,9 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             # the train stage having set it.
             if not dry_run and not effective_downscale:
                 effective_downscale = resolve_downscale_factor(cfg, workspace)
+
+            if job:
+                job.resolved(effective_downscale=effective_downscale)
 
             # Which checkpoints to export: the final one always, plus every
             # multiple of [export] checkpoint_interval. A dry run has no run
@@ -1602,6 +1626,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                     dry_run,
                 )
                 if not dry_run:
+                    if job:
+                        job.milestone("exported")
                     verify_export(ply, export_dir)
                     if getattr(args, "catalog_job", None):
                         args.catalog_job.artifact(ply, role="gaussian-splat" if cfg.export_3dgs else "point-cloud",
@@ -1620,8 +1646,14 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             output = cfg.output_dir(run_id) if stage == "train" else workspace
             args.catalog_job.artifact(output, role=stage + "-output", media_type="inode/directory",
                                       coordinate_frame="raw COLMAP/nerfstudio frame; uncalibrated")
+        if job:
+            if stage in ("colmap", "train"):
+                job.milestone("colmap_done" if stage == "colmap" else "trained")
+            job.end_stage("completed")
         log(f"stage {stage}: done in {format_elapsed(time.time() - stage_start)}")
 
+    if job and "export" in stages:
+        job.milestone("verified")
     log_banner(
         f"pipeline finished in {format_elapsed(time.time() - overall_start)}"
         + (" (dry run)" if dry_run else "")
@@ -1662,35 +1694,36 @@ def verify_export(ply: Path, export_dir: Path) -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
-    try:
-        config_path = find_config(args.config)
-        cfg = load_config(config_path)
-    except ConfigError as exc:
-        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
-        return 2
     global CATALOG_COMMAND_LOG
     catalog = None
+    cfg = None
     code, error = 1, None
     try:
         if args.catalog_root_id and not args.dry_run:
-            if not args.catalog_capture_id:
-                raise ConfigError("--catalog-capture-id is required when catalog emission is enabled")
-            root = Path(args.catalog_root or cfg.data_root)
-            parser = configparser.ConfigParser(interpolation=None)
-            parser.read(cfg.source)
-            selected = [p.relative_to(cfg.images_path).as_posix()
-                        for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
-            catalog = CatalogJob(root, args.catalog_root_id, args.catalog_capture_id,
+            if not args.catalog_root or not args.catalog_capture_id:
+                raise ConfigError("Catalog emission requires --catalog-root and --catalog-capture-id, so early failures have an explicit destination and identity")
+            catalog = CatalogJob(Path(args.catalog_root), args.catalog_root_id, args.catalog_capture_id,
                 PIPELINE_DIR.parent, title="JSPS-DT4AG reconstruction", job_type="reconstruction",
                 command=render([sys.executable, str(Path(__file__).resolve()), *(argv if argv is not None else sys.argv[1:])]),
-                config={"ini": {section: dict(parser[section]) for section in parser.sections()},
-                        "stages": list(args.stages), "run_id_override": args.run_id}, selected_images=selected)
-            catalog.capture(source=cfg.images_path, image_count=len(selected))
-            catalog.freeze_config(cfg.source)
+                config={"stages": list(args.stages), "run_id_override": args.run_id}, selected_images=None)
             args.catalog_job = catalog
             CATALOG_COMMAND_LOG = catalog.directory / "evidence" / (catalog.id + ".log")
+            CATALOG_COMMAND_LOG.parent.mkdir(parents=True, exist_ok=True)
             CATALOG_COMMAND_LOG.touch(exist_ok=False)
             catalog.evidence(CATALOG_COMMAND_LOG, log=True)
+            catalog.dependencies()
+        config_path = find_config(args.config)
+        cfg = load_config(config_path)
+        if catalog:
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.read(cfg.source)
+            catalog.record["config"]["ini"] = {section: dict(parser[section]) for section in parser.sections()}
+            catalog.record["selected_images"] = [p.relative_to(cfg.images_path).as_posix()
+                for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+            catalog.capture(source=cfg.images_path, image_count=len(catalog.record["selected_images"]))
+            catalog.freeze_config(cfg.source)
+            catalog.resolved(config=json.loads(json.dumps(asdict(cfg), default=str)))
+            catalog.milestone("config_ok")
         code = run_pipeline(cfg, args)
     except StageError as exc:
         error = str(exc)
@@ -1714,7 +1747,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     stream.write("\nPIPELINE FINAL ERROR: " + error + "\n")
             # Existing CSV is invocation evidence, not a claim about final status.
             try:
-                if cfg.run_log.is_file():
+                if cfg is not None and cfg.run_log.is_file():
                     catalog.evidence(cfg.run_log, log=True)
             finally:
                 catalog.finish(code, error)

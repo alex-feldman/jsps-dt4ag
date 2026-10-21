@@ -16,7 +16,23 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- Additive catalog job progress: verified milestones, active and completed stage
+  timings, loaded and runtime-resolved configuration, and dependency versions.
+  Create enabled catalog jobs before config loading so early configuration
+  failures survive; preserve interrupted progress and existing job identities.
+- Dedicated hermetic catalog failure-path tests and `pipeline/CATALOG-RECORDS.md`.
+
+### Fixed
+
+- Restrict the object-agnostic source check exception to the existing catalog API
+  namespace; the previously added integration otherwise made the baseline fail.
+
 ### Changed
+
+- Catalog emission now requires an explicit storage root as well as root and
+  capture identities, so early failures have a known durable destination.
 
 - Adopt catalog job records as the authoritative v0.3.0 invocation record model;
   replace the parallel run-store proposal and document remaining implementation gaps.
