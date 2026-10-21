@@ -59,6 +59,19 @@ Four properties of this shape are deliberate:
 - **The `PATH` export lives in the driver**, not in the operator's memory. It is
   the single step whose omission caused the 2026-08-17 failure.
 
+**On WSL2, sequence through the guard.** Each run leaves the file cache it
+filled inside the WSL VM, which Windows cannot use, so a batch on WSL2 starts
+each run with less Windows RAM than the one before (9.6 GiB of leftover cache
+was measured after a single job). Replace the `uv run python
+pipeline/run_pipeline.py ...` line with
+`uv run python pipeline/scripts/wsl-guard/wsl-guard.py --log "logs/$c.log" -- --config ...`
+and set `[host] memory_high` in the configs. The guard releases leftover cache
+before each start (with passwordless sudo) and waits for Windows to see it,
+refuses with exit 76 when there is still no headroom, and stops a run that
+would empty Windows' RAM with exit 75. Treat both as "not done, rerun later",
+not as a failed capture. It writes the log itself, so drop the `> logs/$c.log`
+redirect. See `scripts/wsl-guard/README.md`.
+
 What the driver captures per capture: exit status, wall-clock minutes, and the
 exported gaussian count, which is the cheapest signal that masking worked. On
 subject-only captures a count in the tens of thousands means the background was

@@ -144,6 +144,9 @@ the classic WSL mistake:
 
    Then `wsl --shutdown` and start the distro again.
 
+   The opposite problem, WSL holding so much file cache that Windows runs out,
+   is covered under "Memory: WSL can empty Windows' RAM" below.
+
 5. **Inside WSL, do NOT install any Linux NVIDIA driver.** No
    `apt install nvidia-driver-*`, no `ubuntu-drivers install`. The GPU arrives
    through `/usr/lib/wsl/lib` from the Windows side, and installing a Linux
@@ -200,6 +203,106 @@ anyway. `sudo apt install libopengl0` silences it.
 Budget disk space on whichever drive holds the distro: the environment alone is
 about 7.4 GB and the COLMAP prefix another 4 GB, before any data. A finished
 install plus one 120-image capture measured 23 GB of `ext4.vhdx`.
+
+### Memory: WSL can empty Windows' RAM
+
+**The mechanism.** WSL2's Linux VM takes Windows RAM as Linux asks for it, up to
+the `.wslconfig` `memory=` limit, and Linux uses every free page as file cache:
+every image a stage reads or writes stays cached. Windows counts that cache as
+used by the VM (`vmmemWSL` in Task Manager), and WSL does not give it back while
+work keeps running. Its `autoMemoryReclaim` setting only acts after about five
+idle minutes. Inside WSL nothing looks wrong: `free -m` shows little `used` and a
+large `buff/cache`.
+
+Measured 2026-10-20 on a 32 GB Windows 11 laptop with `memory=22GB`:
+`ns-process-data` copying and downscaling a 55-frame 3840x2880 capture took
+Windows' available RAM from 6.5 GiB to 59 MiB in about 25 seconds. **Dropping the
+cache before the run does not help**: the run refills it. A run also leaves its
+cache behind (9.6 GiB after one job, with 841 MiB actually in use inside WSL),
+which then starves the next stage.
+
+**The fix: cap each stage in a cgroup.** Set this in the run config:
+
+```ini
+[host]
+memory_high = 8G
+```
+
+Each stage command then runs inside
+`systemd-run --user --scope --quiet -p MemoryHigh=8G ...`. The cache the stage
+creates is charged to that scope, and at the cap the kernel evicts the scope's
+own cache instead of growing the VM. On the capture above, a full camera solve
+under an 8G cap kept Windows above 2.7 GiB available. MemoryHigh throttles and
+never kills. It needs cgroup v2 and systemd as PID 1 (if `ps -p 1 -o comm=` does
+not print `systemd`, set `systemd=true` under `[boot]` in `/etc/wsl.conf` and
+restart the distro); the runner
+checks the scope works before the first stage and refuses to run uncapped if it
+does not. `--dry-run` shows the wrapped commands. To check by hand:
+
+```bash
+systemd-run --user --scope --quiet -p MemoryHigh=64M true && echo scope works
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.subtree_control   # must list memory
+```
+
+`ns-process-data` also runs ffmpeg's downscale on every core, which fills the
+cache fastest. `[host] process_cpus = 0,1` pins that stage alone to two CPUs
+(`taskset -c 0,1`); that was enough on its own for a 28-frame capture, not for 55.
+`configs/README.md` documents both keys.
+
+**Choosing a value.** Start from Windows' available RAM before the run (Task
+Manager, or `wsl-guard.py`'s first sample) and leave about 3 GiB of it to
+Windows. Too high and the VM can still empty Windows; too low and the stage is
+throttled, spending its time evicting and re-reading cache. A camera solve that
+stalls for minutes with no log output is the sign; raise the cap. Measured on
+the laptop above: `8G` for a 55-frame camera solve, and a 55-frame training run
+under `10G` kept Windows above 4.0 GiB available; of that training run's 9 GiB in
+the cap, only about 2 GiB was the program's own memory, the rest file cache. One value applies to every
+stage, so pick the larger of what the stages need. If Windows' available RAM is
+already low before the run, release leftover cache first (below); the cap limits
+what the run adds, not what an earlier run left.
+
+**Checking it works.** The log shows each stage command starting with
+`systemd-run --user --scope --quiet -p MemoryHigh=`. During a stage, `free -m` in
+another WSL terminal shows `buff/cache` levelling off near the cap instead of
+climbing, and Windows' available RAM (Task Manager, or the guard's host-sample
+JSONL) stays roughly flat through `ns-process-data`, where it used to collapse.
+
+**Windows machines with 16 GB of RAM.** WSL's default VM limit is half of
+Windows' RAM, so on a 16 GB machine the VM gets 8 GB and Windows keeps the
+rest. The whole pipeline fits in that. Measured 2026-10-20 by emulation on the
+laptop above: colmap, process, train and export on the 55-frame 3840x2880
+capture (`downscale_factor` 4, `[host] process_cpus = 0,1`), run inside a hard
+`MemoryMax=8G` with `MemorySwapMax=4G`, finished in 27 minutes with no
+out-of-memory kills and no swap used. The programs' own memory peaked at
+2.4 GiB; the rest of the 8 GiB was file cache, which the kernel evicted at the
+limit. On such a machine keep the `.wslconfig` default (or `memory=8GB`); a
+`[host] memory_high` below that, such as `6G`, is optional and only throttles
+earlier. Not yet tested on real 16 GB hardware, and the emulation used a 6 GB
+GPU: on a smaller GPU, VRAM rather than RAM is the likelier limit.
+
+**The backstop: the guard.** `scripts/wsl-guard/wsl-guard.py` runs the pipeline
+while watching Windows' available RAM from the Windows side, refuses to start
+without headroom, releases the cache when RAM runs low and stops its own run
+before Windows runs out:
+
+```bash
+python pipeline/scripts/wsl-guard/wsl-guard.py --drive D -- --config my-run.ini --stage colmap,process
+```
+
+**Releasing the cache by hand,** after a run or between stages:
+
+```bash
+sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+```
+
+It drops only clean cache, so it is safe while other work runs. **Windows sees
+the memory about 40 seconds later** (measured: 4.5 GiB available, then 13.1 GiB),
+so wait before judging whether it worked.
+
+**Whole-VM fallback.** A lower `memory=` in `%USERPROFILE%\.wslconfig` caps the
+entire VM, cache included, and needs `wsl --shutdown` to take effect. It also caps
+COLMAP and training, so do not set it below what step 4 above says COLMAP needs;
+the per-stage cap is the finer tool.
 
 ## 0. What you need
 

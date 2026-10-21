@@ -16,6 +16,37 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- `[host]` config section, optional, for how stages may use the machine. Empty or
+  absent changes no command. `memory_high` (for example `8G`) runs each external
+  stage command (`colmap`, `ns-process-data`, `ns-train`, `ns-export`) inside
+  `systemd-run --user --scope --quiet -p MemoryHigh=<value>`, so the file cache a
+  stage creates is charged to it and evicted at the cap; on WSL2 that keeps the VM
+  from growing into, and emptying, Windows' RAM. `process_cpus` (for example
+  `0,1`) pins `ns-process-data` alone with `taskset -c`. Both are validated at
+  load (malformed values, a cap below 512M and unknown `[host]` keys are refused),
+  shown by `--dry-run` in the printed commands, and recorded in the archived
+  config's `[run-record]` when set. Before the first stage the runner checks that
+  a capped scope can be created and that the memory controller is delegated, and
+  refuses to run rather than drop a cap it was asked for.
+- `pipeline/scripts/wsl-guard/wsl-guard.py`, a stdlib-only wrapper that runs
+  `run_pipeline.py` on WSL2 under a Windows-RAM (and optional drive free-space)
+  guard read through `powershell.exe`: it refuses to start without headroom
+  (exit 76) after trying a cache release, releases WSL's file cache when RAM runs
+  low during the run, and stops only its own process group before Windows runs
+  out (exit 75). Writes the run's log, a host-sample JSONL and a status JSON.
+  Refuses to run off WSL2.
+
+### Fixed
+
+- `VIDEO-WORKFLOW.md` told readers to drop WSL's file cache before a run to avoid
+  running Windows out of RAM. That does not work: the run refills the cache. The
+  troubleshooting entry, its config table and a new QUICKSTART subsection ("Memory:
+  WSL can empty Windows' RAM") now describe the mechanism and the fixes that do
+  work (`[host] memory_high`, the guard, and releasing leftover cache between
+  runs, which Windows sees about 40 seconds later).
+
 ### Changed
 
 - Adopt catalog job records as the authoritative v0.3.0 invocation record model;

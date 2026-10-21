@@ -1,7 +1,8 @@
 # pipeline tests
 
-Tests for the pipeline's configuration layer (`pipeline/dt4ag_config.py`) and
-for the command-line runner (`pipeline/run_pipeline.py`).
+Tests for the pipeline's configuration layer (`pipeline/dt4ag_config.py`), for
+the command-line runner (`pipeline/run_pipeline.py`) and for the stdlib-only
+helper scripts under `pipeline/scripts/`.
 
 ## Running them
 
@@ -44,6 +45,30 @@ records left by a successful, a failed and a mixed-shape extraction, the review
 folder's contents, the single decode and its preview window, the command the page shows, and `subset` (linked, never copied, with
 its refusals and its cleanup when links are impossible). ffmpeg and ffprobe are replaced by fakes, so the tests
 need neither; the real tools were checked only by a real run on a synthetic clip.
+
+The optional `[host]` section is covered in both files. `test_dt4ag_config.py`
+(`TestHostSection`): an absent or empty section means no limits, valid values
+are normalized, malformed sizes and CPU lists, a cap below 512M and an unknown
+key are refused naming the key and file, and the archived `[run-record]`
+carries `memory_high` and `process_cpus` only when set.
+`test_run_pipeline.py` (`TestHostLimits`): empty keys leave all four stage
+commands unchanged, `memory_high` prefixes each with the `systemd-run` scope,
+`process_cpus` pins `ns-process-data` only (inside the scope), `--dry-run`
+prints the prefixed commands and runs no probe, and the run-start check refuses
+a failing scope, a missing `systemd-run`, an undelegated memory controller and
+a CPU the process cannot use. `subprocess.run` is mocked; no scope is created.
+
+`test_wsl_guard.py` covers `scripts/wsl-guard/wsl-guard.py`: argument
+splitting at `--` and threshold validation, the PowerShell probe script and the
+parsing of its output (BOM, stray lines, missing values), WSL and
+`powershell.exe` detection, the start, release and stop decisions including the
+once-per-period release limit, the pre-start release-and-wait loop on a fake
+clock, where the log, status and host-sample files go, and four end-to-end runs
+against a few-line stand-in for `run_pipeline.py`: a refusal that starts
+nothing, a clean run passing its exit code through, a low-RAM stop that signals
+only the guard's own process group (exit 75), and an in-run cache release. The
+Windows side is a fake and sudo is never called, so it needs neither WSL nor
+Windows.
 
 Every test is hermetic. Each one builds its own data tree in a
 `tempfile.TemporaryDirectory` and throws it away afterwards.

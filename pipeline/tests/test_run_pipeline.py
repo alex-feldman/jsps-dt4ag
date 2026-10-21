@@ -16,13 +16,17 @@ run, which is the point of the end-to-end verification, not of a unit test.
 
 from __future__ import annotations
 
+import io
 import json
+import subprocess
 
 import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 PIPELINE_DIR = Path(__file__).resolve().parent.parent
 if str(PIPELINE_DIR) not in sys.path:
@@ -36,8 +40,10 @@ from run_pipeline import (  # noqa: E402
     colmap_command,
     count_images,
     discover_checkpoint,
+    check_host_limits,
     export_command,
     export_filename,
+    host_command,
     parse_args,
     process_command,
     read_ply_vertex_count,
@@ -104,7 +110,7 @@ env_label = my-env
 platform_label = ubuntu
 export_3dgs = false
 gauss_to_pc_script =
-"""
+{host_section}"""
 
 
 def make_config(root: Path, **overrides):
@@ -122,6 +128,7 @@ def make_config(root: Path, **overrides):
         "dataset_extra": "",
         "train_extra": "",
         "images_subpath": "scene-01/capture-a/session-001",
+        "host_section": "",
     }
     values.update(overrides)
     images = root / "datasets" / values["images_subpath"]
@@ -497,6 +504,153 @@ class TestExportVerification(TempTreeTestCase):
 
     def test_a_real_looking_export_passes(self):
         verify_export(self.write_ply("good.ply", 69015), self.root)
+
+
+# --------------------------------------------------------------------------
+# [host] limits: memory cap and CPU pinning
+# --------------------------------------------------------------------------
+
+SCOPE = ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryHigh=8G"]
+
+
+class TestHostLimits(TempTreeTestCase):
+    """``[host]`` wraps stage commands; empty keys change nothing.
+
+    No test here creates a scope or pins a CPU: ``subprocess.run`` is mocked,
+    and the dry-run tests assert it is never called. Whether a real scope caps
+    a real stage can only be shown by a real run.
+    """
+
+    def _cfg(self, memory_high="", process_cpus=""):
+        host = ""
+        if memory_high or process_cpus:
+            host = (f"\n[host]\nmemory_high = {memory_high}\n"
+                    f"process_cpus = {process_cpus}\n")
+        return make_config(self.root, host_section=host)
+
+    def _all_commands(self, cfg):
+        ws = self.root / "ws"
+        return {
+            "colmap": colmap_command(cfg, ws),
+            "process": process_command(cfg, ws),
+            "train": train_command(cfg, ws),
+            "export": export_command(cfg, ws / "config.yml", ws, "x.ply"),
+        }
+
+    def test_no_host_section_leaves_every_command_unchanged(self):
+        cfg = self._cfg()
+        for stage, command in self._all_commands(cfg).items():
+            with self.subTest(stage=stage):
+                self.assertEqual(host_command(cfg, command, stage), command)
+
+    def test_memory_high_prefixes_every_stage_command(self):
+        cfg = self._cfg(memory_high="8G")
+        for stage, command in self._all_commands(cfg).items():
+            with self.subTest(stage=stage):
+                self.assertEqual(host_command(cfg, command, stage), SCOPE + command)
+
+    def test_process_cpus_pins_ns_process_data_only(self):
+        cfg = self._cfg(process_cpus="0,1")
+        for stage, command in self._all_commands(cfg).items():
+            with self.subTest(stage=stage):
+                expected = (["taskset", "-c", "0,1"] + command
+                            if stage == "process" else command)
+                self.assertEqual(host_command(cfg, command, stage), expected)
+
+    def test_both_put_the_scope_outside_taskset(self):
+        cfg = self._cfg(memory_high="8G", process_cpus="0-3")
+        command = process_command(cfg, self.root / "ws")
+        self.assertEqual(host_command(cfg, command, "process"),
+                         SCOPE + ["taskset", "-c", "0-3"] + command)
+
+    def _dry_run_output(self, cfg):
+        (cfg.images_path / "frame_0001.jpg").write_bytes(b"x")
+        args = parse_args(["--config", str(cfg.source), "--dry-run"])
+        out = io.StringIO()
+        with mock.patch.object(run_pipeline.subprocess, "run") as never, \
+                redirect_stdout(out):
+            self.assertEqual(run_pipeline.run_pipeline(cfg, args), 0)
+        never.assert_not_called()
+        return [line.strip()[2:] for line in out.getvalue().splitlines()
+                if line.strip().startswith("$ ")]
+
+    def test_dry_run_shows_the_prefixed_commands_and_probes_nothing(self):
+        cfg = self._cfg(memory_high="8G", process_cpus="0,1")
+        printed = self._dry_run_output(cfg)
+        self.assertEqual(len(printed), 4)
+        for line in printed:
+            self.assertTrue(
+                line.startswith("systemd-run --user --scope --quiet -p MemoryHigh=8G "), line)
+        self.assertIn("MemoryHigh=8G taskset -c 0,1 ns-process-data images", printed[1])
+        self.assertNotIn("taskset", printed[0] + printed[2] + printed[3])
+
+    def test_dry_run_without_host_prints_the_bare_commands(self):
+        printed = self._dry_run_output(self._cfg())
+        self.assertEqual([line.split()[0] for line in printed],
+                         ["colmap", "ns-process-data", "ns-train", "ns-export"])
+
+    def test_preflight_does_nothing_without_limits(self):
+        with mock.patch.object(run_pipeline.subprocess, "run") as probe:
+            check_host_limits(self._cfg(), list(STAGES))
+        probe.assert_not_called()
+
+    def test_preflight_passes_when_the_scope_works(self):
+        cfg = self._cfg(memory_high="8G")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(run_pipeline.subprocess, "run", return_value=ok) as probe, \
+                mock.patch.object(run_pipeline, "_user_memory_delegated", return_value=True), \
+                redirect_stdout(io.StringIO()):
+            check_host_limits(cfg, ["colmap"])
+        self.assertEqual(probe.call_args.args[0], run_pipeline.SCOPE_PROBE)
+
+    def test_preflight_refuses_when_the_scope_fails(self):
+        cfg = self._cfg(memory_high="8G")
+        failed = subprocess.CompletedProcess([], 1, "", "Failed to connect to bus")
+        with mock.patch.object(run_pipeline.subprocess, "run", return_value=failed), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(StageError) as caught:
+                check_host_limits(cfg, ["train"])
+        message = str(caught.exception)
+        self.assertIn("memory_high = 8G", message)
+        self.assertIn("Failed to connect to bus", message)
+        self.assertIn("never drops a cap", message)
+
+    def test_preflight_refuses_when_systemd_run_is_missing(self):
+        cfg = self._cfg(memory_high="8G")
+        with mock.patch.object(run_pipeline.subprocess, "run",
+                               side_effect=FileNotFoundError("systemd-run")), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(StageError):
+                check_host_limits(cfg, ["colmap"])
+
+    def test_preflight_refuses_when_memory_is_not_delegated(self):
+        cfg = self._cfg(memory_high="8G")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(run_pipeline.subprocess, "run", return_value=ok), \
+                mock.patch.object(run_pipeline, "_user_memory_delegated", return_value=False), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(StageError) as caught:
+                check_host_limits(cfg, ["colmap"])
+        self.assertIn("delegate", str(caught.exception))
+
+    def test_preflight_refuses_a_cpu_this_process_cannot_use(self):
+        if not hasattr(run_pipeline.os, "sched_getaffinity"):
+            self.skipTest("no sched_getaffinity on this platform")
+        cfg = self._cfg(process_cpus="0,4096")
+        with mock.patch.object(run_pipeline.shutil, "which", return_value="/usr/bin/taskset"), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(StageError) as caught:
+                check_host_limits(cfg, ["process"])
+        self.assertIn("4096", str(caught.exception))
+
+    def test_process_cpus_is_not_checked_when_process_is_not_selected(self):
+        cfg = self._cfg(process_cpus="4096")
+        with mock.patch.object(run_pipeline.shutil, "which", return_value=None):
+            check_host_limits(cfg, ["train", "export"])
+
+    def test_cpu_set_rendering(self):
+        self.assertEqual(run_pipeline.render_cpu_set({0, 1, 2, 5, 7, 8}), "0-2,5,7-8")
+        self.assertEqual(run_pipeline._cpu_ids("0,2-3"), {0, 2, 3})
 
 
 # --------------------------------------------------------------------------

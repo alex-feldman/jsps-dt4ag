@@ -290,6 +290,23 @@ own `config.yml`, which records what training actually did, and not from the INI
 which may have been edited since. If the two disagree the run says so and names the
 file by the run. Before 2026-10-05 the name carried only `<iterations>steps`.
 
+### `[host]`
+
+Optional. How the stages may use the machine they run on. The whole section can
+be absent, and with both keys empty every command is exactly what it was before
+the section existed. Mostly for WSL2: see `QUICKSTART.md`, "Memory: WSL can
+empty Windows' RAM", for the mechanism and measurements.
+
+| Key | Required | Default | Controls |
+|---|---|---|---|
+| `memory_high` | no | empty | A cgroup v2 `MemoryHigh` for each external stage command (`colmap`, `ns-process-data`, `ns-train`, `ns-export`), for example `8G` or `6000M`: a whole number with an optional `K`, `M`, `G` or `T` suffix (powers of 1024; lowercase is accepted and upper-cased). Below `512M` is refused as a likely typo. Each command is prefixed with `systemd-run --user --scope --quiet -p MemoryHigh=<value>`, so the file cache the command creates is charged to it and evicted at the cap instead of growing the WSL VM. MemoryHigh throttles and never kills. Before the first stage the runner checks that such a scope can be created (`systemd-run --user --scope --quiet -p MemoryHigh=64M true`) and that the user manager delegates the `memory` controller; if not, the run stops with the reason rather than running uncapped. `--dry-run` prints the prefixed commands without that check. The optional `gauss_to_pc` conversion is not wrapped. |
+| `process_cpus` | no | empty | A CPU list as `taskset -c` reads it (`0,1`, `0-3`, `0-3,6`). `ns-process-data` (and its ffmpeg downscale) then runs only on those CPUs. Other stages are not affected. Whether the CPUs exist is checked at run start, not at load. |
+
+Any other key in `[host]` is refused, because a misspelled `memory_high` would
+otherwise leave a run uncapped while the config reads as capped. Set values are
+recorded in the archived config's `[run-record]` (`memory_high`, `process_cpus`);
+unset ones are not written there.
+
 ## Validation behaviour
 
 `load_config()` raises `ConfigError` for a missing file, a missing section, a

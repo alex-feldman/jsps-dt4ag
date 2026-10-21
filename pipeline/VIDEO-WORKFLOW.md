@@ -110,7 +110,9 @@ Edit these keys (`configs/README.md` documents every key; `QUICKSTART.md` sectio
 | `[dataset] use_masks` | `false` for a first, unmasked run |
 | `[run] id_prefix` | a short prefix for this video |
 | `[colmap] data_type` | `individual` (exhaustive matching, robust when frames are far apart) or `video` (sequential matching, for closely spaced frames). The pipeline cannot infer `video` from the folder name, so say it explicitly |
-| `[colmap] extra_args` | on WSL2, `--gpu_index 0`; add `--num_threads 2` if Windows RAM is tight (QUICKSTART, "COLMAP's GPU matcher on WSL2") |
+| `[colmap] extra_args` | on WSL2, `--gpu_index 0` (QUICKSTART, "COLMAP's GPU matcher on WSL2"); `--num_threads 2` lowers COLMAP's own peak, but Windows running out of RAM is usually file cache, which `[host] memory_high` handles |
+| `[host] memory_high` | on WSL2, `8G`: caps each stage, file cache included, so the VM does not empty Windows' RAM (QUICKSTART, "Memory: WSL can empty Windows' RAM"). Empty elsewhere |
+| `[host] process_cpus` | on WSL2 with tight RAM, `0,1`: runs `ns-process-data`'s downscale on two CPUs. Empty elsewhere |
 | `[nerfstudio] scene_type` | `images`, with `video_path` left empty. The pipeline does not decode video |
 | `[train] max_num_iterations` | `30000` |
 | `[train] quit_on_train_completion` | `true` (required for any non-interactive run) |
@@ -131,6 +133,11 @@ uv run python pipeline/run_pipeline.py --config "$DATA/configs/$NAME.ini" --stag
 Note the **run id** it prints near the top (for example `my-subject_261020-01-3120`); the next steps need
 it. This runs COLMAP and prepares the images and stops before training, which is deliberate: training is
 the expensive stage and should not start on a bad solve.
+
+On WSL2 with limited RAM, run this and step 7 under the Windows-RAM guard: put the same `run_pipeline.py`
+arguments after `--` in
+`python pipeline/scripts/wsl-guard/wsl-guard.py -- --config "$DATA/configs/$NAME.ini" --stage colmap,process`
+(`pipeline/scripts/wsl-guard/README.md`).
 
 ## 6. Look at the cameras before training
 
@@ -170,17 +177,20 @@ in `QUICKSTART.md` section 6.
   GPU. Check `nvidia-smi` *inside* WSL, not on Windows. A laptop in an "eco" or hybrid power mode switches
   the NVIDIA GPU off; set it to a mode that keeps it on. After a driver update or sleep, close other WSL work
   and run `wsl --shutdown` in PowerShell.
-- **A run is stopped or refused for low Windows RAM, though little is in use inside WSL (often at
-  `ns-process-data`):** WSL keeps every file it reads or writes in its file cache (`buff/cache` in
-  `free -m`), Windows counts that as used (`vmmemWSL` in Task Manager) and WSL does not give it back. One
-  measurement, 2026-10-20: 841 MiB used inside WSL, 9.6 GiB cached, `vmmemWSL` 10.4 GiB, Windows free
-  2.7 GiB of 31.9. `ns-process-data` copies the full-size images and added several GB in seconds: on a
-  55-frame 3840x2880 capture Windows free RAM fell from 4.5 GiB to 0.9 GiB in about five seconds. Running
-  that stage on two CPUs (`taskset -c 0,1`) was enough for 28 frames and not for 55. Free the cache before a
-  run: `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. If Windows free RAM barely moves, close other
-  WSL work and run `wsl --shutdown` in PowerShell, which does return it. Not verified: setting
-  `autoMemoryReclaim=gradual` under `[experimental]` in `%UserProfile%\.wslconfig` (needs a `wsl --shutdown`
-  to take effect) may make this automatic.
+- **Windows runs out of RAM, or a run is stopped or refused for low Windows RAM, though little is in use
+  inside WSL (often at `ns-process-data`):** WSL keeps every file a stage reads or writes in its file cache
+  (`buff/cache` in `free -m`), the VM grows into Windows' RAM to hold it (`vmmemWSL` in Task Manager), and
+  WSL does not give it back while work keeps running. On a 55-frame 3840x2880 capture, `ns-process-data`
+  took Windows' available RAM from 6.5 GiB to 59 MiB in about 25 seconds. Dropping the cache *before* the
+  run does not prevent this, because the run refills it. What does: set `[host] memory_high = 8G` (and
+  optionally `process_cpus = 0,1`) in the config, which runs each stage in a memory-capped cgroup so its
+  cache is evicted at the cap instead of growing the VM, and run under
+  `pipeline/scripts/wsl-guard/wsl-guard.py`, which refuses to start without headroom and stops the run
+  before Windows runs out. Cache left behind by an earlier run still blocks the next one (9.6 GiB cached
+  with 841 MiB in use was measured): release it with `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`
+  and wait about 40 seconds before Windows shows it. If Windows' available RAM still barely moves, close
+  other WSL work and run `wsl --shutdown` in PowerShell. Details and measurements: QUICKSTART, "Memory: WSL
+  can empty Windows' RAM".
 - **WSL dies or runs out of memory during COLMAP or masking:** free Windows RAM, lower `--num_threads`, and
   check free space on the Windows drive that holds the WSL disk (QUICKSTART, WSL2 section).
 - **Unattended runs:** `uv` and the COLMAP prefix must be on `PATH` (the first block above), and one GPU job
