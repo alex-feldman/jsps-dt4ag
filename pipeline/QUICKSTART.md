@@ -249,6 +249,24 @@ cache fastest. `[host] process_cpus = 0,1` pins that stage alone to two CPUs
 (`taskset -c 0,1`); that was enough on its own for a 28-frame capture, not for 55.
 `configs/README.md` documents both keys.
 
+**Choosing a value.** Start from Windows' available RAM before the run (Task
+Manager, or `wsl-guard.py`'s first sample) and leave about 3 GiB of it to
+Windows. Too high and the VM can still empty Windows; too low and the stage is
+throttled, spending its time evicting and re-reading cache. A camera solve that
+stalls for minutes with no log output is the sign; raise the cap. Measured on
+the laptop above: `8G` for a 55-frame camera solve, and a 55-frame training run
+under `10G` kept Windows above 4.0 GiB available; of that training run's 9 GiB in
+the cap, only about 2 GiB was the program's own memory, the rest file cache. One value applies to every
+stage, so pick the larger of what the stages need. If Windows' available RAM is
+already low before the run, release leftover cache first (below); the cap limits
+what the run adds, not what an earlier run left.
+
+**Checking it works.** The log shows each stage command starting with
+`systemd-run --user --scope --quiet -p MemoryHigh=`. During a stage, `free -m` in
+another WSL terminal shows `buff/cache` levelling off near the cap instead of
+climbing, and Windows' available RAM (Task Manager, or the guard's host-sample
+JSONL) stays roughly flat through `ns-process-data`, where it used to collapse.
+
 **The backstop: the guard.** `scripts/wsl-guard/wsl-guard.py` runs the pipeline
 while watching Windows' available RAM from the Windows side, refuses to start
 without headroom, releases the cache when RAM runs low and stops its own run
