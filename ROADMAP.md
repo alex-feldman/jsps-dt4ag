@@ -129,7 +129,13 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
 
 **Run records**
 
-- [ ] A per-run JSON record under `runs/`, written INCREMENTALLY so a crashed or
+**Record architecture (decided 2026-10-20):** extend the Plant Reconstruction
+Catalog introduced in alpha.11. Its `catalog/jobs/` records are authoritative
+for invocation outcomes; do not introduce a parallel `runs/` job store.
+Frozen configs, command logs and linked artifacts are supporting evidence.
+The remaining criteria below apply to that catalog model.
+
+- [ ] A per-invocation JSON job record under `catalog/jobs/`, written INCREMENTALLY so a crashed or
       killed run still shows how far it got
 - [ ] An explicit milestone ladder (`config_ok` → `prereqs_ok` →
       `masks_composited` → `colmap_done` → `transforms_ok` → `pyramid_ok` →
@@ -147,15 +153,17 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
       section carrying the run id, resolved paths and the pipeline git commit.
       What is still owed here is the rest: tool versions, per-stage timings and
       the artefacts produced, none of which are known before the stages run
-- [ ] `runs/index.csv`, a queryable summary that is REBUILDABLE by scanning the
-      records, so a drifted index is never authoritative
-- [ ] Batch records under `runs/batches/`, since a batch spans captures and has
-      no home under any one of them
+- [ ] `catalog/index.csv`, a queryable summary that is REBUILDABLE by scanning the
+      job records, so a drifted index is never authoritative
+- [ ] Catalog batch provenance linking its invocation job IDs, since a batch
+      spans captures and has no home under any one of them; define its schema
+      and consumer compatibility before implementation
 
-**Overlap to reconcile (2026-10-20):** the Plant Reconstruction Catalog (alpha.11) writes atomic
-running and final job records with exact INI settings, selected inputs, frozen configs, command logs and
-verified export artifacts. That overlaps the per-run record items above. It is opt-in and per run. Whether
-it satisfies them, replaces them, or sits beside them is undecided, so none of those items is ticked.
+**Existing foundation:** alpha.11 provides opt-in atomic running/final job
+records, exact input INI settings, selected images, frozen configs, command logs
+and linked output artifacts. This is the foundation to extend, not evidence that
+all criteria above pass. See the [release plan's gap assessment](docs/v0.3.0-release-plan.md#catalog-gap-assessment).
+
 
 **Acceptance:** point it at a collection, walk away, and afterwards be able to
 say for every capture whether it succeeded, how long it took, what it produced,

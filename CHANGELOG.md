@@ -18,6 +18,9 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
+- Adopt catalog job records as the authoritative v0.3.0 invocation record model;
+  replace the parallel run-store proposal and document remaining implementation gaps.
+
 - Reconcile the alpha release history and adopt release-time versioning. Define
   the v0.3.0 alpha, beta and release gates, with an ordered release plan.
 
