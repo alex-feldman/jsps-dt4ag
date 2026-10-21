@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import platform
+import time
+import importlib.metadata
 import re
 import shlex
 import subprocess
@@ -52,7 +54,54 @@ class CatalogJob:
             logs=[], input_artifact_ids=[], output_artifact_ids=[], exit_code=None, error_summary=None)
         if git_value(repo, "status", "--porcelain"):
             self.record["diagnostics"].append("Producer checkout has uncommitted changes; commit alone does not identify its working tree.")
+        self.record["progress"] = dict(schema_version=1, milestones=[], furthest_milestone=None,
+            active_stage=None, stages={}, resolved={}, dependencies={})
+        self._stage_started = None
         self.save()
+
+    def milestone(self, name):
+        progress = self.record["progress"]
+        if not any(item["name"] == name for item in progress["milestones"]):
+            progress["milestones"].append(dict(name=name, verified_at=now()))
+        progress["furthest_milestone"] = name
+        self.save()
+
+    def resolved(self, **values):
+        self.record["progress"]["resolved"].update(values)
+        self.save()
+
+    def dependencies(self):
+        versions = {"python": platform.python_version()}
+        for package in ("nerfstudio", "gsplat", "torch"):
+            try:
+                versions[package] = importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError:
+                versions[package] = None
+        for name, command in (("colmap", ["colmap", "--version"]), ("ffmpeg", ["ffmpeg", "-version"])):
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+                lines = (result.stdout + result.stderr).strip().splitlines()
+                versions[name] = lines[0] if lines and result.returncode == 0 else None
+            except (OSError, subprocess.TimeoutExpired):
+                versions[name] = None
+        self.record["progress"]["dependencies"] = versions
+        self.save()
+
+    def start_stage(self, stage):
+        self.record["progress"]["active_stage"] = stage
+        self.record["progress"]["stages"][stage] = dict(started_at=now(), ended_at=None,
+            elapsed_seconds=None, status="running")
+        self._stage_started = time.monotonic()
+        self.save()
+
+    def end_stage(self, status):
+        progress = self.record["progress"]
+        stage = progress["active_stage"]
+        if stage is not None:
+            progress["stages"][stage].update(ended_at=now(), status=status,
+                elapsed_seconds=max(0, time.monotonic() - self._stage_started))
+            progress["active_stage"] = None
+            self.save()
 
     def pointer(self, path):
         relative = Path(path).expanduser().resolve().relative_to(self.root).as_posix()
@@ -128,6 +177,7 @@ class CatalogJob:
         self.save()
 
     def finish(self, code, error=None):
+        self.end_stage("completed" if code == 0 else "cancelled" if code == 130 else "failed")
         self.record.update(ended_at=now(), execution_status="completed" if code == 0 else
             "cancelled" if code == 130 else "failed", exit_code=code, error_summary=error)
         self.save()

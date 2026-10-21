@@ -128,7 +128,10 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
 - [ ] Optionally stop after every capture's camera solve, with a camera review
       written for each, then train and export only the captures the operator
       approves; without the option a collection runs straight through
-- [ ] Concurrent runs cannot silently contend for one GPU
+- [ ] Collection execution is sequential within each batch, and the documentation
+      explains shared-GPU contention risks for independent concurrent invocations.
+      No mandatory global GPU lock (decided 2026-10-20); optional per-GPU
+      coordination is future work, not a v0.3.0 release gate.
 
 **Run records**
 

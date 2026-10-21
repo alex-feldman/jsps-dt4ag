@@ -57,6 +57,15 @@ Dates are the tag date, not the commit date, where they differ.
   unreadable file. `--preview {png}` writes a three-view picture of the Gaussian
   centers (not a render). Tests in `pipeline/tests/test_ply_check.py` use
   synthetic PLYs and are skipped where numpy is missing.
+- Catalog integration tests for incomplete image pyramids, failed training,
+  invalid and valid exports; an optional compatibility check exercises the actual
+  Mission Control validator and reader against generated legacy/current/failure fixtures.
+
+- Additive catalog job progress: verified milestones, active and completed stage
+  timings, loaded and runtime-resolved configuration, and dependency versions.
+  Create enabled catalog jobs before config loading so early configuration
+  failures survive; preserve interrupted progress and existing job identities.
+- Dedicated hermetic catalog failure-path tests and `pipeline/CATALOG-RECORDS.md`.
 
 ### Fixed
 
@@ -76,6 +85,8 @@ Dates are the tag date, not the commit date, where they differ.
   WSL can empty Windows' RAM") now describe the mechanism and the fixes that do
   work (`[host] memory_high`, the guard, and releasing leftover cache between
   runs, which Windows sees about 40 seconds later).
+- Restrict the object-agnostic source check exception to the existing catalog API
+  namespace; the previously added integration otherwise made the baseline fail.
 
 ### Changed
 
@@ -87,6 +98,13 @@ Dates are the tag date, not the commit date, where they differ.
   frames with no known time no longer break the plot's colors. Checked on a real
   109-frame solve: 109 registered, 73,930 points, 1.30 px mean reprojection.
   The report's keys are unchanged, with `reviewed_model` added.
+- Remove the mandatory global GPU-lock release requirement. Keep batches
+  sequential internally, allow independent concurrent invocations, and document
+  shared-GPU contention risks; optional per-GPU coordination remains future work.
+
+- Catalog emission now requires an explicit storage root as well as root and
+  capture identities, so early failures have a known durable destination.
+
 
 - Adopt catalog job records as the authoritative v0.3.0 invocation record model;
   replace the parallel run-store proposal and document remaining implementation gaps.
