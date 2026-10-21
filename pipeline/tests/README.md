@@ -46,6 +46,13 @@ folder's contents, the single decode and its preview window, the command the pag
 its refusals and its cleanup when links are impossible). ffmpeg and ffprobe are replaced by fakes, so the tests
 need neither; the real tools were checked only by a real run on a synthetic clip.
 
+`test_ply_check.py` covers `scripts/ply-check/ply-check.py` with small synthetic
+PLYs written by the test (3DGS property names, binary little-endian): the header
+reader and its refusals, non-finite and zero-vertex and truncated files, the
+statistics, the preview point selection, exit codes and `--json`. It needs
+numpy and is skipped without it, so run the suite with the pipeline
+environment's Python to include it.
+
 The optional `[host]` section is covered in both files. `test_dt4ag_config.py`
 (`TestHostSection`): an absent or empty section means no limits, valid values
 are normalized, malformed sizes and CPU lists, a cap below 512M and an unknown

@@ -37,6 +37,14 @@ Dates are the tag date, not the commit date, where they differ.
   low during the run, and stops only its own process group before Windows runs
   out (exit 75). Writes the run's log, a host-sample JSONL and a status JSON.
   Refuses to run off WSL2.
+- `pipeline/scripts/ply-check/ply-check.py`, a read-only integrity check for
+  exported splat PLY files (binary little-endian). Per file it reports vertex
+  count, size, sha256, non-finite values per property, opacity and largest-axis
+  scale statistics and the 1-99 percentile extent of the centers, as text or
+  `--json`. Exits 1 on non-finite values, zero vertices, a truncated body or an
+  unreadable file. `--preview {png}` writes a three-view picture of the Gaussian
+  centers (not a render). Tests in `pipeline/tests/test_ply_check.py` use
+  synthetic PLYs and are skipped where numpy is missing.
 
 ### Fixed
 
