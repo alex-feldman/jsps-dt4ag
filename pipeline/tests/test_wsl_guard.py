@@ -365,6 +365,54 @@ class TestRun(unittest.TestCase):
         status = json.loads((self.tmp / "run-status.json").read_text())
         self.assertEqual(status["cache_releases"], 1)
 
+    def test_scope_figures_reach_the_status_only_for_a_dedicated_cgroup(self):
+        runner = self._runner("import time\ntime.sleep(0.4)\n")
+        reading = {"cgroup": "/run-x.scope", "scope_peak_mib": 900, "scope_anon_mib": 300,
+                   "scope_file_mib": 600, "scope_swap_mib": 5, "scope_oom_kills": 0}
+        for own, dedicated in (("/shared.scope", True), ("/run-x.scope", False)):
+            with self.subTest(own=own):
+                log = self.tmp / f"run-{dedicated}.log"
+                args = args_for("--runner", str(runner), "--log", str(log),
+                                "--interval", "0.05", "--quiet", "--", "--config", "x.ini")
+                with mock.patch.object(wg, "scope_memory", return_value=dict(reading)), \
+                        mock.patch.object(wg, "cgroup_path", return_value=own), \
+                        redirect_stderr(io.StringIO()):
+                    code = wg.run(args, FakeHost([9000]))
+                self.assertEqual(code, 0)
+                status = json.loads((self.tmp / f"run-{dedicated}-status.json").read_text())
+                self.assertEqual(status["scope_dedicated"], dedicated)
+                lines = [json.loads(x) for x in
+                         (self.tmp / f"run-{dedicated}-host.jsonl").read_text().splitlines()]
+                self.assertTrue(all(line["scope_peak_mib"] == 900 for line in lines))
+                if dedicated:
+                    self.assertEqual((status["scope_peak_mib"], status["scope_anon_max_mib"],
+                                      status["scope_swap_max_mib"], status["scope_oom_kills"]),
+                                     (900, 300, 5, 0))
+                    self.assertNotIn("scope_shared", lines[0])
+                else:
+                    self.assertNotIn("scope_peak_mib", status)
+                    self.assertTrue(lines[0]["scope_shared"])
+
+    def test_a_run_without_cgroup_files_still_works(self):
+        runner = self._runner("import time\ntime.sleep(0.3)\n")
+        with mock.patch.object(wg, "scope_memory", return_value={}), \
+                redirect_stderr(io.StringIO()):
+            code = wg.run(self._args(runner), FakeHost([9000]))
+        self.assertEqual(code, 0)
+        status = json.loads((self.tmp / "run-status.json").read_text())
+        self.assertNotIn("scope_peak_mib", status)
+        self.assertFalse(status["scope_dedicated"])
+        self.assertFalse(status["killed_by_sigkill_unprompted"])
+
+    def test_a_sigkill_the_guard_did_not_send_is_flagged(self):
+        runner = self._runner("import os, signal, time\ntime.sleep(0.2)\n"
+                              "os.kill(os.getpid(), signal.SIGKILL)\n")
+        with redirect_stderr(io.StringIO()):
+            code = wg.run(self._args(runner), FakeHost([9000]))
+        self.assertEqual(code, 128 + signal.SIGKILL)
+        status = json.loads((self.tmp / "run-status.json").read_text())
+        self.assertTrue(status["killed_by_sigkill_unprompted"])
+
     def test_an_existing_log_is_never_overwritten(self):
         runner = self._runner("raise SystemExit(0)\n")
         (self.tmp / "run.log").write_text("earlier run\n")
@@ -372,6 +420,281 @@ class TestRun(unittest.TestCase):
             code = wg.run(self._args(runner), FakeHost([9000]))
         self.assertEqual(code, wg.EXIT_REFUSED)
         self.assertEqual((self.tmp / "run.log").read_text(), "earlier run\n")
+
+
+class FakeCgroup:
+    """A fake /proc and /sys/fs/cgroup tree under a temporary directory."""
+
+    def __init__(self, root: Path):
+        self.proc = root / "proc"
+        self.cg = root / "cgroup"
+        self.proc.mkdir()
+        self.cg.mkdir()
+
+    def process(self, pid, path):
+        (self.proc / str(pid)).mkdir(exist_ok=True)
+        (self.proc / str(pid) / "cgroup").write_text(f"0::{path}\n")
+        directory = self.cg / path.lstrip("/")
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    @staticmethod
+    def fill(directory, current=100, peak=300, anon=40, file=60, swap=7, oom=0,
+             skip=()):
+        mib = 1048576
+        files = {
+            "memory.current": f"{current * mib}\n",
+            "memory.peak": f"{peak * mib}\n",
+            "memory.stat": f"anon {anon * mib}\nfile {file * mib}\nkernel 5\n",
+            "memory.swap.current": f"{swap * mib}\n",
+            "memory.events": f"low 0\nhigh 0\nmax 3\noom 1\noom_kill {oom}\n",
+        }
+        for name, text in files.items():
+            if name not in skip:
+                (directory / name).write_text(text)
+
+
+class TestScopeMemory(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.fake = FakeCgroup(Path(self._tmp.name))
+
+    def read(self, pid=10):
+        return wg.scope_memory(pid, str(self.fake.proc), str(self.fake.cg))
+
+    def test_reads_every_field_in_mib(self):
+        directory = self.fake.process(10, "/user.slice/run-r1.scope")
+        self.fake.fill(directory, current=100, peak=300, anon=40, file=60, swap=7, oom=2)
+        self.assertEqual(self.read(), {
+            "cgroup": "/user.slice/run-r1.scope", "scope_cur_mib": 100,
+            "scope_peak_mib": 300, "scope_anon_mib": 40, "scope_file_mib": 60,
+            "scope_swap_mib": 7, "scope_oom_kills": 2})
+
+    def test_a_missing_file_drops_only_its_own_field(self):
+        directory = self.fake.process(10, "/a.scope")
+        self.fake.fill(directory, skip=("memory.peak", "memory.swap.current"))
+        sample = self.read()
+        self.assertNotIn("scope_peak_mib", sample)
+        self.assertNotIn("scope_swap_mib", sample)
+        self.assertEqual(sample["scope_anon_mib"], 40)
+        self.assertEqual(sample["scope_oom_kills"], 0)
+
+    def test_everything_missing_gives_just_the_path(self):
+        self.fake.process(10, "/a.scope")
+        self.assertEqual(self.read(), {"cgroup": "/a.scope"})
+
+    def test_garbled_values_are_skipped(self):
+        directory = self.fake.process(10, "/a.scope")
+        self.fake.fill(directory)
+        (directory / "memory.current").write_text("max\n")
+        (directory / "memory.events").write_text("oom_kill many\n")
+        sample = self.read()
+        self.assertNotIn("scope_cur_mib", sample)
+        self.assertNotIn("scope_oom_kills", sample)
+        self.assertEqual(sample["scope_peak_mib"], 300)
+
+    def test_no_such_process_or_no_cgroup_v2_gives_nothing(self):
+        self.assertEqual(self.read(99), {})
+        (self.fake.proc / "11").mkdir()
+        (self.fake.proc / "11" / "cgroup").write_text("12:memory:/old\n")   # cgroup v1
+        self.assertEqual(self.read(11), {})
+        self.fake.process(12, "/gone.scope")
+        (self.fake.cg / "gone.scope").rmdir()
+        self.assertEqual(self.read(12), {})
+
+    def test_the_root_cgroup_path(self):
+        (self.fake.proc / "13").mkdir()
+        (self.fake.proc / "13" / "cgroup").write_text("0::/\n")
+        self.assertEqual(wg.cgroup_path(13, str(self.fake.proc)), "/")
+        self.assertEqual(self.read(13), {"cgroup": "/"})
+
+    def test_maxima_keep_the_largest_value_and_the_oom_count_only_grows(self):
+        state = {}
+        wg.fold_scope_maxima(state, {"cgroup": "/a.scope", "scope_peak_mib": 300,
+                                     "scope_anon_mib": 40, "scope_swap_mib": 7,
+                                     "scope_file_mib": 60, "scope_oom_kills": 0})
+        wg.fold_scope_maxima(state, {"scope_peak_mib": 250, "scope_anon_mib": 90,
+                                     "scope_swap_mib": 3, "scope_oom_kills": 1})
+        self.assertEqual(state, {
+            "scope_peak_mib": 300, "scope_anon_max_mib": 90, "scope_swap_max_mib": 7,
+            "scope_file_max_mib": 60, "scope_oom_kills": 1, "scope_cgroup": "/a.scope"})
+
+    def test_a_shared_cgroup_is_not_dedicated(self):
+        directory = self.fake.process(10, "/session.scope")
+        self.fake.fill(directory)
+        for own, expected in (("/session.scope", False), ("/other.scope", True)):
+            with self.subTest(own=own):
+                sample, dedicated = wg.scope_sample(
+                    10, own, str(self.fake.proc), str(self.fake.cg))
+                self.assertEqual((bool(sample), dedicated), (True, expected))
+        self.assertEqual(wg.scope_sample(99, "/x", str(self.fake.proc), str(self.fake.cg)),
+                         ({}, False))
+
+
+class TestEmulateVm(unittest.TestCase):
+
+    def test_parse_memory_and_swap(self):
+        self.assertEqual(wg.parse_emulate("8G:4G"), ("8G", "4G"))
+        self.assertEqual(wg.parse_emulate("6000M:512M"), ("6000M", "512M"))
+        self.assertEqual(wg.parse_emulate("8G"), ("8G", "0M"))
+        self.assertEqual(wg.parse_emulate("8G:0M"), ("8G", "0M"))
+
+    def test_bad_values_are_refused(self):
+        for value in ("", "8", "8GB", "G", "8G:x", "-8G", "8.5G", "8G:4G:1G",
+                      "8g", "100M", "0G", ":4G", "8G:0"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    wg.parse_emulate(value)
+
+    def test_the_command_is_wrapped_in_a_hard_limit_scope(self):
+        args = args_for("--emulate-vm", "8G:4G", "--python", "/py", "--runner", "/r.py",
+                        "--", "--config", "x.ini", "--stage", "train,export")
+        self.assertEqual(wg.child_command(args), [
+            "systemd-run", "--user", "--scope", "--quiet",
+            "-p", "MemoryMax=8G", "-p", "MemorySwapMax=4G",
+            "/py", "-u", "/r.py", "--config", "x.ini", "--stage", "train,export"])
+
+    def test_without_the_option_nothing_is_wrapped(self):
+        args = args_for("--python", "/py", "--runner", "/r.py", "--", "--dry-run")
+        self.assertEqual(wg.child_command(args), ["/py", "-u", "/r.py", "--dry-run"])
+        self.assertIsNone(args.emulate_vm)
+
+    def test_a_bad_value_is_a_usage_error(self):
+        with redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as caught:
+            wg.parse_args(["--emulate-vm", "8GB", "--", "--dry-run"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("--emulate-vm", err.getvalue())
+
+    def test_a_config_with_memory_high_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "run.ini"
+            config.write_text("[host]\nmemory_high = 6G\nprocess_cpus = 0,1\n")
+            for passthrough in (["--config", str(config)], [f"--config={config}"]):
+                with self.subTest(passthrough=passthrough):
+                    with redirect_stderr(io.StringIO()) as err,                             self.assertRaises(SystemExit) as caught:
+                        wg.parse_args(["--emulate-vm", "8G:4G", "--", *passthrough])
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertIn("memory_high", err.getvalue())
+                    self.assertIn("escapes", err.getvalue())
+            # Without the emulation the same config is fine.
+            wg.parse_args(["--", "--config", str(config)])
+
+    def test_a_config_without_memory_high_or_unreadable_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "plain.ini"
+            plain.write_text("[host]\nprocess_cpus = 0,1\n")
+            empty = Path(tmp) / "empty.ini"
+            empty.write_text("[host]\nmemory_high =\n")
+            for config in (plain, empty, Path(tmp) / "missing.ini"):
+                with self.subTest(config=config.name):
+                    args = wg.parse_args(["--emulate-vm", "8G:4G", "--", "--config", str(config)])
+                    self.assertEqual(args.emulate_vm, "8G:4G")
+        args = wg.parse_args(["--emulate-vm", "8G:4G", "--", "--dry-run"])
+        self.assertEqual(args.emulate_vm, "8G:4G")
+
+    def test_print_command_prints_and_exits_zero_without_any_check(self):
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(wg, "preflight") as preflight:
+            code = wg.main(["--emulate-vm", "8G:4G", "--print-command", "--python", "/py",
+                            "--runner", "/r.py", "--", "--stage", "colmap"])
+        self.assertEqual(code, 0)
+        preflight.assert_not_called()
+        self.assertEqual(
+            out.getvalue().strip(),
+            "systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=4G "
+            "/py -u /r.py --stage colmap")
+
+    def test_scope_probe_accepts_a_scope_that_got_its_limit(self):
+        done = mock.Mock(returncode=0, stdout=f"{8 * 1073741824}\n", stderr="")
+        calls = []
+
+        def run_probe(command, **kwargs):
+            calls.append(command)
+            return done
+        self.assertEqual(wg.scope_problem("8G:4G", lambda _: "/usr/bin/systemd-run", run_probe), "")
+        self.assertIn("MemoryMax=8G", calls[0])
+        self.assertIn("MemorySwapMax=4G", calls[0])
+
+    def test_scope_probe_refuses_when_the_limit_did_not_apply(self):
+        silent = mock.Mock(returncode=0, stdout="max\n", stderr="")
+        problem = wg.scope_problem("8G:4G", lambda _: "/x", lambda *a, **k: silent)
+        self.assertIn("did not get the memory limit", problem)
+        failed = mock.Mock(returncode=1, stdout="", stderr="Failed to connect to bus")
+        self.assertIn("Failed to connect", wg.scope_problem("8G", lambda _: "/x",
+                                                            lambda *a, **k: failed))
+
+    def test_scope_probe_refuses_without_systemd_run_or_when_it_cannot_start(self):
+        self.assertIn("systemd-run", wg.scope_problem("8G", lambda _: None))
+
+        def boom(*a, **k):
+            raise FileNotFoundError("systemd-run")
+        self.assertIn("could not be started", wg.scope_problem("8G", lambda _: "/x", boom))
+
+    def test_preflight_reports_a_scope_problem_only_when_emulating(self):
+        runner = Path(__file__)       # any existing file
+        with mock.patch.object(wg, "scope_problem", return_value="no scopes here") as probe, \
+                mock.patch.object(wg, "interpreter_problem", return_value=""):
+            host, reason = wg.preflight(args_for("--runner", str(runner)),
+                                        wsl=lambda: True, powershell=lambda: "/ps")
+            self.assertIsNotNone(host)
+            probe.assert_not_called()
+            host, reason = wg.preflight(args_for("--emulate-vm", "8G:4G", "--runner", str(runner)),
+                                        wsl=lambda: True, powershell=lambda: "/ps")
+            self.assertIsNone(host)
+            self.assertEqual(reason, "no scopes here")
+
+
+
+class TestInterpreter(unittest.TestCase):
+    """The guard refuses an interpreter that cannot find torch (found 2026-10-21)."""
+
+    def _done(self, code, out="/env"):
+        return mock.Mock(returncode=code, stdout=out + "\n", stderr="")
+
+    def test_stages_from_the_passthrough(self):
+        self.assertEqual(wg.passthrough_stages(["--config", "x.ini", "--stage", "colmap,process"]),
+                         {"colmap", "process"})
+        self.assertEqual(wg.passthrough_stages(["--stage=train"]), {"train"})
+        self.assertIsNone(wg.passthrough_stages(["--config", "x.ini"]))
+        self.assertIsNone(wg.passthrough_stages(["--from-stage", "process"]))
+
+    def test_solve_only_runs_skip_the_check(self):
+        probe = mock.Mock()
+        self.assertEqual(wg.interpreter_problem("/py", ["--stage", "colmap,process"], probe), "")
+        probe.assert_not_called()
+
+    def test_dry_runs_skip_the_check(self):
+        probe = mock.Mock()
+        self.assertEqual(wg.interpreter_problem("/py", ["--dry-run"], probe), "")
+        probe.assert_not_called()
+
+    def test_training_with_torch_passes(self):
+        probe = mock.Mock(return_value=self._done(0))
+        self.assertEqual(wg.interpreter_problem("/venv/bin/python", ["--stage", "train"], probe), "")
+        self.assertEqual(probe.call_args[0][0][0], "/venv/bin/python")
+
+    def test_training_without_torch_names_the_interpreter_and_the_trap(self):
+        probe = mock.Mock(return_value=self._done(3, "/home/u/opt/colmap-prefix"))
+        problem = wg.interpreter_problem("/home/u/opt/colmap-prefix/bin/python", [], probe)
+        self.assertIn("/home/u/opt/colmap-prefix/bin/python", problem)
+        self.assertIn("environment /home/u/opt/colmap-prefix", problem)
+        self.assertIn("ships its own", problem)
+        self.assertIn("uv run python", problem)
+
+    def test_an_interpreter_that_will_not_start_is_reported(self):
+        def boom(*a, **k):
+            raise FileNotFoundError("no such file: /nope")
+        self.assertIn("could not be started", wg.interpreter_problem("/nope", [], boom))
+
+    def test_preflight_refuses_on_an_interpreter_problem(self):
+        runner = Path(__file__)
+        with mock.patch.object(wg, "interpreter_problem", return_value="wrong python"):
+            host, reason = wg.preflight(args_for("--runner", str(runner)),
+                                        wsl=lambda: True, powershell=lambda: "/ps")
+        self.assertIsNone(host)
+        self.assertEqual(reason, "wrong python")
 
 
 if __name__ == "__main__":

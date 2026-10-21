@@ -951,6 +951,9 @@ _HINT = (
     "  COLMAP and ffmpeg are separate binaries that uv does not install. Put\n"
     "  the prefix holding them on PATH:\n"
     "    export PATH=$HOME/opt/colmap-prefix/bin:$PATH\n"
+    "  That prefix ships its own python, so after this export a bare 'python'\n"
+    "  is COLMAP's, without torch: keep using 'uv run python' or the venv's\n"
+    "  full path.\n"
     "  With conda (the fallback):\n"
     "    conda activate ns-l-oci\n"
     "  See pipeline/QUICKSTART.md section 3."
@@ -1148,7 +1151,8 @@ def _check_cuda(problems: List[str]) -> None:
         import torch  # noqa: PLC0415
     except Exception as exc:  # pragma: no cover - environment dependent
         problems.append(
-            f"torch could not be imported ({exc}).\n  {_HINT}"
+            f"torch could not be imported ({exc}) by {sys.executable}\n"
+            f"  (environment {sys.prefix}).\n  {_HINT}"
         )
         return
     if not torch.cuda.is_available():

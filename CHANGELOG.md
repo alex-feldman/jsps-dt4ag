@@ -37,8 +37,38 @@ Dates are the tag date, not the commit date, where they differ.
   low during the run, and stops only its own process group before Windows runs
   out (exit 75). Writes the run's log, a host-sample JSONL and a status JSON.
   Refuses to run off WSL2.
+- `wsl-guard.py` reads the memory of the run's own cgroup every sample
+  (`memory.current`, `memory.peak`, anon and file from `memory.stat`, swap, and
+  the `oom_kill` count), tolerating any missing file, and records maxima and the
+  OOM count in the status JSON (`scope_peak_mib`, `scope_anon_max_mib`,
+  `scope_swap_max_mib`, `scope_oom_kills`). Kept only when the run has a cgroup of
+  its own; also flags a SIGKILL the guard did not send.
+- `wsl-guard.py --emulate-vm 8G:4G` runs the whole invocation in a hard
+  `MemoryMax` plus `MemorySwapMax` scope, which is what WSL gives a 16 GB Windows
+  machine by default, to check that a run fits. Validated, probed before the run,
+  refused together with `[host] memory_high` (a nested scope escapes the outer
+  one), and `--print-command` shows the wrapped command. QUICKSTART's 16 GB
+  paragraph has a "check your machine" recipe and says what pass means.
+- `pipeline/scripts/ply-check/ply-check.py`, a read-only integrity check for
+  exported splat PLY files (binary little-endian). Per file it reports vertex
+  count, size, sha256, non-finite values per property, opacity and largest-axis
+  scale statistics and the 1-99 percentile extent of the centers, as text or
+  `--json`. Exits 1 on non-finite values, zero vertices, a truncated body or an
+  unreadable file. `--preview {png}` writes a three-view picture of the Gaussian
+  centers (not a render). Tests in `pipeline/tests/test_ply_check.py` use
+  synthetic PLYs and are skipped where numpy is missing.
 
 ### Fixed
+
+- `wsl-guard.py` refuses to start a run that trains or exports when the
+  interpreter it would use cannot find torch, and names that interpreter. The
+  COLMAP prefix ships its own `python`, so after `export
+  PATH=$HOME/opt/colmap-prefix/bin:$PATH` a bare `python` or `$(which python)`
+  was COLMAP's and the run failed its prerequisite check with a hint that did
+  not say which Python ran. `run_pipeline.py`'s torch check now names the
+  interpreter and its environment, its hint warns about the prefix's `python`,
+  and QUICKSTART (section 3, the wsl-guard examples, Troubleshooting) and the
+  wsl-guard README start the guard with `uv run python`.
 
 - `VIDEO-WORKFLOW.md` told readers to drop WSL's file cache before a run to avoid
   running Windows out of RAM. That does not work: the run refills the cache. The
@@ -48,6 +78,15 @@ Dates are the tag date, not the commit date, where they differ.
   runs, which Windows sees about 40 seconds later).
 
 ### Changed
+
+- `camera-review.py` now has a README and tests. The pure helpers (frame times
+  from `frames.csv` or image order, missing and unexpected frames, model folders)
+  load without numpy or nerfstudio, which are imported only when the script runs.
+  New `--model` option to review a `sparse/` folder other than `0`; a model with
+  no images or no points now stops with a message instead of a traceback, and
+  frames with no known time no longer break the plot's colors. Checked on a real
+  109-frame solve: 109 registered, 73,930 points, 1.30 px mean reprojection.
+  The report's keys are unchanged, with `reviewed_model` added.
 
 - Adopt catalog job records as the authoritative v0.3.0 invocation record model;
   replace the parallel run-store proposal and document remaining implementation gaps.
