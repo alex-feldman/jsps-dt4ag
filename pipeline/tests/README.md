@@ -77,3 +77,7 @@ not part of this stdlib-only suite.
 
 Catalog job progress and failure-path fixtures are in `test_plant_catalog.py`;
 see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for the producer contract.
+
+The optional external-reader check uses `catalog_consumer_fixtures.py` and
+`catalog-consumer-compat.cjs`; invocation and prerequisites are in
+[CATALOG-RECORDS.md](../CATALOG-RECORDS.md#later-stage-and-external-consumer-checks).

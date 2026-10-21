@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Catalog integration tests for incomplete image pyramids, failed training,
+  invalid and valid exports; an optional compatibility check exercises the actual
+  Mission Control validator and reader against generated legacy/current/failure fixtures.
+
 - Additive catalog job progress: verified milestones, active and completed stage
   timings, loaded and runtime-resolved configuration, and dependency versions.
   Create enabled catalog jobs before config loading so early configuration

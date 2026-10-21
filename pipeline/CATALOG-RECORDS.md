@@ -56,3 +56,29 @@ Fixtures use temporary storage and mocked subprocesses. They cover atomic-write
 failure, unfinalized progress, failed-stage timings, invalid configuration,
 prerequisite failure, stage failure, interruption, dry-run suppression and a
 verified mocked COLMAP completion. They do not establish a real GPU run.
+
+### Later-stage and external consumer checks
+
+The catalog suite also exercises a real partial-pyramid verification failure,
+successful processing followed by failed training, zero-vertex export refusal,
+and valid export acceptance. External commands remain mocked; filesystem and
+verification functions are real.
+
+For optional integration with a Mission Control checkout, generate fixtures into
+a new temporary directory:
+
+    python3 pipeline/tests/catalog_consumer_fixtures.py /tmp/new-catalog-fixtures
+
+Then, on a host that can read that directory, run:
+
+    node pipeline/tests/catalog-consumer-compat.cjs /path/to/mission-control /path/to/new-catalog-fixtures
+
+The first path names the app directory containing `lib/plant-catalog.ts`
+and its existing TypeScript installation. The check transpiles the actual
+consumer module, supplies isolated workspace/config roots, and calls its
+validator and `loadCatalog`. It neither edits nor starts the app. No package
+installation is part of this check. Fixtures include a producer-generated
+completed job, the legacy shape without progress, and a real early config failure.
+Expected outcome: all records load; the early job retains its explicit unresolved
+capture diagnostic. Malformed required fields still fail validation. Detailed
+progress UI rendering is outside this check.

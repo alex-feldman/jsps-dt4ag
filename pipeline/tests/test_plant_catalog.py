@@ -54,6 +54,7 @@ class CatalogTests(unittest.TestCase):
         record = self.read()
         self.assertEqual(record['execution_status'], 'failed')
         self.assertEqual(record['progress']['stages']['train']['status'], 'failed')
+        self.assertIn('training failed', record['error_summary'])
         self.assertGreaterEqual(record['progress']['stages']['train']['elapsed_seconds'], 0)
         self.assertIsNone(record['progress']['active_stage'])
 
@@ -135,3 +136,68 @@ class CatalogTests(unittest.TestCase):
         original = self.read()['progress']['milestones']
         job.milestone('exported')
         self.assertEqual(self.read()['progress']['milestones'], original)
+
+    def prepare_workspace(self, **overrides):
+        cfg = make_config(self.root, **overrides)
+        (cfg.images_path / 'one.jpg').write_bytes(b'image')
+        workspace = cfg.colmap_workspace(cfg.make_run_id())
+        workspace.mkdir(parents=True)
+        return cfg, workspace
+
+    def test_partial_pyramid_preserves_transforms_boundary(self):
+        cfg, workspace = self.prepare_workspace()
+        def process(*args):
+            (workspace / 'transforms.json').write_text(json.dumps({'frames': [{'file_path': 'images/one.jpg'}]}))
+            (workspace / 'images').mkdir()
+            (workspace / 'images/one.jpg').write_bytes(b'image')
+            # One real partial level: existence alone must not count as complete.
+            (workspace / 'images_2').mkdir()
+        with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=process):
+            self.assertEqual(self.invoke(cfg.source, '--stage', 'process'), 1)
+        record = self.read()
+        self.assertEqual(record['progress']['furthest_milestone'], 'transforms_ok')
+        self.assertNotIn('pyramid_ok', [m['name'] for m in record['progress']['milestones']])
+        self.assertIn('missing 1 of 1 registered frames', record['error_summary'])
+        self.assertEqual(record['progress']['stages']['process']['status'], 'failed')
+
+    def test_process_then_training_failure_preserves_verified_progress(self):
+        cfg, workspace = self.prepare_workspace(train_extra='downscale_factor = 1\neval_mode = all')
+        def command(argv, label, dry_run):
+            if label == 'ns-process-data':
+                (workspace / 'transforms.json').write_text(json.dumps({'frames': [{'file_path': 'images/one.jpg'}]}))
+                (workspace / 'images').mkdir()
+                (workspace / 'images/one.jpg').write_bytes(b'image')
+            else:
+                raise runner.StageError('training failed')
+        with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=command):
+            self.assertEqual(self.invoke(cfg.source, '--stage', 'process,train', '--allow-full-resolution'), 1)
+        record = self.read()
+        self.assertEqual(record['progress']['furthest_milestone'], 'pyramid_ok')
+        self.assertEqual(record['progress']['stages']['process']['status'], 'completed')
+        self.assertEqual(record['progress']['stages']['train']['status'], 'failed')
+        self.assertGreaterEqual(record['progress']['stages']['train']['elapsed_seconds'], 0)
+
+    def test_export_success_and_invalid_output_boundaries(self):
+        for valid in (False, True):
+            with self.subTest(valid=valid), tempfile.TemporaryDirectory() as folder:
+                self.root = Path(folder)
+                cfg, workspace = self.prepare_workspace(train_extra='downscale_factor = 1')
+                run_dir = cfg.output_dir(cfg.make_run_id()) / cfg.train_method / '2026-01-01_000000'
+                checkpoints = run_dir / 'nerfstudio_models'
+                checkpoints.mkdir(parents=True)
+                checkpoint = checkpoints / 'step-000000499.ckpt'
+                checkpoint.write_bytes(b'checkpoint')
+                (run_dir / 'config.yml').write_text('config')
+                def export(argv, label, dry_run):
+                    cfg.exports_dir.mkdir(parents=True, exist_ok=True)
+                    filename = runner.export_filename(cfg, cfg.make_run_id(), 1, cfg.max_num_iterations, None)
+                    header = 'ply\nformat ascii 1.0\nelement vertex ' + ('1' if valid else '0') + '\nend_header\n'
+                    (cfg.exports_dir / filename).write_text(header + ' ' * 2048)
+                with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=export), patch.object(runner, 'read_run_eval_token', return_value=None):
+                    self.assertEqual(self.invoke(cfg.source, '--stage', 'export'), 0 if valid else 1)
+                record = self.read()
+                self.assertEqual(record['progress']['furthest_milestone'], 'verified' if valid else 'exported')
+                self.assertEqual(record['execution_status'], 'completed' if valid else 'failed')
+                self.assertEqual(record['progress']['stages']['export']['status'], 'completed' if valid else 'failed')
+                self.assertEqual(len(record['output_artifact_ids']), 1 if valid else 0)
+                self.assertEqual('verified' in [m['name'] for m in record['progress']['milestones']], valid)
