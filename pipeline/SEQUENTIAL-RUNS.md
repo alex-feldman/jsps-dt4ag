@@ -69,26 +69,20 @@ siblings in about four lines, and no resume: re-running the loop re-runs
 everything, deriving new run ids, because nothing knows what already completed.
 Both are addressed in the gaps below.
 
-## 1. Nothing enforces that only one run happens at a time
+## 1. Concurrency policy (decided 2026-10-20)
 
-**This is the important one.** The machine has a single GPU. Two concurrent
-`ns-train` processes contend for it, and the symptom is a CUDA OOM in whichever
-process next crosses splatfacto's `resolution_schedule` boundary and jumps to
-full rasterisation resolution. That failure names memory, not contention, so it
-reads exactly like a dataset or configuration problem. Someone will spend an
-evening on the wrong hypothesis.
+A collection runs one capture at a time within its own batch. Independent
+invocations remain permitted; there is no mandatory global GPU lock. This allows
+deliberate concurrent work, including jobs on different GPUs. Each invocation
+uses its configured device settings; this policy adds no device scheduler.
 
-The loop above is safe on its own. What is unsafe is a **second** invocation
-from another terminal while the loop is running, and nothing currently refuses
-it. The runner already fails loudly about every other prerequisite (`colmap`,
-`ffmpeg`, `ns-train`, GPU architecture); the one resource that physically cannot
-be shared is the one it does not guard.
+Two jobs sharing a GPU can exceed available VRAM, slow each other down, or fail
+with a CUDA out-of-memory error. Free memory at startup is not a reservation:
+training demand can grow later. Coordinate GPU-heavy work manually and inspect
+failure logs before treating an OOM as a capture or configuration defect.
 
-Fix: a lockfile acquired in `check_prerequisites` for any stage that touches the
-GPU (`train`, `export`), holding the pid, and refused with a message naming the
-run that holds it. Stale locks from a killed process must be detectable, so
-store the pid and check whether it is alive rather than trusting the file's
-existence.
+Optional coordination per GPU may be considered later. It is not a v0.3.0 gate.
+The batch itself must still remain sequential and preserve failure evidence.
 
 ## 2. There is no resume, and re-running silently duplicates work
 
@@ -155,17 +149,9 @@ which binaries resolved, so the log answers the question later.
 
 ## What to change next
 
-In priority order:
+Follow [the ordered release plan](../docs/v0.3.0-release-plan.md). It sequences
+catalog records, documented concurrency behavior, collection execution, safe
+resume and record-derived summaries. ROADMAP owns the release acceptance criteria.
 
-1. Single-instance GPU lock (gap 1). It prevents a misdiagnosis, not just a
-   failure.
-2. Record the **effective** downscale factor: resolve it the way nerfstudio
-   does, log it at the start of the train stage, put it in the run log, and add
-   it to the export filename, which already carries platform, environment, step
-   count and data type. That makes it a property of the artefact rather than of
-   the operator's notes (gaps 3 and 4).
-3. `--skip-if-complete`, so re-running a batch is cheap and idempotent (gap 2).
-
-None of these should be implemented while a batch is running: every dataset
-launches `run_pipeline.py` fresh, so editing it mid-sequence changes the code
-under the remaining datasets.
+Do not change runner code beneath an active batch: every capture starts a fresh
+process and could otherwise run a different implementation.

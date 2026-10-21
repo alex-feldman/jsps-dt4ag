@@ -125,7 +125,10 @@ record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
       capture
 - [ ] Re-running a partly failed batch skips what already completed instead of
       silently duplicating it under new run ids
-- [ ] Concurrent runs cannot silently contend for one GPU
+- [ ] Collection execution is sequential within each batch, and the documentation
+      explains shared-GPU contention risks for independent concurrent invocations.
+      No mandatory global GPU lock (decided 2026-10-20); optional per-GPU
+      coordination is future work, not a v0.3.0 release gate.
 
 **Run records**
 

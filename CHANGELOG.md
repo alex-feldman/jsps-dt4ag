@@ -35,6 +35,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
+- Remove the mandatory global GPU-lock release requirement. Keep batches
+  sequential internally, allow independent concurrent invocations, and document
+  shared-GPU contention risks; optional per-GPU coordination remains future work.
+
 - Catalog emission now requires an explicit storage root as well as root and
   capture identities, so early failures have a known durable destination.
 
