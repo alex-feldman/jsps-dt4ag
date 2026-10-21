@@ -280,6 +280,27 @@ limit. On such a machine keep the `.wslconfig` default (or `memory=8GB`); a
 earlier. Not yet tested on real 16 GB hardware, and the emulation used a 6 GB
 GPU: on a smaller GPU, VRAM rather than RAM is the likelier limit.
 
+*Check your machine.* On any machine with systemd in WSL you can test the 8 GB
+case before you rely on it, whatever your real RAM. Run one full invocation
+under `--emulate-vm`, with a config that has no `[host] memory_high` (the
+runner's own scope would start inside the emulated one and escape it, so the
+guard refuses that combination):
+
+```bash
+python pipeline/scripts/wsl-guard/wsl-guard.py --emulate-vm 8G:4G \
+    --python "$(which python)" -- \
+    --config my-run.ini --stage colmap,process,train,export
+```
+
+`--print-command` shows the wrapped command without running anything. **Pass
+means exit 0 and `"scope_oom_kills": 0`** in the run's `-status.json` (next to
+the log). The same file shows `scope_anon_max_mib`, the program's own peak, and
+`scope_swap_max_mib`; a peak well under 8 GiB, with little or no swap, means
+there is headroom. The scope's `scope_peak_mib` will read close to the limit
+even on a pass, because file cache fills what the program leaves. Exit 137, a
+nonzero `scope_oom_kills`, or `"killed_by_sigkill_unprompted": true` means the
+run did not fit.
+
 **The backstop: the guard.** `scripts/wsl-guard/wsl-guard.py` runs the pipeline
 while watching Windows' available RAM from the Windows side, refuses to start
 without headroom, releases the cache when RAM runs low and stops its own run

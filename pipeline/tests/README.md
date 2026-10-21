@@ -46,6 +46,17 @@ folder's contents, the single decode and its preview window, the command the pag
 its refusals and its cleanup when links are impossible). ffmpeg and ffprobe are replaced by fakes, so the tests
 need neither; the real tools were checked only by a real run on a synthetic clip.
 
+`test_wsl_guard.py` covers the WSL2 guard's decisions, probe parsing and
+process-group handling with a fake Windows and a stand-in child. Its cgroup
+tests read a fake `/proc` and `/sys/fs/cgroup` tree built in a temporary
+directory (missing files, cgroup v1, shared versus dedicated cgroup, maxima),
+and its `--emulate-vm` tests cover value validation, the exact wrapped command,
+the refusal with `[host] memory_high` and `--print-command`. No scope is created.
+
+`test_camera_review.py` covers the helpers of `scripts/camera-review/camera-review.py`
+that need no COLMAP data: frame times from `frames.csv` or image order, missing
+and unexpected frames, model folders and the arguments. Stdlib only.
+
 `test_ply_check.py` covers `scripts/ply-check/ply-check.py` with small synthetic
 PLYs written by the test (3DGS property names, binary little-endian): the header
 reader and its refusals, non-finite and zero-vertex and truncated files, the

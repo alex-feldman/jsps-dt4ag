@@ -72,10 +72,68 @@ disk is dropped, after a `sync`.
 | `--log` | timestamped | The run's output. Must not exist yet. |
 | `--log-dir` | `$XDG_STATE_HOME/jsps-dt4ag/wsl-guard` (else `~/.local/state/...`) | Where the default log name goes. |
 | `--quiet` | off | Output to the log only, not also to the terminal. |
+| `--emulate-vm` | off | `VM[:SWAP]`, for example `8G:4G`: run inside a hard memory limit. See "Emulating a smaller machine". |
+| `--print-command` | off | Print the command that would be started and exit 0. Checks and starts nothing. |
 | `--python`, `--runner` | this interpreter, the repository's `run_pipeline.py` | What is started. |
 
-Inconsistent thresholds (stop at or above start, relief below stop) are usage
-errors, exit 2.
+Inconsistent thresholds (stop at or above start, relief below stop), a bad
+`--emulate-vm` value, and `--emulate-vm` with a config that sets `[host]
+memory_high` are usage errors, exit 2.
+
+## Emulating a smaller machine
+
+`--emulate-vm 8G:4G` starts the run as
+
+```
+systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=4G {python} -u run_pipeline.py ...
+```
+
+so the whole run, programs plus the file cache they create, must fit in 8 GiB,
+with 4 GiB of swap behind it. That is what WSL gives a 16 GB Windows machine by
+default (half of the RAM for the VM, swap a quarter of the RAM). Overflow is an
+OOM kill, not a slowdown, unlike `[host] memory_high`. Sizes are `{n}M` or
+`{n}G`; memory must be at least 512M; swap defaults to none. Before starting it
+creates one test scope with the same limits and reads `memory.max` back, and
+refuses (exit 76) if the limit did not apply, for example without a systemd user
+session or a delegated memory controller.
+
+**It cannot be combined with `[host] memory_high`.** A `systemd-run --user
+--scope` started inside another scope does not stay inside it: it becomes a
+sibling under `app.slice`, outside the limit. The runner wraps each stage this
+way when `memory_high` is set, so the stages would run unlimited while the
+emulation looked in place. The guard reads `[host] memory_high` from the file
+named by `--config` and refuses with exit 2. It cannot see a config the runner
+finds by itself, so always pass `--config` when emulating.
+
+Measured 2026-10-20 on a 32 GB laptop: a full colmap, process, train and export
+run on a 55-frame 3840x2880 capture under `8G:4G` exited 0 in 27 minutes, with 0
+OOM kills, no swap, a program (anon) peak of 2.4 GiB and a scope peak of 8192
+MiB (cache filling the limit). Pass means exit 0 and `scope_oom_kills` 0.
+
+## Memory of the run's own cgroup
+
+Every sample also reads the memory of the child's cgroup (`/proc/{pid}/cgroup`,
+then `/sys/fs/cgroup/{path}/`). Each file is optional: a missing one (older
+kernel, no memory controller, cgroup v1, no systemd) leaves out only its own
+field, and a run with no readable cgroup still works.
+
+The sample gets `scope_cur_mib`, `scope_peak_mib` (`memory.peak`, kernel 5.19 or
+later), `scope_anon_mib` (program memory), `scope_file_mib` (file cache),
+`scope_swap_mib` and `scope_oom_kills`, plus the `cgroup` path. The status JSON
+keeps `scope_peak_mib`, `scope_anon_max_mib`, `scope_file_max_mib` and
+`scope_swap_max_mib` as maxima, and `scope_oom_kills` as the largest count seen.
+
+These figures are the run's own only when the child has a cgroup of its own, as
+it does under `--emulate-vm`. Otherwise it shares the guard's cgroup, with the
+terminal session and anything else in it, and the figures would include all of
+that. Then `scope_dedicated` is false, the samples are marked `scope_shared`, and
+the status keeps no maxima. Stages started by the runner's own `[host]
+memory_high` scopes are separate cgroups and are not read.
+
+The OOM counter is read every `--interval` seconds and the scope disappears when
+the run exits, so a kill in the last seconds can be missed. The status therefore
+also sets `killed_by_sigkill_unprompted` when the run died of SIGKILL and the
+guard did not send it.
 
 ## What it writes
 
@@ -87,7 +145,8 @@ Beside the log, with the log's name minus its extension:
   `probe_error` lines for failed probes.
 - `<name>-status.json`: the command, working directory, thresholds, the start
   sample, the pid and process group, cache releases, `guard_stop` (the sample
-  that tripped it, or null), the run's return code and the guard's exit code.
+  that tripped it, or null), `emulate_vm`, the cgroup memory figures described
+  above, the run's return code and the guard's exit code.
   Written at start and rewritten at the end, so a status with no `returncode`
   means the guard itself was killed.
 
@@ -97,7 +156,7 @@ Beside the log, with the log's name minus its extension:
 |---|---|
 | the run's own | `0`, `1`, `2`, `130` as `run_pipeline.py` returns them; a run killed by a signal reports 128 + the signal |
 | `75` | the guard stopped the run (RAM or disk) |
-| `76` | refused to start: not WSL2, no `powershell.exe`, a failed first probe, not enough headroom, or the named log exists |
+| `76` | refused to start: not WSL2, no `powershell.exe`, a failed first probe, not enough headroom, a test scope that did not get the `--emulate-vm` limit, or the named log exists |
 | `2` | usage error |
 
 ## What it does not do

@@ -13,7 +13,12 @@ the Windows side, through ``powershell.exe``, and:
 * polls every few seconds during the run, releases the cache when RAM runs
   low, and stops the run before Windows runs out;
 * stops ONLY the process group it started, never anything else;
-* writes a host-sample JSONL and a status JSON beside the run's log.
+* writes a host-sample JSONL and a status JSON beside the run's log, with the
+  memory of the run's own cgroup (peak, program memory, swap, OOM kills) when it
+  has one;
+* with ``--emulate-vm 8G:4G``, runs the whole invocation inside a hard memory
+  limit, to check that it fits on a smaller machine (a 16 GB Windows machine
+  gives WSL 8 GB of RAM and 4 GB of swap by default).
 
 Stdlib only. Usage::
 
@@ -27,10 +32,12 @@ error. See README.md in this directory.
 from __future__ import annotations
 
 import argparse
+import configparser
 import datetime as _dt
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -56,6 +63,14 @@ POWERSHELL_FALLBACK = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell
 RELEASE_COMMAND = ["sudo", "-n", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"]
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]$")
+_SIZE_RE = re.compile(r"^(\d+)([MG])$")
+
+#: Smallest ``--emulate-vm`` memory accepted, in MiB. Below this the run could
+#: not even start and the result would say nothing about a real machine.
+MIN_EMULATE_MIB = 512
+
+PROC_ROOT = "/proc"
+CGROUP_ROOT = "/sys/fs/cgroup"
 
 
 class GuardError(Exception):
@@ -135,6 +150,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true",
                         help="Write the run's output to the log only, not also to the "
                              "terminal.")
+    parser.add_argument("--emulate-vm", default=None, metavar="VM[:SWAP]",
+                        help="Run the whole invocation inside a HARD memory limit, as on a "
+                             "smaller machine: VM is the memory (program plus file cache) and "
+                             "SWAP the swap, each like 8G or 6000M, for example 8G:4G (what "
+                             "WSL gives a 16 GB Windows machine by default). Overflow is an "
+                             "OOM kill. Uses systemd-run --user --scope. Refused when the run "
+                             "config sets [host] memory_high, because a scope started inside "
+                             "this one escapes it.")
+    parser.add_argument("--print-command", action="store_true",
+                        help="Print the command that would be started (with any "
+                             "--emulate-vm wrapping) and exit 0, checking and starting "
+                             "nothing.")
     parser.add_argument("--python", default=sys.executable,
                         help="Interpreter for run_pipeline.py (default: this one).")
     parser.add_argument("--runner", type=Path, default=RUNNER,
@@ -172,7 +199,73 @@ def validate_args(args: argparse.Namespace) -> List[str]:
     for name in ("interval", "settle", "relief_every", "kill_grace"):
         if getattr(args, name) <= 0:
             problems.append(f"--{name.replace('_', '-')} must be positive")
+    if args.emulate_vm is not None:
+        try:
+            parse_emulate(args.emulate_vm)
+        except ValueError as exc:
+            problems.append(str(exc))
+        else:
+            capped = config_memory_high(args.passthrough)
+            if capped:
+                problems.append(
+                    f"--emulate-vm cannot be combined with [host] memory_high (the run "
+                    f"config sets {capped}): the runner would start its own scope inside "
+                    "the emulated one, and a nested systemd-run --user --scope escapes the "
+                    "outer limit, so nothing would be emulated. Remove memory_high from the "
+                    "config, or use a copy of the config without it, for the emulation run")
     return problems
+
+
+def _size_mib(text: str) -> int:
+    match = _SIZE_RE.match(text)
+    if not match:
+        raise ValueError(f"{text!r} is not a size like 8G or 6000M")
+    return int(match.group(1)) * (1024 if match.group(2) == "G" else 1)
+
+
+def parse_emulate(value: str) -> Tuple[str, str]:
+    """Validate ``--emulate-vm`` and return ``(memory, swap)`` as systemd reads them.
+
+    ``8G:4G`` is 8 GiB of memory and 4 GiB of swap; ``8G`` alone means no swap.
+    Only ``M`` and ``G`` suffixes are accepted, and the memory must be at least
+    ``MIN_EMULATE_MIB``.
+    """
+    memory, _, swap = value.partition(":")
+    swap = swap or "0M"
+    try:
+        memory_mib = _size_mib(memory)
+        _size_mib(swap)
+    except ValueError as exc:
+        raise ValueError(f"--emulate-vm {value!r}: {exc}; use for example 8G:4G")
+    if memory_mib < MIN_EMULATE_MIB:
+        raise ValueError(f"--emulate-vm memory must be at least {MIN_EMULATE_MIB}M, "
+                         f"got {memory}")
+    return memory, swap
+
+
+def config_memory_high(passthrough: Sequence[str]) -> str:
+    """``[host] memory_high`` of the run config named by ``--config``, or ``""``.
+
+    Only looks at an explicit ``--config {path}`` or ``--config={path}``. A config
+    that cannot be read, or no ``--config``, gives ``""``: the runner reports
+    those itself, and this check must never stop a run for a reason of its own.
+    """
+    path = None
+    items = list(passthrough)
+    for index, item in enumerate(items):
+        if item == "--config" and index + 1 < len(items):
+            path = items[index + 1]
+        elif item.startswith("--config="):
+            path = item.split("=", 1)[1]
+    if not path:
+        return ""
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            parser.read_file(handle)
+    except (OSError, configparser.Error, UnicodeDecodeError):
+        return ""
+    return parser.get("host", "memory_high", fallback="").strip()
 
 
 # --------------------------------------------------------------------------
@@ -319,8 +412,134 @@ def log_paths(args: argparse.Namespace, stamp: str) -> Tuple[Path, Path, Path]:
     return log, Path(f"{stem}-status.json"), Path(f"{stem}-host.jsonl")
 
 
+def emulation_prefix(value: str) -> List[str]:
+    """The ``systemd-run`` words that put a command in a hard memory limit."""
+    memory, swap = parse_emulate(value)
+    return ["systemd-run", "--user", "--scope", "--quiet",
+            "-p", f"MemoryMax={memory}", "-p", f"MemorySwapMax={swap}"]
+
+
 def child_command(args: argparse.Namespace) -> List[str]:
-    return [args.python, "-u", str(args.runner)] + list(args.passthrough)
+    command = [args.python, "-u", str(args.runner)] + list(args.passthrough)
+    if args.emulate_vm:
+        command = emulation_prefix(args.emulate_vm) + command
+    return command
+
+
+# --------------------------------------------------------------------------
+# the run's own cgroup (Linux side)
+# --------------------------------------------------------------------------
+
+def cgroup_path(pid: int, proc_root: str = PROC_ROOT) -> Optional[str]:
+    """The cgroup v2 path of a process (``/user.slice/.../run-x.scope``), or None.
+
+    None on cgroup v1, a process that has gone, or any unreadable file.
+    """
+    try:
+        with open(f"{proc_root}/{pid}/cgroup", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("0::"):
+                    return line.strip()[3:] or "/"
+    except OSError:
+        pass
+    return None
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _key_values(text: Optional[str]) -> dict:
+    values = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            values[parts[0]] = parts[1]
+    return values
+
+
+def _mib(raw) -> Optional[int]:
+    try:
+        return round(int(str(raw).strip()) / 1048576)
+    except ValueError:
+        return None
+
+
+def scope_memory(pid: int, proc_root: str = PROC_ROOT,
+                 cgroup_root: str = CGROUP_ROOT) -> dict:
+    """Memory of the cgroup a process lives in, in MiB, or ``{}`` when unreadable.
+
+    ``scope_cur_mib`` (``memory.current``), ``scope_peak_mib`` (``memory.peak``,
+    kernel 5.19 and later), ``scope_anon_mib`` and ``scope_file_mib`` (program
+    memory and file cache, from ``memory.stat``), ``scope_swap_mib``
+    (``memory.swap.current``) and ``scope_oom_kills`` (``oom_kill`` in
+    ``memory.events``). A file that is missing (older kernel, controller not
+    enabled) leaves only its own field out; the rest are still reported.
+    ``cgroup`` is the path read. ``proc_root`` and ``cgroup_root`` are seams for
+    tests.
+    """
+    relative = cgroup_path(pid, proc_root)
+    if relative is None:
+        return {}
+    base = Path(cgroup_root) / relative.lstrip("/")
+    if not base.is_dir():
+        return {}
+    sample: dict = {"cgroup": relative}
+    stat = _key_values(_read_text(base / "memory.stat"))
+    fields = (
+        ("scope_cur_mib", _read_text(base / "memory.current")),
+        ("scope_peak_mib", _read_text(base / "memory.peak")),
+        ("scope_anon_mib", stat.get("anon")),
+        ("scope_file_mib", stat.get("file")),
+        ("scope_swap_mib", _read_text(base / "memory.swap.current")),
+    )
+    for key, raw in fields:
+        if raw is not None and _mib(raw) is not None:
+            sample[key] = _mib(raw)
+    events = _key_values(_read_text(base / "memory.events"))
+    if "oom_kill" in events:
+        try:
+            sample["scope_oom_kills"] = int(events["oom_kill"])
+        except ValueError:
+            pass
+    return sample
+
+
+def fold_scope_maxima(state: dict, sample: dict) -> None:
+    """Keep the largest value seen of each scope figure in ``state``.
+
+    ``scope_peak_mib``, ``scope_anon_max_mib``, ``scope_file_max_mib`` and
+    ``scope_swap_max_mib`` are maxima; ``scope_oom_kills`` is the largest count
+    seen (the kernel's counter only grows). ``scope_cgroup`` is the path read.
+    """
+    for source, target in (("scope_peak_mib", "scope_peak_mib"),
+                           ("scope_anon_mib", "scope_anon_max_mib"),
+                           ("scope_file_mib", "scope_file_max_mib"),
+                           ("scope_swap_mib", "scope_swap_max_mib")):
+        if source in sample:
+            state[target] = max(state.get(target, 0), sample[source])
+    if "scope_oom_kills" in sample:
+        state["scope_oom_kills"] = max(state.get("scope_oom_kills", 0),
+                                       sample["scope_oom_kills"])
+    if "cgroup" in sample:
+        state["scope_cgroup"] = sample["cgroup"]
+
+
+def scope_sample(pid: int, own_cgroup: Optional[str], proc_root: str = PROC_ROOT,
+                 cgroup_root: str = CGROUP_ROOT) -> Tuple[dict, bool]:
+    """One cgroup reading of the child, and whether the child has a cgroup of its own.
+
+    A child in the SAME cgroup as the guard (the usual case, without
+    ``--emulate-vm``) shares it with the terminal session and whatever else runs
+    there, so its peak and OOM count are not the run's. Only a dedicated cgroup's
+    figures are folded into the status maxima.
+    """
+    sample = scope_memory(pid, proc_root, cgroup_root)
+    dedicated = bool(sample) and sample["cgroup"] != own_cgroup
+    return sample, dedicated
 
 
 def exit_code_for(returncode: int) -> int:
@@ -419,7 +638,9 @@ def run(args: argparse.Namespace, host: Host) -> int:
         "start_sample": sample, "released_cache_before_start": released,
         "thresholds": thresholds, "log": str(log), "host_samples": str(samples_path),
         "cache_releases": 0, "guard_stop": None, "interrupted": False,
+        "emulate_vm": args.emulate_vm,
     }
+    own_cgroup = cgroup_path(os.getpid())
 
     def write_status() -> None:
         status_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
@@ -452,13 +673,21 @@ def run(args: argparse.Namespace, host: Host) -> int:
                     break
                 except subprocess.TimeoutExpired:
                     pass
+                scope, dedicated = scope_sample(child.pid, own_cgroup)
+                if dedicated:
+                    fold_scope_maxima(state, scope)
+                state["scope_dedicated"] = dedicated
                 try:
                     current = host.sample()
                 except GuardError as exc:  # a failed probe is not a trip
-                    samples.write(json.dumps({"at": _now_iso(), "probe_error": str(exc)}) + "\n")
+                    samples.write(json.dumps({"at": _now_iso(), "probe_error": str(exc),
+                                              **scope}) + "\n")
                     samples.flush()
                     continue
                 current["at"] = _now_iso()
+                current.update(scope)
+                if scope and not dedicated:
+                    current["scope_shared"] = True
                 action = poll_action(current, args, time.monotonic(), last_release)
                 if action == "release":
                     last_release = time.monotonic()
@@ -490,6 +719,12 @@ def run(args: argparse.Namespace, host: Host) -> int:
     else:
         code = exit_code_for(returncode)
     state["exit_code"] = code
+    # A scope's OOM counter is only read every --interval seconds, and the scope
+    # is gone once the run exits, so a kill in the last seconds can be missed.
+    # A run killed by SIGKILL that the guard did not stop is the other sign.
+    state["killed_by_sigkill_unprompted"] = (
+        returncode == -signal.SIGKILL and not state["guard_stop"]
+        and not state["interrupted"])
     write_status()
     if state["guard_stop"]:
         _say(f"stopped by the host guard ({state['guard_stop']}). Free RAM or disk, "
@@ -514,11 +749,48 @@ def preflight(args: argparse.Namespace,
                       "/etc/wsl.conf).")
     if not args.runner.is_file():
         return None, f"run_pipeline.py not found at {args.runner}; pass --runner."
+    if args.emulate_vm:
+        problem = scope_problem(args.emulate_vm)
+        if problem:
+            return None, problem
     return Host(found, args.drive), ""
+
+
+def scope_problem(emulate_vm: str,
+                  which: Callable[[str], Optional[str]] = shutil.which,
+                  run_probe: Callable[..., "subprocess.CompletedProcess"] = subprocess.run) -> str:
+    """Why ``--emulate-vm`` cannot work here, or ``""``.
+
+    Starts a tiny command once in a scope with the same two limits and reads the
+    limit back from the scope's cgroup. Without a systemd user session, or
+    without the memory controller delegated to it, systemd-run can still exit 0
+    and the limit would silently not apply.
+    """
+    if not which("systemd-run"):
+        return "--emulate-vm needs systemd-run, which is not on PATH."
+    memory, swap = parse_emulate(emulate_vm)
+    probe = ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={memory}",
+             "-p", f"MemorySwapMax={swap}", "sh", "-c",
+             "cat /sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)/memory.max"]
+    try:
+        done = run_probe(probe, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"--emulate-vm: a test scope could not be started: {exc}"
+    wanted = str(_size_mib(memory) * 1048576)
+    if done.returncode != 0 or done.stdout.strip() != wanted:
+        return ("--emulate-vm: a test scope did not get the memory limit (systemd-run "
+                f"said {(done.stderr or '').strip()[:160]!r}, memory.max read "
+                f"{done.stdout.strip()!r}, wanted {wanted}). The systemd user session may "
+                "lack a delegated memory controller; see QUICKSTART, \"Memory: WSL can "
+                "empty Windows' RAM\".")
+    return ""
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.print_command:
+        print(shlex.join(child_command(args)))
+        return 0
     host, reason = preflight(args)
     if host is None:
         _say("REFUSED: " + reason + " Nothing was started.")
