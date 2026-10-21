@@ -267,6 +267,19 @@ another WSL terminal shows `buff/cache` levelling off near the cap instead of
 climbing, and Windows' available RAM (Task Manager, or the guard's host-sample
 JSONL) stays roughly flat through `ns-process-data`, where it used to collapse.
 
+**Windows machines with 16 GB of RAM.** WSL's default VM limit is half of
+Windows' RAM, so on a 16 GB machine the VM gets 8 GB and Windows keeps the
+rest. The whole pipeline fits in that. Measured 2026-10-20 by emulation on the
+laptop above: colmap, process, train and export on the 55-frame 3840x2880
+capture (`downscale_factor` 4, `[host] process_cpus = 0,1`), run inside a hard
+`MemoryMax=8G` with `MemorySwapMax=4G`, finished in 27 minutes with no
+out-of-memory kills and no swap used. The programs' own memory peaked at
+2.4 GiB; the rest of the 8 GiB was file cache, which the kernel evicted at the
+limit. On such a machine keep the `.wslconfig` default (or `memory=8GB`); a
+`[host] memory_high` below that, such as `6G`, is optional and only throttles
+earlier. Not yet tested on real 16 GB hardware, and the emulation used a 6 GB
+GPU: on a smaller GPU, VRAM rather than RAM is the likelier limit.
+
 **The backstop: the guard.** `scripts/wsl-guard/wsl-guard.py` runs the pipeline
 while watching Windows' available RAM from the Windows side, refuses to start
 without headroom, releases the cache when RAM runs low and stops its own run
