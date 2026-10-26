@@ -18,6 +18,9 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Added a z-up to y-up Gaussian-splat conversion command with provenance sidecars
+  and an optional SuperSplat display-only copy.
+
 - Camera review now reports the largest adjacent-camera step relative to the
   median, names the frame transition, and highlights extreme jumps as review
   alerts instead of leaving the spike only in the plot.

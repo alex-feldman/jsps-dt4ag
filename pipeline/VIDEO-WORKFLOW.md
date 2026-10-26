@@ -213,6 +213,14 @@ nothing important is missing or smeared. The gaussian count is model size, not q
 `eval_mode = all` any score measures fit, not generalization; held-out scores, and how to compare runs, are
 in `QUICKSTART.md` section 6.
 
+## Y-up and SuperSplat copies
+
+When an export declares Vertical Axis: z and a y-up file is needed for interchange or
+viewing, use the terminal procedure in
+[scripts/splat-axis-convert/README.md](scripts/splat-axis-convert/README.md). It writes a
+separate y-up PLY without retraining. The optional SuperSplat file is display-only; use
+the plain y-up PLY for other viewers and downstream use.
+
 ## When something stops
 
 - **`CUDA driver version is insufficient` from COLMAP, or `nvidia-smi` fails inside WSL:** WSL has lost the
