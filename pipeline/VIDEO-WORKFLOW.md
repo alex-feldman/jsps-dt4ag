@@ -4,6 +4,11 @@ The whole path, start to finish, as plain commands you can paste into a terminal
 Python script or the pipeline runner with arguments; nothing needs an agent. An agent runs the same
 lines on your behalf.
 
+**Default operator:** Alex runs long pipeline stages in his terminal. An agent
+prepares the config and exact commands, then stops at the workflow's human
+review gates. It runs a stage only when Alex explicitly asks it to execute that
+stage. Repo-local agent instructions are in AGENTS.md.
+
 ```text
 video file
   1  review      one script makes a page of labeled thumbnails      video-frames.py review

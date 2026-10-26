@@ -38,9 +38,10 @@ cd jsps-dt4ag
 scripts/install.sh
 ```
 
-Then follow **[`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md)**, which is the
-only place the procedure is written down, so it cannot drift from the version
-you cloned.
+Then follow [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) for
+installation and general pipeline use. For a movie capture, follow
+[`pipeline/VIDEO-WORKFLOW.md`](pipeline/VIDEO-WORKFLOW.md). An AI agent
+working from this checkout should read [`AGENTS.md`](AGENTS.md) first.
 
 `scripts/install.sh` handles the system packages, `uv`, the COLMAP 3.12.0 CUDA
 prefix and the locked Python environment, then verifies the result. It was run
@@ -103,6 +104,7 @@ coming from this project's own runs.
 
 | | |
 |---|---|
+| [`AGENTS.md`](AGENTS.md) | Repo-local instructions for AI agents working from this checkout. |
 | [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) | **Start here to run it.** Install and use, from nothing. |
 | [`pipeline/README.md`](pipeline/README.md) | What is in the pipeline directory, and the runner's options. |
 | [`pipeline/configs/README.md`](pipeline/configs/README.md) | Every configuration key. |
