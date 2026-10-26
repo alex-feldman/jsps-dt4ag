@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # The module under test lives one directory above this package.
 PIPELINE_DIR = Path(__file__).resolve().parent.parent
@@ -33,6 +34,7 @@ from dt4ag_config import (  # noqa: E402
     ConfigError,
     Dt4agConfig,
     detect_colmap_version,
+    detect_nerfstudio_version,
     find_config,
     load_config,
 )
@@ -711,6 +713,25 @@ class TestDetectColmapVersion(TempDirTestCase):
         self.assertEqual(calls, [("colmap", "--version"), ("colmap",)])
 
 
+class TestDetectNerfstudioVersion(unittest.TestCase):
+    def test_reads_the_installed_distribution_metadata(self):
+        with patch.object(
+            dt4ag_config.importlib.metadata, "version", return_value="1.1.5"
+        ) as version:
+            self.assertEqual(detect_nerfstudio_version(), "1.1.5")
+        version.assert_called_once_with("nerfstudio")
+
+    def test_missing_distribution_returns_unknown(self):
+        with patch.object(
+            dt4ag_config.importlib.metadata,
+            "version",
+            side_effect=dt4ag_config.importlib.metadata.PackageNotFoundError(
+                "nerfstudio"
+            ),
+        ):
+            self.assertEqual(detect_nerfstudio_version(), "unknown")
+
+
 # --------------------------------------------------------------------------
 # data_type inference
 # --------------------------------------------------------------------------
@@ -856,10 +877,13 @@ class TestRunLog(TempDirTestCase):
 
     def test_extra_fields_are_recorded_and_unknown_ones_ignored(self):
         cfg = self._cfg()
-        cfg.append_run_log("run_260807-01-312", note="smoke test", bogus="dropped")
+        cfg.append_run_log(
+            "run_260807-01-312", note="smoke test",
+            nerfstudio_version="1.1.5", bogus="dropped")
         text = cfg.run_log.read_text(encoding="utf-8")
         self.assertIn("smoke test", text)
         self.assertNotIn("dropped", text)
+        self.assertEqual(self._rows(cfg)[0]["nerfstudio_version"], "1.1.5")
 
     def test_widens_mask_variant_header_and_preserves_old_rows(self):
         cfg = self._cfg()
@@ -1147,11 +1171,12 @@ class TestMaskVariant(TempDirTestCase):
         cfg = self._capture(
             mask_sets=("masks", "masks_leaf"), variant="leaf", use_masks="false"
         ).load()
-        cfg.append_run_log("run_260905-01-3120")
+        cfg.append_run_log("run_260905-01-3120", nerfstudio_version="1.1.5")
         row = self._rows(cfg)[0]
         self.assertIn("mask_variant = leaf", row["note"])
         self.assertEqual(row["masks"], "none")
         self.assertEqual(row["mask_variant"], "leaf")
+        self.assertEqual(row["nerfstudio_version"], "1.1.5")
 
     def test_decision_3_an_explicit_note_still_wins_over_the_default(self):
         cfg = self._capture(
@@ -1172,7 +1197,8 @@ class TestMaskVariant(TempDirTestCase):
 
     def test_the_run_log_gains_a_variant_column_and_masks_keeps_its_vocabulary(self):
         cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
-        cfg.append_run_log("run_260905-01-3120")
+        cfg.append_run_log(
+            "run_260905-01-3120", nerfstudio_version="1.1.5")
         row = self._rows(cfg)[0]
         self.assertEqual(row["masks"], "used")
         self.assertEqual(row["mask_variant"], "leaf")
@@ -1189,7 +1215,8 @@ class TestMaskVariant(TempDirTestCase):
             "/x/images,3120,splatfacto,30000,auto,used,,,old.ini,\n",
             encoding="utf-8",
         )
-        cfg.append_run_log("run_260905-01-3120")
+        cfg.append_run_log(
+            "run_260905-01-3120", nerfstudio_version="1.1.5")
         self.assertTrue(cfg.run_log.with_suffix(".csv.bak").is_file())
         rows = self._rows(cfg)
         self.assertEqual([r["run_id"] for r in rows],
@@ -1197,6 +1224,8 @@ class TestMaskVariant(TempDirTestCase):
         self.assertEqual(rows[0]["mask_variant"], "")
         self.assertEqual(rows[0]["masks"], "used")
         self.assertEqual(rows[1]["mask_variant"], "leaf")
+        self.assertEqual(rows[0]["nerfstudio_version"], "")
+        self.assertEqual(rows[1]["nerfstudio_version"], "1.1.5")
 
     def test_the_archived_config_records_the_variant(self):
         cfg = self._capture(mask_sets=("masks", "masks_leaf"), variant="leaf").load()
@@ -1322,11 +1351,13 @@ class TestArchiveRunConfig(TempDirTestCase):
     def test_extra_fields_are_recorded_and_empty_ones_dropped(self):
         cfg = self._cfg()
         written = cfg.archive_run_config(
-            self.RUN_ID, object_id="tomato-7", imaging_date="")
+            self.RUN_ID, object_id="tomato-7", imaging_date="",
+            nerfstudio_version="1.1.5")
         parser = configparser.ConfigParser()
         parser.read_string(written.read_text(encoding="utf-8"))
         record = parser["run-record"]
         self.assertEqual(record["object_id"], "tomato-7")
+        self.assertEqual(record["nerfstudio_version"], "1.1.5")
         self.assertNotIn("imaging_date", record)
 
     def test_two_runs_of_one_config_produce_two_independent_files(self):

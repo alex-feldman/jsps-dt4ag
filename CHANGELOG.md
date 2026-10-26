@@ -18,6 +18,11 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Every invocation that uses Nerfstudio records the installed distribution
+  version in `run-log.csv`, its archived `[run-record]`, and the invocation log.
+  The version comes from the runner's Python package metadata; older CSV rows
+  remain blank after header migration.
+
 - Repo-local agent instructions provide a task-routing entry point and human-run default; the README and video workflow point to them.
 - `[host]` config section, optional, for how stages may use the machine. Empty or
   absent changes no command. `memory_high` (for example `8G`) runs each external

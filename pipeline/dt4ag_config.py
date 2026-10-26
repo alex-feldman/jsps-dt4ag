@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import importlib.metadata
 import math
 import os
 import re
@@ -318,6 +319,19 @@ def detect_colmap_version() -> Optional[str]:
             major, minor, patch = match.group(1), match.group(2), match.group(3)
             return f"{major}{minor}{patch or ''}"
     return None
+
+
+def detect_nerfstudio_version() -> str:
+    """Return the installed Nerfstudio distribution version, or `unknown`.
+
+    Read package metadata from the Python environment running the pipeline.
+    The lockfile describes the intended environment, not necessarily the one
+    that actually ran this invocation.
+    """
+    try:
+        return importlib.metadata.version("nerfstudio")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 # --------------------------------------------------------------------------
@@ -749,6 +763,7 @@ class Dt4agConfig:
             "dataset",
             "images_path",
             "colmap_version",
+            "nerfstudio_version",
             "train_method",
             "max_num_iterations",
             "downscale_factor",

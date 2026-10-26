@@ -52,6 +52,7 @@ from dt4ag_config import (  # noqa: E402
     ConfigError,
     Dt4agConfig,
     eval_token,
+    detect_nerfstudio_version,
     find_config,
     held_out_count,
     load_config,
@@ -1577,10 +1578,15 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             + (f", imaged {capture_meta['capture.imaging_date']}"
                if capture_meta.get('capture.imaging_date') else "")
             + f"  ({Path(capture_meta['capture.source']).name})")
-        log_extra = {
+        log_extra.update({
             "object_id": capture_meta.get("capture.object_id", ""),
             "imaging_date": capture_meta.get("capture.imaging_date", ""),
-        }
+        })
+
+    if not dry_run and {"process", "train", "export"} & set(stages):
+        nerfstudio_version = detect_nerfstudio_version()
+        log(f"nerfstudio version: {nerfstudio_version}")
+        log_extra["nerfstudio_version"] = nerfstudio_version
 
     if not dry_run:
         log(f"run log           : {cfg.append_run_log(run_id, **log_extra)}")

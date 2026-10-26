@@ -41,9 +41,16 @@ from `max_num_iterations = 10000` to `30000`, and the settings behind the
 **The pipeline now handles this for every invocation it executes.** Each one writes
 `<data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini`: this config file verbatim,
 plus a `[run-record]` section holding what only resolves at run time, including the
-pipeline's git commit, the stages that ran, the eval mode and the checkpoint
-settings. `[run-record]` is an unknown section, so the loader ignores it and the
-archived file is still a runnable config:
+pipeline's git commit, the stages that ran, the eval mode, checkpoint settings,
+and the installed Nerfstudio version whenever a Nerfstudio stage is selected.
+That same version appears in `run-log.csv`'s `nerfstudio_version` column and the
+invocation log. It is read from package metadata in the Python environment
+running the pipeline, not inferred from `uv.lock`; if metadata is unavailable,
+the record says `unknown`. A COLMAP-only invocation leaves the CSV field blank
+and omits it from `[run-record]`. When an older CSV is widened, its previous
+rows remain blank; versions are not inferred retroactively. `[run-record]` is
+an unknown section, so the loader ignores it and the archived file is still a
+runnable config:
 
 ```bash
 uv run python pipeline/run_pipeline.py --config <data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini
