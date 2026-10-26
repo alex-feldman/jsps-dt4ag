@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- `pipeline/CAMERA-PROFILES.md` records the DJI Osmo Action 6's COLMAP
+  `SIMPLE_RADIAL` precedent separately from Nerfstudio's `OPENCV` transform
+  representation, with measured reference and failed-solve estimates.
+
 - The video workflow now includes an interactive COLMAP sparse-cloud review
   before training, with a clear stop condition when the camera path looks
   plausible but the reconstructed points do not.

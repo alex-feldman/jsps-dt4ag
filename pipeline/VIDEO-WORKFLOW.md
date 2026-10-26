@@ -177,7 +177,9 @@ If the model does not appear automatically, choose `File > Import model` and sel
 `$COLMAP_WS/sparse/0`. COLMAP's [GUI guide](https://colmap.github.io/gui.html) documents the viewer
 controls; its [sparse-model format guide](https://colmap.github.io/format.html#sparse-reconstruction)
 describes importing a model folder. The GUI needs an attached display with OpenGL 3.2 or later; on
-WSL2, use WSLg.
+WSL2, use WSLg. Before changing the camera model for a retry, compare the actual COLMAP model and its
+fitted parameters with the project's [camera profiles](CAMERA-PROFILES.md); do not infer the raw COLMAP
+model from Nerfstudio's `transforms.json`.
 
 Registered cameras appear red, while reconstructed points use their average image color. This is a
 sparse feature-point model, not a dense surface. Gaps are expected; look for points that form recognizable,
