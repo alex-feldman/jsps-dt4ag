@@ -19,7 +19,8 @@ Dates are the tag date, not the commit date, where they differ.
 ### Added
 
 - Added a z-up to y-up Gaussian-splat conversion command with provenance sidecars
-  and an optional SuperSplat display-only copy.
+  and a SuperSplat display copy. Alex confirmed the plain y-up file appears upside-down
+  in SuperSplat, while the display copy appears upright (2026-10-26).
 
 - Camera review now reports the largest adjacent-camera step relative to the
   median, names the frame transition, and highlights extreme jumps as review

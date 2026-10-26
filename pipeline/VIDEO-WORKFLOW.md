@@ -218,8 +218,9 @@ in `QUICKSTART.md` section 6.
 When an export declares Vertical Axis: z and a y-up file is needed for interchange or
 viewing, use the terminal procedure in
 [scripts/splat-axis-convert/README.md](scripts/splat-axis-convert/README.md). It writes a
-separate y-up PLY without retraining. The optional SuperSplat file is display-only; use
-the plain y-up PLY for other viewers and downstream use.
+separate y-up PLY without retraining. The plain y-up PLY appears upside-down in
+SuperSplat; open the y-up-supersplat display copy there. Use the plain y-up PLY
+for other viewers and downstream use. The linked README owns the exact procedure.
 
 ## When something stops
 

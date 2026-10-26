@@ -19,8 +19,10 @@ From the repository root, set the source export and a new output path:
       --out "$Y_UP" \
       --viewer supersplat
 
-The viewer option also writes a separate SuperSplat display-only PLY and a viewer
-JSON sidecar. SuperSplat applies its own rotation on load. Use the plain y-up PLY
+Open the y-up-supersplat file in SuperSplat. Alex visually confirmed on
+2026-10-26 that the plain y-up PLY appears upside-down there. The viewer copy is
+pre-rotated to compensate for SuperSplat rotation on load and is marked
+display-only in its PLY header and viewer JSON sidecar. Use the plain y-up PLY
 for other viewers, analysis and measurement.
 
 This converts coordinate convention. It does not measure gravity or calibrate scale.
