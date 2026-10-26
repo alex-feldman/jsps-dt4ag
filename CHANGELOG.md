@@ -18,6 +18,9 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Document Nerfstudio fly-through rendering from the capture camera path or a custom
+  viewer path.
+
 - Added a z-up to y-up Gaussian-splat conversion command with provenance sidecars
   and a SuperSplat display copy. Alex confirmed the plain y-up file appears upside-down
   in SuperSplat, while the display copy appears upright (2026-10-26).

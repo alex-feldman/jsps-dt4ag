@@ -213,6 +213,50 @@ nothing important is missing or smeared. The gaussian count is model size, not q
 `eval_mode = all` any score measures fit, not generalization; held-out scores, and how to compare runs, are
 in `QUICKSTART.md` section 6.
 
+## Fly-through video
+
+Nerfstudio renders from the trained checkpoint config, not the exported PLY. Neither
+route below requires SuperSplat.
+
+### Quick route from the capture path
+
+The interpolate renderer moves through the training cameras in their saved order.
+This replays the capture route instead of composing a new cinematic path. For an
+evalall run, use pose-source train so it uses the training cameras.
+
+Set RUN_ID and TIMESTAMP to the selected run and its splatfacto subfolder:
+
+    RUN_CONFIG="$DATA/outputs/$NAME/$RUN_ID/splatfacto/$TIMESTAMP/config.yml"
+
+Render a roughly one-minute 24 fps clip with ten interpolated steps between cameras:
+
+    uv run ns-render interpolate --load-config "$RUN_CONFIG" --pose-source train --interpolation-steps 10 --frame-rate 24 --output-format video --output-path "$DATA/exports/$NAME-$RUN_ID-capture-route.mp4"
+
+Fewer interpolation steps make a shorter, faster pass. More steps make the motion
+smoother and increase render time. The installed options are listed by ns-render
+interpolate --help.
+
+### Custom fly-through
+
+To compose a route through chosen viewpoints, open the Nerfstudio viewer with the saved run config:
+
+    uv run ns-viewer --load-config "$RUN_CONFIG"
+
+In the viewer's Render tab, position the camera, add keyframes along the route,
+preview the spline and export its camera-path JSON. Put that file at
+$DATA/evals/$NAME/camera_path.json, then render it from the terminal:
+
+    uv run ns-render camera-path \
+      --load-config "$RUN_CONFIG" \
+      --camera-path-filename "$DATA/evals/$NAME/camera_path.json" \
+      --output-path "$DATA/exports/$NAME-$RUN_ID-custom-flythrough.mp4" \
+      --output-format video
+
+Nerfstudio's [viewer guide](https://docs.nerf.studio/quickstart/viewer_quickstart.html)
+covers camera trajectories; the [render CLI reference](https://docs.nerf.studio/reference/cli/ns_render.html)
+documents the render commands. For this capture's 30k ds4 model, use its config.yml
+under splatfacto/2026-10-26_000741/.
+
 ## Y-up and SuperSplat copies
 
 When an export declares Vertical Axis: z and a y-up file is needed for interchange or
