@@ -88,6 +88,44 @@ class TestComparison(unittest.TestCase):
         self.assertEqual(cr.finite_span([]), [])
 
 
+class TestCameraStepReview(unittest.TestCase):
+
+    def test_flags_a_disproportionate_jump_and_names_its_transition(self):
+        result = cr.summarize_camera_steps(
+            ["frame_000055.png", "frame_000056.png", "frame_000057.png", "frame_000058.png"],
+            [27.0, 27.5, 28.0, 28.5],
+            [0.25, 5.06, 0.27],
+            "clip seconds (approx)",
+        )
+        self.assertAlmostEqual(
+            result["median_step_between_adjacent_registered_cameras"], 0.27)
+        self.assertAlmostEqual(
+            result["largest_step_ratio_to_median"], 5.06 / 0.27)
+        self.assertEqual(result["largest_step_from"], "frame_000056.png")
+        self.assertEqual(result["largest_step_to"], "frame_000057.png")
+        self.assertEqual(result["largest_step_time_interval"], [27.5, 28.0])
+        self.assertEqual(len(result["camera_path_warnings"]), 1)
+        self.assertIn("before training", result["camera_path_warnings"][0])
+
+    def test_does_not_warn_for_ordinary_variation(self):
+        result = cr.summarize_camera_steps(
+            ["a", "b", "c", "d"], [0.0, 0.5, 1.0, 1.5],
+            [0.2, 0.25, 0.7], "clip seconds (approx)")
+        self.assertAlmostEqual(result["largest_step_ratio_to_median"], 2.8)
+        self.assertEqual(result["camera_path_warnings"], [])
+
+    def test_nonzero_step_with_zero_median_warns_without_infinity_in_json(self):
+        result = cr.summarize_camera_steps(
+            ["a", "b", "c", "d"], [0.0, 0.5, 1.0, 1.5],
+            [0.0, 0.0, 1.0], "clip seconds (approx)")
+        self.assertIsNone(result["largest_step_ratio_to_median"])
+        self.assertIn("unbounded relative to the median", result["camera_path_warnings"][0])
+
+    def test_rejects_mismatched_inputs(self):
+        with self.assertRaises(ValueError):
+            cr.summarize_camera_steps(["a", "b"], [0.0], [1.0], "frame order")
+
+
 class TestSparseModels(unittest.TestCase):
 
     def test_lists_only_folders_that_hold_a_model(self):

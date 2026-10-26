@@ -22,18 +22,19 @@ COLMAP's `model_converter`.
 
 | Capture | Raw COLMAP camera estimate | Sparse-model evidence | Nerfstudio `transforms.json` |
 |---|---|---|---|
-| Reference video A, 500 ms sampling | `SIMPLE_RADIAL`, 2880 x 3840; f=1510.707 px, cx=1440, cy=1920, k1=0.003421 | 180/181 registered; 152,783 points; mean track length 4.858; mean reprojection error 1.151 px. | Says `camera_model = OPENCV`; the recorded focal length and k1 match the fitted values at left. |
-| Video B, 500 ms sampling; points judged incoherent on visual review | `SIMPLE_RADIAL`, 2880 x 3840; f=9316.425 px, cx=1440, cy=1920, k1=13.305047 | 160/161 registered; 40,873 points; mean track length 2.539; mean reprojection error 1.270 px. | Also says `camera_model = OPENCV`; the focal length and k1 match the fitted values at left. |
+| Reference video A, 500 ms sampling | `SIMPLE_RADIAL`, 2880 x 3840; f=1510.707 px, cx=1440, cy=1920, k1=0.003421 | 180/181 registered; 152,783 points; mean track length 4.858; mean reprojection error 1.151 px; largest/median camera step ratio 2.80. | Says `camera_model = OPENCV`; the recorded focal length and k1 match the fitted values at left. |
+| Video B, 500 ms sampling; points judged incoherent on visual review | `SIMPLE_RADIAL`, 2880 x 3840; f=9316.425 px, cx=1440, cy=1920, k1=13.305047 | 160/161 registered; 40,873 points; mean track length 2.539; mean reprojection error 1.270 px; step from `frame_000056.png` to `frame_000057.png` is 5.060 scene units, 18.96x the median. COLMAP also logged 71 Ceres linear-solver failures. | Also says `camera_model = OPENCV`; the focal length and k1 match the fitted values at left. |
 
 **Starting choice for this camera:** use COLMAP `SIMPLE_RADIAL` with one
 shared camera for a video whose FOV and lens processing match these captures.
 Reference video A is the useful precedent. Video B used the same raw COLMAP
 model, so switching to COLMAP `OPENCV` is not supported by this comparison;
-its fitted parameters went badly wrong despite the matching model. If a new
-solve produces similarly extreme focal-length or distortion values, stop and
-investigate the footage, FOV/stabilization mode, frame overlap and matching
-results before training. Do not copy video A's intrinsics as fixed calibration
-values.
+its fitted parameters went badly wrong despite the matching model. Its camera
+path also had an 18.96x-median step at 27.5 to 28.0 seconds, and the COLMAP log
+recorded repeated Ceres solver failures. If a new solve produces similarly
+extreme intrinsics or a large step warning, inspect the named frames and
+matching results before training. Do not copy video A's intrinsics as fixed
+calibration values.
 
 ### Reading the camera model
 

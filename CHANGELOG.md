@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Camera review now reports the largest adjacent-camera step relative to the
+  median, names the frame transition, and highlights extreme jumps as review
+  alerts instead of leaving the spike only in the plot.
+
 - `pipeline/CAMERA-PROFILES.md` records the DJI Osmo Action 6's COLMAP
   `SIMPLE_RADIAL` precedent separately from Nerfstudio's `OPENCV` transform
   representation, with measured reference and failed-solve estimates.

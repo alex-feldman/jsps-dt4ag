@@ -41,13 +41,19 @@ plot is colored by that order. The JSON says which in `time_axis`.
   split the solve into disconnected pieces.
 - `reviewed_model`, `points`, `mean_reprojection_error_px`, `mean_track_length`.
 - `cameras`: model, size and parameters of each camera.
-- `time_axis`, `registered_span`, and
-  `largest_step_between_adjacent_registered_cameras` (scene units, in name order).
+- `time_axis` and `registered_span`.
+- `median_step_between_adjacent_registered_cameras`,
+  `largest_step_between_adjacent_registered_cameras`, its frame pair and
+  time interval, and the largest/median ratio.
+- `camera_path_warnings`: advisory flags produced by `summarize_camera_steps()`
+  using `CAMERA_STEP_WARNING_RATIO` in `camera-review.py`.
 - `limits`: the reminder below.
 
 `camera-review.png`: three views (X-Y, X-Z, Y-Z) of the sparse points with the
 camera path over them, colored by time or order, plus the step between adjacent
-cameras along that axis.
+cameras along that axis. A flagged step is marked with a red X and a dashed
+reference line at the threshold defined by `CAMERA_STEP_WARNING_RATIO` in
+`camera-review.py`.
 
 The same numbers are printed to the terminal, without the long `missing`,
 `unexpected` and `cameras` fields apart from a one-line `missing:` list.
@@ -58,9 +64,11 @@ You want one continuous camera path around the subject, no sudden jumps or
 disconnected clusters, and sparse points that form the subject and its
 surroundings. A spike in the step plot is a jump. **The geometry is scale-free,
 and a high registration count does not prove the poses are right or that the
-whole subject is covered: judge the plot.** If it looks wrong, change the
-interval, the range or `data_type` and make a new capture or a new run. Do not
-train on a bad solve.
+whole subject is covered: judge the plot. A flagged step is a review alert,
+not an automatic rejection; a real rapid camera move can also trigger it.
+Inspect the named frame transition and surrounding images before training. If
+the pose jump is not physically credible, change the interval, the range or
+`data_type` and make a new capture or a new run.
 
 ## Exit
 

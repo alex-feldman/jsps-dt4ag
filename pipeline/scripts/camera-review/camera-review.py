@@ -18,13 +18,20 @@ and the workspace; writes only into ``--out``. See README.md in this directory.
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
+import statistics
 from typing import Dict, List, Optional, Sequence, Tuple
 
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'}
 
 #: ``frames.csv`` columns that hold a time in seconds, best first.
 TIME_COLUMNS = ('source_seconds_approx', 'output_grid_seconds')
+
+# Review alert, not an automatic acceptance threshold. Reference video
+# measurements are about 2.8x median; the teaching-greenhouse bad solve was
+# about 19x median and had a visibly displaced camera center.
+CAMERA_STEP_WARNING_RATIO = 10.0
 
 
 def frame_times(capture: Path) -> Tuple[Dict[str, float], str]:
@@ -63,6 +70,70 @@ def finite_span(values: Sequence[float]) -> List[float]:
     """[min, max] of the finite values, or [] when there are none."""
     finite = [v for v in values if v == v and v not in (float('inf'), float('-inf'))]
     return [min(finite), max(finite)] if finite else []
+
+
+def summarize_camera_steps(
+    names: Sequence[str],
+    times: Sequence[float],
+    steps: Sequence[float],
+    axis_label: str,
+) -> Dict[str, object]:
+    """Summarize camera-center steps and flag a single extreme discontinuity.
+
+    Distances are scale-free. The ratio to the median is a review heuristic,
+    not a verdict: a genuinely fast camera move can also trigger it.
+    """
+    values = [float(step) for step in steps]
+    if len(values) != max(0, len(names) - 1) or len(times) != len(names):
+        raise ValueError("camera names, times and adjacent steps must have matching lengths")
+    if not values:
+        return {
+            "median_step_between_adjacent_registered_cameras": None,
+            "largest_step_between_adjacent_registered_cameras": None,
+            "largest_step_from": None,
+            "largest_step_to": None,
+            "largest_step_time_interval": None,
+            "largest_step_ratio_to_median": None,
+            "camera_path_warnings": [],
+        }
+
+    median_step = float(statistics.median(values))
+    peak_index = max(range(len(values)), key=values.__getitem__)
+    largest_step = values[peak_index]
+    ratio = largest_step / median_step if median_step > 0 else None
+    extreme = (
+        largest_step > 0 and median_step == 0
+    ) or (
+        ratio is not None and ratio >= CAMERA_STEP_WARNING_RATIO
+    )
+    start_time, end_time = float(times[peak_index]), float(times[peak_index + 1])
+    interval = (
+        [start_time, end_time]
+        if math.isfinite(start_time) and math.isfinite(end_time)
+        else None
+    )
+    warnings = []
+    if extreme:
+        ratio_text = f"{ratio:.1f}x median" if ratio is not None else "unbounded relative to the median"
+        location = (
+            f" at {start_time:g} to {end_time:g} {axis_label}"
+            if interval is not None else ""
+        )
+        warnings.append(
+            f"Largest adjacent camera step is {largest_step:.3f} scene units "
+            f"({ratio_text}) from {names[peak_index]} to {names[peak_index + 1]}{location}. "
+            "Inspect this transition before training; the ratio is a review alert, not proof of a bad pose."
+        )
+
+    return {
+        "median_step_between_adjacent_registered_cameras": median_step,
+        "largest_step_between_adjacent_registered_cameras": largest_step,
+        "largest_step_from": names[peak_index],
+        "largest_step_to": names[peak_index + 1],
+        "largest_step_time_interval": interval,
+        "largest_step_ratio_to_median": ratio,
+        "camera_path_warnings": warnings,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,6 +181,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     tracks = np.array([len(pt.image_ids) for pt in points.values()])
     components = sparse_models(args.workspace)
     frames = compare_frames(list(seconds), names)
+    step_summary = summarize_camera_steps(names, t.tolist(), step.tolist(), axis_label)
 
     report = {
         'label': args.label, 'registered': len(images), 'expected': len(seconds),
@@ -120,7 +192,16 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                     for k, c in cameras.items()},
         'time_axis': axis_label,
         'registered_span': finite_span(t.tolist()),
-        'largest_step_between_adjacent_registered_cameras': float(step.max()) if len(step) else None,
+        'median_step_between_adjacent_registered_cameras':
+            step_summary['median_step_between_adjacent_registered_cameras'],
+        'largest_step_between_adjacent_registered_cameras':
+            step_summary['largest_step_between_adjacent_registered_cameras'],
+        'largest_step_from': step_summary['largest_step_from'],
+        'largest_step_to': step_summary['largest_step_to'],
+        'largest_step_time_interval': step_summary['largest_step_time_interval'],
+        'largest_step_ratio_to_median': step_summary['largest_step_ratio_to_median'],
+        'camera_step_warning_ratio': CAMERA_STEP_WARNING_RATIO,
+        'camera_path_warnings': step_summary['camera_path_warnings'],
         'limits': 'Geometry is scale-free. A plausible path and a high registration count do not prove '
                   'correct poses or coverage of the whole subject; judge the plot, not the counts.',
     }
@@ -143,10 +224,24 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         fig.colorbar(sc, ax=ax, label=axis_label)
     axes[1, 1].plot(colors[1:], step, marker='o', ms=3)
     axes[1, 1].set(xlabel=axis_label, ylabel='distance between adjacent registered cameras (scene units)')
-    fig.suptitle(f'{args.label or args.workspace.name}: {len(images)}/{len(seconds)} registered, '
+    title = (f'{args.label or args.workspace.name}: {len(images)}/{len(seconds)} registered, '
                  f'{len(components)} sparse model(s), {len(points)} points, '
                  f'mean reprojection {errors.mean():.2f} px\n'
                  'Camera path over the sparse points. Review the geometry; this is not measured accuracy.')
+    if step_summary['camera_path_warnings']:
+        peak_index = int(np.argmax(step))
+        axes[1, 1].scatter(
+            [colors[peak_index + 1]], [step[peak_index]], marker='x',
+            s=65, color='red', zorder=5)
+        median_step = step_summary['median_step_between_adjacent_registered_cameras']
+        if median_step and median_step > 0:
+            axes[1, 1].axhline(
+                median_step * CAMERA_STEP_WARNING_RATIO, color='red',
+                linestyle='--', linewidth=.8,
+                label=f'{CAMERA_STEP_WARNING_RATIO:g}x median review alert')
+            axes[1, 1].legend()
+        title += f"\nREVIEW WARNING: {step_summary['camera_path_warnings'][0]}"
+    fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(args.out / 'camera-review.png', dpi=130)
     print(json.dumps({k: v for k, v in report.items() if k not in ('missing', 'cameras', 'unexpected')}, indent=2))
