@@ -40,6 +40,7 @@ unversioned on a removable drive.
 | `scripts/camera-review/` | Draws the camera path over the sparse points and reports registration counts plus an advisory warning for an extreme adjacent-camera jump after the `colmap` and `process` stages, so a suspicious solve is easier to catch before training. See its README. |
 | `scripts/ply-check/` | Read-only integrity check of exported splat PLY files: vertex count, sha256, non-finite values (a failure, exit 1), opacity and scale statistics, and an optional centers preview (not a render). Text or `--json`. |
 | `scripts/splat-axis-convert/` | Converts a Nerfstudio z-up Gaussian-splat PLY into a separate y-up file, optionally adding a SuperSplat display-only copy; see its README for the terminal procedure. |
+| `scripts/camera-path/` | Builds a stabilized, programmatic Nerfstudio camera path from solved frame poses, with a small reveal move and provenance sidecar; see its README for the render command. |
 | `RUN-FLOW.md` | The runner's control flow and every point at which it refuses to continue. For debugging a failed run or extending the runner. |
 | `LAYOUT.md` | The directory structure the pipeline expects: what a capture is, the `images/` discovery rule, and the input-versus-derived split. |
 | `MASKING.md` | Why a separate mask file and a premade alpha image produce very different reconstructions (76x difference in gaussian count), which mode to use when, and the fix. |

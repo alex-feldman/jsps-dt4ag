@@ -257,6 +257,16 @@ covers camera trajectories; the [render CLI reference](https://docs.nerf.studio/
 documents the render commands. For this capture's 30k ds4 model, use its config.yml
 under splatfacto/2026-10-26_000741/.
 
+### Programmatic path from the solved route
+
+To smooth a capture path, adjust the camera gaze and generate a camera-path JSON
+without using the viewer, use
+[scripts/camera-path/README.md](scripts/camera-path/README.md). The script sorts
+the Nerfstudio frame records by numeric filename before building the path; the
+transforms.json array itself may not be chronological. It writes the path and a
+source-hash provenance sidecar outside the repository. Render the JSON with the
+same run config using ns-render camera-path.
+
 ## Y-up and SuperSplat copies
 
 When an export declares Vertical Axis: z and a y-up file is needed for interchange or

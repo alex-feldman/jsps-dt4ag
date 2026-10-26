@@ -18,8 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
-- Document Nerfstudio fly-through rendering from the capture camera path or a custom
-  viewer path.
+- Add a programmatic camera-path generator that sorts solved video-frame poses
+  chronologically, smooths and resamples the route, adds a small end reveal, and
+  records source-hash provenance; document terminal rendering from the generated
+  path or a custom viewer path.
 
 - Added a z-up to y-up Gaussian-splat conversion command with provenance sidecars
   and a SuperSplat display copy. Alex confirmed the plain y-up file appears upside-down
