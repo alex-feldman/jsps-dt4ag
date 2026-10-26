@@ -155,8 +155,41 @@ uv run python pipeline/scripts/camera-review/camera-review.py \
 Open `camera-review.png`. You want one continuous camera path around the subject, no sudden jumps or
 disconnected clusters, and sparse points that form the subject and its surroundings. The numbers (frames
 registered of frames given, which are missing, reprojection error) are in `camera-checks.json`. A high
-registration count does not prove the poses are right; the plot is the check. If it looks wrong, change
-the interval, the range or `data_type` and make a new capture or a new run. Do not train.
+registration count does not prove the poses are right; inspect both the camera path and the points. If the
+path looks plausible but the sparse cloud is hard to interpret, use the COLMAP GUI check below. If the
+path jumps or the points are incoherent, change the interval, the range or `data_type` and make a new
+capture or a new run. Do not train.
+
+### Viewing the sparse cloud in COLMAP
+
+Open the COLMAP workspace for this capture and run. Replace `{capture}` and `{run-id}` with the same
+values used for steps 5 and 6:
+
+```bash
+COLMAP_WS="$DATA/colmap/{capture}/{run-id}"
+colmap gui \
+    --database_path "$COLMAP_WS/database.db" \
+    --image_path "$COLMAP_WS/images" \
+    --import_path "$COLMAP_WS/sparse/0"
+```
+
+If the model does not appear automatically, choose `File > Import model` and select
+`$COLMAP_WS/sparse/0`. COLMAP's [GUI guide](https://colmap.github.io/gui.html) documents the viewer
+controls; its [sparse-model format guide](https://colmap.github.io/format.html#sparse-reconstruction)
+describes importing a model folder. The GUI needs an attached display with OpenGL 3.2 or later; on
+WSL2, use WSLg.
+
+Registered cameras appear red, while reconstructed points use their average image color. This is a
+sparse feature-point model, not a dense surface. Gaps are expected; look for points that form recognizable,
+spatially coherent parts of the scene. Drag with the left mouse button to rotate, scroll to zoom, use
+Ctrl+scroll to resize points, and Alt+scroll to resize cameras. Double-click a point to inspect its
+projections into supporting images; double-click a camera to see that image's statistics.
+
+If the points are incoherent even though the camera path follows the route, stop before training. The
+problem is already present in the COLMAP/SfM result or its image and matching inputs, before Nerfstudio
+training. This check localizes the failure to that stage; it does not by itself show whether COLMAP has a
+software defect. Review the extracted frames, overlap and matching mode, then change the capture or solve
+settings and make a new run.
 
 ## 7. Train and export
 

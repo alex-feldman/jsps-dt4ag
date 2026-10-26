@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- The video workflow now includes an interactive COLMAP sparse-cloud review
+  before training, with a clear stop condition when the camera path looks
+  plausible but the reconstructed points do not.
+
 - Every invocation that uses Nerfstudio records the installed distribution
   version in `run-log.csv`, its archived `[run-record]`, and the invocation log.
   The version comes from the runner's Python package metadata; older CSV rows
