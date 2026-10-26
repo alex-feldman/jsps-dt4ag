@@ -388,7 +388,14 @@ class TestFailureModes(TempDirTestCase):
         self.assertEqual(cfg.eval_mode, "fraction")
         self.assertEqual(cfg.train_split_fraction, 0.9)
         self.assertEqual(cfg.eval_interval, 8)
-        self.assertEqual(cfg.checkpoint_interval, 0)
+
+    def test_checkpoint_interval_defaults_to_15000(self):
+        self.assertEqual(ConfigFixture(self.tmp).load().checkpoint_interval, 15000)
+
+    def test_zero_checkpoint_interval_means_final_only(self):
+        fixture = ConfigFixture(
+            self.tmp, extra={"export": {"checkpoint_interval": "0"}})
+        self.assertEqual(fixture.load().checkpoint_interval, 0)
 
     def test_vis_defaults_to_viewer_and_validates(self):
         self.assertEqual(ConfigFixture(self.tmp).load().vis, "viewer")
@@ -461,6 +468,13 @@ class TestFailureModes(TempDirTestCase):
             fixture.path, "checkpoint_interval", "export", fixture.path)
         self.assertIn("save_only_latest_checkpoint", message)
 
+    def test_default_checkpoint_interval_needs_every_checkpoint_kept(self):
+        fixture = ConfigFixture(
+            self.tmp, extra={"train": {"save_only_latest_checkpoint": "true"}})
+        message = self.assertConfigError(
+            fixture.path, "checkpoint_interval", "export", fixture.path)
+        self.assertIn("save_only_latest_checkpoint", message)
+
     def test_a_valid_checkpoint_interval_loads(self):
         fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "5000"}})
         self.assertEqual(fixture.load().checkpoint_interval, 5000)
@@ -479,10 +493,12 @@ class TestFailureModes(TempDirTestCase):
 
     def test_checkpoint_keys_can_be_overridden(self):
         fixture = ConfigFixture(self.tmp, extra={
-            "train": {"steps_per_save": "1000", "save_only_latest_checkpoint": "true"}})
+            "train": {"steps_per_save": "1000", "save_only_latest_checkpoint": "true"},
+            "export": {"checkpoint_interval": "0"}})
         cfg = fixture.load()
         self.assertEqual(cfg.steps_per_save, 1000)
         self.assertTrue(cfg.save_only_latest_checkpoint)
+        self.assertEqual(cfg.checkpoint_interval, 0)
 
     def test_video_scene_type_requires_a_video_path(self):
         fixture = ConfigFixture(self.tmp, extra={"nerfstudio": {"scene_type": "video"}})
@@ -1254,7 +1270,7 @@ class TestArchiveRunConfig(TempDirTestCase):
         record = parser["run-record"]
         self.assertEqual(record["eval_mode"], "evalfrac90")
         self.assertEqual(record["steps_per_save"], "2500")
-        self.assertEqual(record["checkpoint_interval"], "0")
+        self.assertEqual(record["checkpoint_interval"], "15000")
         self.assertEqual(record["stages"], "train,export")
 
     def test_creates_the_directory_lazily(self):
@@ -1410,6 +1426,7 @@ class TestCommittedExampleConfig(unittest.TestCase):
         self.assertEqual(cfg.run_id_prefix, "run")
         self.assertEqual(cfg.train_method, "splatfacto")
         self.assertEqual(cfg.max_num_iterations, 30000)
+        self.assertEqual(cfg.checkpoint_interval, 15000)
         self.assertEqual(cfg.colmap_data_type, "auto")
         self.assertFalse(cfg.images_rel.is_absolute())
 

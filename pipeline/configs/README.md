@@ -259,7 +259,7 @@ Feeds `ns-export` and the optional point-cloud conversion.
 | Key | Required | Default | Controls |
 |---|---|---|---|
 | `format` | no | `gaussian-splat` | The `ns-export` subcommand. |
-| `checkpoint_interval` | no | `0` | Export every checkpoint whose step is a multiple of this, plus the final one. `0` exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only. |
+| `checkpoint_interval` | no | `DEFAULT_CHECKPOINT_INTERVAL` (`15,000`; `pipeline/dt4ag_config.py`) | Export every checkpoint whose step is a multiple of this, plus the final one. For the standard 30,000-step config this exports step 15,000 and the final step. `0` explicitly exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Set checkpoint_interval to 0 explicitly for final-only export in that mode. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only. |
 | `env_label` | no | `env` | Free-text label baked into the export filename to record which environment produced it. Was the hardcoded `conda_env_name`. |
 | `platform_label` | no | the running platform | Second label in the export filename. |
 | `export_3dgs` | no | `false` | Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x. |
@@ -279,7 +279,7 @@ which is what stops two resolutions of one capture overwriting each other.
 steps the exported checkpoint holds and `y` is the run's `max_num_iterations`. A
 run's final checkpoint reads `30000steps_from30000run` (the final checkpoint file
 is named one step lower, `step-000029999`, but holds all 30,000 steps); an earlier
-checkpoint exported with `checkpoint_interval` reads `10000steps_from30000run`, so
+checkpoint exported with `checkpoint_interval` reads `15000steps_from30000run`, so
 it cannot be mistaken for a run that was configured to stop at 10000.
 
 `<eval token>` says which photographs the run trained on, and is always present:

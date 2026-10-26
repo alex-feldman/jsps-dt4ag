@@ -242,6 +242,10 @@ EVAL_MODES = ("fraction", "interval", "all")
 #: needs an account.
 VIS_MODES = ("viewer", "viewer+tensorboard", "tensorboard")
 
+#: Default intermediate export cadence for the standard 30,000-step profile.
+#: A value of zero remains available for final-only export.
+DEFAULT_CHECKPOINT_INTERVAL = 15000
+
 
 def eval_token(mode: str, fraction: float = 0.9, interval: int = 8) -> str:
     """The filename-safe name of an eval mode: ``evalall``, ``evalfrac90``, ``evalint8``.
@@ -1402,9 +1406,11 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     # [export]
     export_format = _get_str(parser, "export", "format", source, "gaussian-splat")
     # Export every checkpoint whose step is a multiple of this, plus the final
-    # one. 0 is the final checkpoint only. The checkpoints have to exist, so it
-    # must divide into what training saves.
-    checkpoint_interval = _get_int(parser, "export", "checkpoint_interval", source, 0)
+    # one. Omitted configs use DEFAULT_CHECKPOINT_INTERVAL; 0 is final-only.
+    # The checkpoints have to exist, so it must divide into what training saves.
+    checkpoint_interval = _get_int(
+        parser, "export", "checkpoint_interval", source, DEFAULT_CHECKPOINT_INTERVAL
+    )
     if checkpoint_interval < 0:
         raise ConfigError(
             f"key 'checkpoint_interval' in section [export] of config file {source} "

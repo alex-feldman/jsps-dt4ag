@@ -91,6 +91,12 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
+- Default exports now include the 15,000-step checkpoint and the final checkpoint
+  in a standard 30,000-step run. DEFAULT_CHECKPOINT_INTERVAL in
+  pipeline/dt4ag_config.py owns the default; an explicit zero still means
+  final-only export. Configs using save_only_latest_checkpoint = true must set
+  checkpoint_interval = 0 explicitly.
+
 - `camera-review.py` now has a README and tests. The pure helpers (frame times
   from `frames.csv` or image order, missing and unexpected frames, model folders)
   load without numpy or nerfstudio, which are imported only when the script runs.
