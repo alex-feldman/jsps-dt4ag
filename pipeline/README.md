@@ -44,7 +44,8 @@ unversioned on a removable drive.
 | `RUN-FLOW.md` | The runner's control flow and every point at which it refuses to continue. For debugging a failed run or extending the runner. |
 | `LAYOUT.md` | The directory structure the pipeline expects: what a capture is, the `images/` discovery rule, and the input-versus-derived split. |
 | `MASKING.md` | Why a separate mask file and a premade alpha image produce very different reconstructions (76x difference in gaussian count), which mode to use when, and the fix. |
-| `SEQUENTIAL-RUNS.md` | What running several reconstructions in sequence does and does not do for you. No batch mode exists; the gaps are listed. |
+| `run_collection.py` | Runs every capture beneath a collection, one at a time, from one base config, and skips captures whose catalog record proves they completed. `--dry-run` lists the plan. See `SEQUENTIAL-RUNS.md`. |
+| `SEQUENTIAL-RUNS.md` | Collection runs with `run_collection.py`: discovery, per-capture configs, when a capture counts as completed, the conservative choices still open, and the gaps that remain. |
 | `scripts/sam/` | SAM helper scripts used while producing masks. |
 | `scripts/mask-analysis/` | The UT-vs-KU mask agreement study: per-image IoU comparison and CSV analysis. |
 

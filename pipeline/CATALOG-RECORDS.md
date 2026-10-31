@@ -57,6 +57,14 @@ display of detailed progress is separate UI work. No new capture kind or nullabl
 capture identity is introduced. Indexes, batches and automatic catalog enablement
 remain later release-plan work.
 
+`run_collection.py` turns emission on for each capture it runs and is a reader
+of these records: it skips a capture only when a job passes
+`run_collection.why_incomplete`, which reads `execution_status`, `exit_code`,
+the `verified` milestone, export artifact records with their
+`progress.artifacts` sizes, `config.ini`, `selected_images` and `started_at`
+([SEQUENTIAL-RUNS.md](SEQUENTIAL-RUNS.md#when-a-capture-counts-as-completed)).
+Changing those fields changes what a collection rerun skips.
+
 ## Verification
 
 Run `python3 -m unittest discover -s pipeline/tests -p test_plant_catalog.py`.

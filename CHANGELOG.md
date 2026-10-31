@@ -18,6 +18,17 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- `pipeline/run_collection.py` runs every capture beneath a collection, one at
+  a time, from one base config. Captures are discovered by the `images/` rule;
+  each capture's config is the base with `images_subpath` replaced, validated
+  before anything runs; one failing capture does not stop the rest, and the
+  summary names each failure from its catalog job record. A rerun skips a
+  capture only when a catalog job shows it verified with the same settings and
+  photographs and its export still intact; anything else runs again under a
+  new run ID, and nothing is deleted or overwritten. `--dry-run` lists the
+  plan. The conservative choices still open are listed in
+  `pipeline/SEQUENTIAL-RUNS.md` under "DECISION NEEDED".
+
 - Add a programmatic camera-path generator that sorts solved video-frame poses
   chronologically, smooths and resamples the route, adds a small end reveal, and
   records source-hash provenance; document terminal rendering from the generated
