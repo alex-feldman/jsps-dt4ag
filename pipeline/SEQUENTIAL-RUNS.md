@@ -146,7 +146,9 @@ disk, still reaches no CSV column. `config.yml` records the *request*
 
 That gap belongs to v0.3.0's per-run records rather than to this file's batch
 concerns: the fix is a record written incrementally as a run progresses, which
-is exactly what a row written up front cannot be.
+is exactly what a row written up front cannot be. With catalog emission enabled,
+the job record's `progress.resolved.effective_downscale` now holds the decision
+([CATALOG-RECORDS.md](CATALOG-RECORDS.md)).
 
 ## 5. The `PATH` export is operator memory
 

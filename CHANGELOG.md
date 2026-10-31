@@ -93,6 +93,15 @@ Dates are the tag date, not the commit date, where they differ.
   Create enabled catalog jobs before config loading so early configuration
   failures survive; preserve interrupted progress and existing job identities.
 - Dedicated hermetic catalog failure-path tests and `pipeline/CATALOG-RECORDS.md`.
+- Catalog job progress schema 2 (additive; job records stay catalog v1): an
+  explicit milestone ladder (`plant_catalog.MILESTONES`) ranks
+  `furthest_milestone`; a `failure` entry names the cause, the active stage and
+  the furthest milestone at failure; `gpu` records the driver's devices from
+  `nvidia-smi` or null; `artifacts` lists each linked output with its size.
+  SIGTERM, including a `wsl-guard` stop, now finalizes an active job as
+  cancelled with exit 143. `--catalog-hash-artifacts` opts in to sha256 for file
+  artifacts. `plant_catalog.read_progress` reads older jobs with absent fields
+  as null. See `pipeline/CATALOG-RECORDS.md`.
 
 ### Fixed
 
@@ -114,6 +123,10 @@ Dates are the tag date, not the commit date, where they differ.
   runs, which Windows sees about 40 seconds later).
 - Restrict the object-agnostic source check exception to the existing catalog API
   namespace; the previously added integration otherwise made the baseline fail.
+- Catalog job dependency probes now read COLMAP's version from its banner when
+  `colmap --version` is rejected, as COLMAP 3.12 does; the previous probe read
+  only `--version` output. A broken package's metadata now records an unknown
+  version instead of failing the run.
 
 ### Changed
 

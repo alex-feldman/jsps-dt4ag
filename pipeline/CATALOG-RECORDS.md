@@ -16,10 +16,13 @@ Dry runs write no catalog. Ordinary runs without catalog enablement are unchange
 ## Additive progress contract
 
 `plant_catalog.CatalogJob` owns writes. Existing schema-1 job fields and IDs
-are unchanged. New jobs add `progress`, with its own `schema_version: 1`:
+are unchanged. New jobs add `progress`, with its own `schema_version`
+(`plant_catalog.PROGRESS_SCHEMA_VERSION`, now 2; fields in
+`plant_catalog.PROGRESS_FIELDS`):
 
-- `milestones`: ordered verified observations, each with `name` and
-  UTC `verified_at`; `furthest_milestone` names the latest observation.
+- `milestones`: ordered verified observations, each with `name` from
+  `plant_catalog.MILESTONES` and UTC `verified_at`; `furthest_milestone` names
+  the highest-ranked observation on that ladder.
 - `active_stage`: stage currently running, or null.
 - `stages`: selected stage names mapped to `started_at`, `ended_at`,
   monotonic `elapsed_seconds`, and `status` (running, completed, failed,
@@ -28,7 +31,10 @@ are unchanged. New jobs add `progress`, with its own `schema_version: 1`:
   runtime run ID, paths, stage selection, evaluation mode and effective downscale
   as those become known. Values are not guessed before resolution.
 - `dependencies`: Python and installed distribution versions plus bounded
-  COLMAP/ffmpeg version probes; unavailable versions remain null.
+  `plant_catalog.colmap_version` and `ffmpeg_version` probes; unavailable
+  versions remain null.
+- `failure`, `gpu` and `artifacts`: schema 2 additions, defined in the
+  [design note](#progress-schema-2-design-note-o13t5-o13t6) below.
 
 `run_pipeline.run_pipeline` owns milestone placement at existing verification
 boundaries. Skipped stages do not acquire synthetic milestones. Exported means
@@ -37,13 +43,15 @@ exports pass existing verification and the invocation reaches completion.
 Repeated checkpoints do not produce duplicate milestone entries.
 
 Invalid-config jobs retain the caller's capture reference but do not create a
-capture record or pretend selected images are known. Handled errors and keyboard
-interruptions finalize jobs. Hard termination cannot execute finalization: the
+capture record or pretend selected images are known. Handled errors, keyboard
+interruptions and SIGTERM (`run_pipeline.Terminated`) finalize jobs. Hard
+termination cannot execute finalization: the
 last atomic running record, active stage and prior milestones remain evidence of
 an incomplete attempt, never proof it is still live or completed. Automated stale
 job reconciliation is future work.
 
-Legacy jobs without progress remain readable. Mission Control's existing
+Legacy jobs without progress remain readable; `plant_catalog.read_progress`
+reads any job's progress in the current shape. Mission Control's existing
 schema-1 validator accepts additive fields and retains its existing job summary;
 display of detailed progress is separate UI work. No new capture kind or nullable
 capture identity is introduced. Indexes, batches and automatic catalog enablement
@@ -53,9 +61,12 @@ remain later release-plan work.
 
 Run `python3 -m unittest discover -s pipeline/tests -p test_plant_catalog.py`.
 Fixtures use temporary storage and mocked subprocesses. They cover atomic-write
-failure, unfinalized progress, failed-stage timings, invalid configuration,
-prerequisite failure, stage failure, interruption, dry-run suppression and a
-verified mocked COLMAP completion. They do not establish a real GPU run.
+failure, a truncated write, unfinalized progress, failed-stage timings, invalid
+configuration, prerequisite failure, stage failure, interruption, a real
+SIGTERM delivered to the test process, dry-run suppression, a verified mocked
+COLMAP completion with artifact sizes, opt-in hashing, tool-version and GPU
+probes that fail or return unexpected output, and old-record reading. They do
+not establish a real GPU, COLMAP or nvidia-smi run.
 
 ### Later-stage and external consumer checks
 

@@ -36,6 +36,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -113,6 +114,31 @@ RUN_DIR_TIMESTAMP_FORMAT = "%Y-%m-%d_%H%M%S"
 
 class StageError(Exception):
     """A stage failed, or produced nothing that can be handed to the next one."""
+
+
+#: Exit code for SIGTERM, as a shell reports it (128 + 15).
+EXIT_TERMINATED = 128 + signal.SIGTERM
+
+
+class Terminated(BaseException):
+    """SIGTERM while a catalog job is active, raised so the job is finalized.
+
+    A BaseException, like KeyboardInterrupt, so no ``except Exception`` on the
+    way up can swallow it.
+    """
+
+
+def _raise_terminated(signum, frame):
+    raise Terminated()
+
+
+def _catch_sigterm():
+    """Install the SIGTERM handler; return what to restore, or None if not possible."""
+    try:
+        previous = signal.signal(signal.SIGTERM, _raise_terminated)
+    except ValueError:  # not the main thread
+        return None
+    return signal.SIG_DFL if previous is None else previous
 
 
 # --------------------------------------------------------------------------
@@ -1338,6 +1364,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="logical root ID; enables canonical catalog emission")
     parser.add_argument("--catalog-capture-id", default=os.environ.get("PLANT_CATALOG_CAPTURE_ID"),
                         help="stable capture identity, required with --catalog-root-id")
+    parser.add_argument("--catalog-hash-artifacts", action="store_true",
+                        help="record sha256 for file artifacts (off by default: reads every byte)")
     parser.add_argument(
         "--config",
         help=(
@@ -1854,6 +1882,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     global CATALOG_COMMAND_LOG
     catalog = None
     cfg = None
+    restore_sigterm = None
     code, error = 1, None
     try:
         if args.catalog_root_id and not args.dry_run:
@@ -1862,13 +1891,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             catalog = CatalogJob(Path(args.catalog_root), args.catalog_root_id, args.catalog_capture_id,
                 PIPELINE_DIR.parent, title="JSPS-DT4AG reconstruction", job_type="reconstruction",
                 command=render([sys.executable, str(Path(__file__).resolve()), *(argv if argv is not None else sys.argv[1:])]),
-                config={"stages": list(args.stages), "run_id_override": args.run_id}, selected_images=None)
+                config={"stages": list(args.stages), "run_id_override": args.run_id}, selected_images=None,
+                hash_artifacts=args.catalog_hash_artifacts)
             args.catalog_job = catalog
+            restore_sigterm = _catch_sigterm()
             CATALOG_COMMAND_LOG = catalog.directory / "evidence" / (catalog.id + ".log")
             CATALOG_COMMAND_LOG.parent.mkdir(parents=True, exist_ok=True)
             CATALOG_COMMAND_LOG.touch(exist_ok=False)
             catalog.evidence(CATALOG_COMMAND_LOG, log=True)
             catalog.dependencies()
+            catalog.gpu()
         config_path = find_config(args.config)
         cfg = load_config(config_path)
         if catalog:
@@ -1894,10 +1926,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         error = "User interrupted the pipeline"
         print("\ninterrupted", file=sys.stderr)
         code = 130
+    except Terminated:
+        error = "Terminated by SIGTERM"
+        print("\nterminated", file=sys.stderr)
+        code = EXIT_TERMINATED
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         raise
     finally:
+        # Restored first: a second SIGTERM during finalization kills as before.
+        if restore_sigterm is not None:
+            signal.signal(signal.SIGTERM, restore_sigterm)
         if catalog:
             if CATALOG_COMMAND_LOG and error:
                 with CATALOG_COMMAND_LOG.open("a", encoding="utf-8") as stream:

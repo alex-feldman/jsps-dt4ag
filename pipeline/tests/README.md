@@ -118,8 +118,9 @@ not part of this stdlib-only suite.
   the scope of this suite. `test_run_pipeline.py` asserts on the argument
   vectors the runner would execute, and executes none of them.
 
-Catalog job progress and failure-path fixtures are in `test_plant_catalog.py`;
-see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for the producer contract.
+Catalog job progress, failure-path, SIGTERM, probe and old-record fixtures are
+in `test_plant_catalog.py`; see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for
+the producer contract and what the fixtures cover.
 
 The optional external-reader check uses `catalog_consumer_fixtures.py` and
 `catalog-consumer-compat.cjs`; invocation and prerequisites are in

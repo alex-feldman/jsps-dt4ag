@@ -188,10 +188,12 @@ resolve beneath the configured root. No catalog writes occur during `--dry-run`.
 
 Records go under the configured root's `catalog/`. `run_pipeline.main` records
 an invocation before prerequisites or expensive stages, freezes the input INI,
-links a tool-output log, and finalizes ordinary success, failure and interruption.
+links a tool-output log, and finalizes ordinary success, failure, Ctrl-C and
+SIGTERM.
 `verify_export` is followed by artifact emission only after export checks pass.
 An abrupt machine loss can leave a running job for later reconciliation.
 No result is automatically accepted by this writer. Large outputs stay in place;
-checksums and biological facts that were not measured stay null. Configure the
+checksums stay null unless `--catalog-hash-artifacts` is given, and biological
+facts that were not measured stay null. Fields are in `CATALOG-RECORDS.md`. Configure the
 consumer's mapping for the same root ID to discover records. This feature does
 not publish data or settle retention and backup policy.
