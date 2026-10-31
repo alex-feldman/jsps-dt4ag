@@ -81,6 +81,8 @@ __all__ = [
     "check_host_limits",
     "resolve_downscale_factor",
     "count_images",
+    "selected_images",
+    "ini_sections",
     "read_ply_vertex_count",
     "verify_downscale_pyramid",
     "sfm_input_path",
@@ -606,6 +608,23 @@ def count_images(images_path: Path) -> List[Path]:
         p for p in images_path.rglob("*")
         if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
     )
+
+
+def selected_images(cfg: Dt4agConfig) -> List[str]:
+    """The photographs a run reconstructs, relative to the image directory.
+
+    What a catalog job records as ``selected_images``; ``run_collection``
+    compares it to decide whether a capture's image set changed.
+    """
+    return [p.relative_to(cfg.images_path).as_posix()
+            for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+
+
+def ini_sections(path: Path) -> dict:
+    """A config file's sections as plain strings, as a catalog job's ``config.ini`` holds them."""
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path, encoding="utf-8")
+    return {section: dict(parser[section]) for section in parser.sections()}
 
 
 def _link_or_copy(source: Path, destination: Path) -> None:
@@ -1904,11 +1923,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         config_path = find_config(args.config)
         cfg = load_config(config_path)
         if catalog:
-            parser = configparser.ConfigParser(interpolation=None)
-            parser.read(cfg.source)
-            catalog.record["config"]["ini"] = {section: dict(parser[section]) for section in parser.sections()}
-            catalog.record["selected_images"] = [p.relative_to(cfg.images_path).as_posix()
-                for p in count_images(cfg.images_path) if cfg.is_photograph(p)]
+            catalog.record["config"]["ini"] = ini_sections(cfg.source)
+            catalog.record["selected_images"] = selected_images(cfg)
             catalog.capture(source=cfg.images_path, image_count=len(catalog.record["selected_images"]))
             catalog.freeze_config(cfg.source)
             catalog.resolved(config=json.loads(json.dumps(asdict(cfg), default=str)))

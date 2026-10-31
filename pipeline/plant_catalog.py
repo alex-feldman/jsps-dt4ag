@@ -27,6 +27,8 @@ PROGRESS_FIELDS = ("milestones", "furthest_milestone", "active_stage", "stages",
 EXIT_CAUSES = {2: "config", 130: "interrupted", 143: "terminated"}
 CANCELLED_CAUSES = ("interrupted", "terminated")
 PROBE_TIMEOUT = 10
+#: Catalog root and capture IDs are kebab-case.
+ID_PATTERN = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 _COLMAP_VERSION = re.compile(r"COLMAP\s+\d+\.\d+(?:\.\d+)?[^\n]*", re.IGNORECASE)
 _NVIDIA_SMI_WSL = Path("/usr/lib/wsl/lib/nvidia-smi")
 
@@ -133,7 +135,7 @@ class CatalogJob:
                  hash_artifacts=False):
         self.root = Path(root).expanduser().resolve()
         for value in (root_id, capture_id):
-            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value):
+            if not re.fullmatch(ID_PATTERN, value):
                 raise ValueError("Catalog root and capture IDs must be kebab-case")
         self.root.mkdir(parents=True, exist_ok=True)
         self.root_id = root_id
