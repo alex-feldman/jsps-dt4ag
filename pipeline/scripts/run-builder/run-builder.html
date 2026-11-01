@@ -877,6 +877,17 @@ globalThis.RunBuilder = (function () {
     }
     var prefix = value(schema, state, "run", "id_prefix");
     var generate = masks.mode === "generate";
+    var maskExt = value(schema, state, "dataset", "mask_extensions");
+    if (!maskExt && sets.length) {
+      // Without mask_extensions the loader refuses use_masks = true, so fall back
+      // to the samask extension for existing sets too, and say so.
+      maskExt = String((state.samask || {}).maskExtension || "").trim();
+      if (!generate) {
+        warnings.push(maskExt
+          ? "[dataset] mask_extensions was empty; using " + maskExt + " from the samask setting. Check it matches the files in the mask set."
+          : "Set [dataset] mask_extensions (for example .png): the pipeline refuses masks without it.");
+      }
+    }
     return chosen.map(function (set) {
       var o = { paths: { data_root: String(state.dataRoot || "").trim().replace(/\/+$/, "") || "/" },
                 dataset: { images_subpath: images }, run: {} };
@@ -885,9 +896,7 @@ globalThis.RunBuilder = (function () {
       if (set) {
         o.dataset.use_masks = "true";
         o.dataset.mask_variant = set.variant;
-        var ext = value(schema, state, "dataset", "mask_extensions");
-        if (!ext && generate) ext = String((state.samask || {}).maskExtension || "").trim();
-        o.dataset.mask_extensions = ext;
+        o.dataset.mask_extensions = maskExt;
         header.push("Mask set: " + (set.variant ? "masks_" + set.variant + "/" : "masks/")
           + (set.prompt ? " (samask prompt \"" + set.prompt + "\")" : "") + ".");
         if (each && masks.prefixVariant !== false) o.run.id_prefix = prefix + "-" + setLabel(set.variant);

@@ -264,6 +264,23 @@ class TestGeneratedConfigs(unittest.TestCase):
         self.assertEqual(cfg.mask_variant, "silver-car")
         self.assertEqual(cfg.masks_path.name, "masks_silver-car")
 
+    def test_existing_set_without_mask_extensions_falls_back_and_warns(self):
+        # Typed set names (no chip click), a collection, or the page opened as a
+        # file leave mask_extensions empty; the loader would refuse the config.
+        self.tree.capture("scene-01/capture-a", mask_sets=("masks_silver-car",))
+        p = plan(self.tree.state(capture="scene-01/capture-a",
+                                 masks={"mode": "existing", "existing": ["masks_silver-car"],
+                                        "use": "silver-car"}))
+        self.assertTrue(any("mask_extensions" in w for w in p["warnings"]), p["warnings"])
+        cfg = load_config(self.tree.write(p["configs"][0]))
+        self.assertTrue(cfg.use_masks)
+        self.assertEqual(set(cfg.mask_extensions), {".png"})
+        p = plan(self.tree.state(capture="scene-01/capture-a",
+                                 masks={"mode": "existing", "existing": ["masks_silver-car"],
+                                        "use": "silver-car"},
+                                 samask={"maskExtension": ""}))
+        self.assertTrue(any("Set [dataset] mask_extensions" in w for w in p["warnings"]), p["warnings"])
+
     def test_default_masks_directory(self):
         self.tree.capture("scene-01/capture-a", mask_sets=("masks",))
         p = plan(self.tree.state(capture="scene-01/capture-a",
