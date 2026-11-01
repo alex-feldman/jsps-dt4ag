@@ -10,6 +10,8 @@ This file is the repo-local entry point for AI agents launched from this checkou
 - `pipeline/configs/README.md` for config keys and run archives.
 - `pipeline/LAYOUT.md` for capture, input, and derived-data placement.
 - `pipeline/RUN-FLOW.md` for stage order and refusal gates.
+- `pipeline/COORDINATE-FRAMES.md` before joining an exported splat to per-photograph masks or points.
+- `pipeline/AGENT-OPERATION.md` for how this agent session is set up on a local model, the data-folder permissions it runs under, and the dry-run request it should handle.
 
 The code owns mechanisms. These files route the agent to the current implementation and its operating procedure; do not recreate their commands or config defaults from memory.
 

@@ -279,9 +279,9 @@ for other viewers and downstream use. The linked README owns the exact procedure
 ## When something stops
 
 - **`CUDA driver version is insufficient` from COLMAP, or `nvidia-smi` fails inside WSL:** WSL has lost the
-  GPU. Check `nvidia-smi` *inside* WSL, not on Windows. A laptop in an "eco" or hybrid power mode switches
-  the NVIDIA GPU off; set it to a mode that keeps it on. After a driver update or sleep, close other WSL work
-  and run `wsl --shutdown` in PowerShell.
+  GPU. Check `nvidia-smi -L` *inside* WSL, not on Windows. A laptop in an "eco" or hybrid power mode
+  switches the NVIDIA GPU off; set it to a mode that keeps it on. After a driver update or sleep, close other
+  WSL work and run `wsl --shutdown` in PowerShell. Details: QUICKSTART, Troubleshooting.
 - **Windows runs out of RAM, or a run is stopped or refused for low Windows RAM, though little is in use
   inside WSL (often at `ns-process-data`):** WSL keeps every file a stage reads or writes in its file cache
   (`buff/cache` in `free -m`), the VM grows into Windows' RAM to hold it (`vmmemWSL` in Task Manager), and
@@ -298,7 +298,8 @@ for other viewers and downstream use. The linked README owns the exact procedure
   can empty Windows' RAM".
 - **WSL dies or runs out of memory during COLMAP or masking:** lower `--num_threads` (QUICKSTART, "COLMAP
   threads and memory"), close browsers and chat apps if Windows' commit headroom is low (QUICKSTART, "Windows'
-  commit limit"), and check free space on the Windows drive that holds the WSL disk (QUICKSTART, WSL2 section).
+  commit limit"), and check free space on the Windows drive that holds the WSL disk (QUICKSTART, "WSL2, on
+  Windows", step 3).
 - **Unattended runs:** `uv` and the COLMAP prefix must be on `PATH` (the first block above), and one GPU job
   at a time.
 

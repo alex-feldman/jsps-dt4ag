@@ -81,6 +81,27 @@ cp -p pipeline/configs/*.ini pipeline/configs/README.md <data_root>/configs/
 `<data_root>/configs/ABOUT.md` describes the archive; `LAYOUT.md` lists it in
 the data root structure.
 
+### What `run-log.csv` records
+
+One row per invocation that executes (a `--dry-run` writes none), written before
+the stages run, so a row means a run started. The columns, in order
+(`Dt4agConfig.append_run_log` in `pipeline/dt4ag_config.py` owns the list):
+`timestamp`, `run_id`, `dataset`, `images_path`, `colmap_version`,
+`nerfstudio_version`, `train_method`, `max_num_iterations`,
+`downscale_factor` (`auto` when 0), `masks` (`used` or `none`), `mask_variant`,
+`eval_mode` (the eval token, such as `evalall` or `evalfrac90`), `vis`,
+`object_id` and `imaging_date` (from `capture.ini`, when present),
+`config_file`, and `note` (what the loader accepted with reservations).
+
+When a newer pipeline adds columns, an existing log with an older, narrower
+header is rewritten in place under the new header, with blank cells in old rows
+for values that were never captured, and the previous file is kept beside it as
+`run-log.csv.bak`. A log whose header has columns this version does not know is
+not rewritten: the row is appended under the existing header and fields that do
+not fit are dropped. A log damaged by an interrupted write (NUL bytes) is
+repaired by removing those bytes, with the original kept as
+`run-log.csv.nul-{yyyymmdd-HHMMSS}` and a note in the new row.
+
 **For a run that completed, the stronger record of TRAINING is
 `outputs/<collection>/<capture>/<run-id>/splatfacto/<timestamp>/config.yml`**,
 which the run itself wrote and which therefore cannot drift or overstate. The
@@ -155,7 +176,7 @@ directory inside the capture rather than the capture itself
 |---|---|---|---|
 | `images_subpath` | yes | none | Path of the image directory, relative to `<data_root>/<datasets_dirname>`. Must exist. Must be relative; an absolute path is an error. Ends in `images` under the canonical layout. |
 | `image_extensions` | no | empty | Which files under `images_subpath` are photographs, comma separated. Empty means every supported image type. |
-| `mask_extensions` | no | empty | Which files are masks. Always kept out of SfM. |
+| `mask_extensions` | no | empty | Which files are masks. Always kept out of SfM. Must be set when `use_masks = true`: the loader refuses an empty value then, because no file would count as a mask. `example.ini` leaves it empty, which suits only an unmasked run, so set it to the extension your mask files carry (for example `png`) when you turn masking on. |
 | `use_masks` | no | `false` | Composite each mask into its photograph's alpha channel as a pre-step. Every photograph must have a mask; a partial set is an error. |
 | `mask_variant` | no | empty | Which of a capture's mask sets to read: empty for `<capture>/masks/`, `X` for `<capture>/masks_X/`. A single directory name, never a path (`/` and `..` are refused). Also keys the composite directory, so two variants never share composites. Recorded in the run log's `mask_variant` column and the archived per-run config. Requires the canonical layout; on a legacy capture it is refused rather than left inert. Set with `use_masks = false` it is accepted with a note in the run log. |
 | `masked_images_parent_subpath` | no | `<derived_dirname>/masked` | The PARENT composites are written under; the pipeline appends `<mask_variant>/<capture_rel>` to it (the variant segment only when set). Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. Replaces `masked_images_subpath`, which named the composite directory itself; that key is refused when non-empty, since renaming it mechanically would move the composites. |
@@ -208,7 +229,7 @@ Feeds `colmap automatic_reconstructor`.
 | `single_camera` | no | `1` | `--single_camera`. |
 | `single_camera_per_folder` | no | `1` | `--single_camera_per_folder`. |
 | `dense` | no | `0` | `--dense`. Sparse only by default. |
-| `extra_args` | no | empty | Passed verbatim after the generated flags. |
+| `extra_args` | no | empty | Passed verbatim after the generated flags. Only `automatic_reconstructor`'s own options, with COLMAP 3.12.0 names, are accepted: see `QUICKSTART.md`, "Which COLMAP options `extra_args` accepts". |
 
 ### `[nerfstudio]`
 

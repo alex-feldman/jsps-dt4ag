@@ -41,7 +41,10 @@ scripts/install.sh
 Then follow [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) for
 installation and general pipeline use. For a movie capture, follow
 [`pipeline/VIDEO-WORKFLOW.md`](pipeline/VIDEO-WORKFLOW.md). An AI agent
-working from this checkout should read [`AGENTS.md`](AGENTS.md) first.
+working from this checkout should read [`AGENTS.md`](AGENTS.md) first. To
+drive the pipeline with an agent on a model running on your own machine, with
+no hosted-model subscription, see
+[`pipeline/AGENT-OPERATION.md`](pipeline/AGENT-OPERATION.md).
 
 To fill in a run in a form instead of editing an INI file, use the **run
 builder**: `uv run python pipeline/scripts/run-builder/serve.py`, then open
@@ -111,6 +114,8 @@ coming from this project's own runs.
 | | |
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Repo-local instructions for AI agents working from this checkout. |
+| [`pipeline/AGENT-OPERATION.md`](pipeline/AGENT-OPERATION.md) | Running an agent (OpenCode) on a local model (Ollama): setup, data-folder permissions, a first dry-run request. |
+| [`pipeline/COORDINATE-FRAMES.md`](pipeline/COORDINATE-FRAMES.md) | Which coordinate frame each output is in, and how to project an export back into the photographs. |
 | [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) | **Start here to run it.** Install and use, from nothing. |
 | [`pipeline/README.md`](pipeline/README.md) | What is in the pipeline directory, and the runner's options. |
 | [`pipeline/configs/README.md`](pipeline/configs/README.md) | Every configuration key. |

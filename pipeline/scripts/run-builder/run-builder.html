@@ -318,7 +318,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Which files are masks. Always kept out of SfM."
+     "help": "Which files are masks. Always kept out of SfM. Must be set when `use_masks = true`: the loader refuses an empty value then, because no file would count as a mask. `example.ini` leaves it empty, which suits only an unmasked run, so set it to the extension your mask files carry (for example `png`) when you turn masking on."
     },
     {
      "key": "mask_variant",
@@ -451,7 +451,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Passed verbatim after the generated flags."
+     "help": "Passed verbatim after the generated flags. Only `automatic_reconstructor`'s own options, with COLMAP 3.12.0 names, are accepted: see `QUICKSTART.md`, \"Which COLMAP options `extra_args` accepts\"."
     }
    ]
   },
