@@ -3,8 +3,12 @@
 
 Copies ``configs/example.ini`` (or another INI given with ``--source``) to a new
 file, optionally changing existing keys with ``--set SECTION.KEY=VALUE``. The
-source is never edited and an existing file is never overwritten. Validate the
-copy afterwards with ``python pipeline/dt4ag_config.py <copy>``.
+source is never edited and an existing file is never overwritten. A key the
+source lacks is added under its section (created if absent) only when the
+loader knows it (``CONFIG_SCHEMA`` in ``dt4ag_config.py``); other keys are
+refused. The copy gets a syntax check only, not ``load_config``: the dry run
+(``python pipeline/dt4ag_config.py <copy>``, then ``run_pipeline.py --dry-run``)
+is the full check.
 """
 
 from __future__ import annotations
@@ -63,13 +67,50 @@ def parse_overrides(raw_values: list[str]) -> dict[tuple[str, str], str]:
         section, key = section.strip(), key.strip()
         if not section or not key or any(c in section + key for c in "[]\r\n"):
             raise ValueError(f"invalid --set target: {raw}")
-        target = (section.casefold(), key.casefold())
+        # configparser keeps section names case-sensitive and lowercases keys.
+        target = (section, key.casefold())
         if target in overrides:
             raise ValueError(f"duplicate --set target: [{section}] {key}")
         if "\r" in value or "\n" in value:
             raise ValueError(f"--set value must be one line: {raw}")
+        if re.search(r"(^|\s)[#;]", value):
+            raise ValueError(
+                "--set value must not contain ' #' or ' ;' (or start with # or ;): "
+                f"the loader reads it as an inline comment and drops the rest: {raw}"
+            )
         overrides[target] = value
     return overrides
+
+
+def known_keys() -> set[tuple[str, str]]:
+    """Return every (section, key) the loader reads, from its own registry."""
+    from dt4ag_config import CONFIG_SCHEMA
+
+    return {(item.section, item.key.casefold()) for item in CONFIG_SCHEMA}
+
+
+def add_missing(lines: list[str], missing: dict[tuple[str, str], str]) -> list[str]:
+    """Insert keys the source lacks, under their section (created if absent)."""
+    newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += newline
+    for (section, key), value in sorted(missing.items()):
+        header = re.compile(r"^\s*\[" + re.escape(section) + r"\]\s*(?:[#;].*)?$")
+        any_header = re.compile(r"^\s*\[[^\]]+\]")
+        start = next((i for i, l in enumerate(lines) if header.match(l.rstrip("\r\n"))), None)
+        if start is None:
+            if lines and lines[-1].strip():
+                lines.append(newline)
+            lines.extend([f"[{section}]{newline}", f"{key} = {value}{newline}"])
+            continue
+        end = start
+        for i in range(start + 1, len(lines)):
+            if any_header.match(lines[i]):
+                break
+            if lines[i].strip():
+                end = i
+        lines.insert(end + 1, f"{key} = {value}{newline}")
+    return lines
 
 
 def apply_overrides(text: str, overrides: dict[tuple[str, str], str]) -> str:
@@ -82,7 +123,7 @@ def apply_overrides(text: str, overrides: dict[tuple[str, str], str]) -> str:
     for index, line in enumerate(lines):
         section_match = re.match(r"^\s*\[([^\]]+)\]\s*(?:[#;].*)?(?:\r?\n)?$", line)
         if section_match:
-            section = section_match.group(1).strip().casefold()
+            section = section_match.group(1).strip()
             continue
         if not section:
             continue
@@ -106,8 +147,14 @@ def apply_overrides(text: str, overrides: dict[tuple[str, str], str]) -> str:
         found.add(target)
     missing = set(overrides) - found
     if missing:
-        labels = ", ".join(f"[{section}] {key}" for section, key in sorted(missing))
-        raise ValueError(f"--set key not found in source: {labels}")
+        unknown = missing - known_keys()
+        if unknown:
+            labels = ", ".join(f"[{s}] {k}" for s, k in sorted(unknown))
+            raise ValueError(
+                f"--set key is not in the source and is not a key the loader "
+                f"knows: {labels}"
+            )
+        lines = add_missing(lines, {t: overrides[t] for t in missing})
     result = "".join(lines)
     # Parse the way dt4ag_config.py does, so a value the loader would read
     # differently (or reject) fails here instead of at the first dry run.

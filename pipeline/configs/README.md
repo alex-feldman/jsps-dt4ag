@@ -23,10 +23,13 @@ python copy_config.py --destination-dir <data_root>/configs --name-prefix my-run
     --set paths.data_root=<data_root> --set train.max_num_iterations=10000
 ```
 
-`--set SECTION.KEY=VALUE` may repeat and only changes a key that already exists
-in the source. `--name my-run.ini` fixes the file name (and fails if it exists);
+`--set SECTION.KEY=VALUE` may repeat. It changes a key in the source, or adds a
+key the source lacks if the loader knows it (under its section, created if
+absent); other keys are refused, as is a value containing ` #` or ` ;`, which the
+loader would read as a comment. `--name my-run.ini` fixes the file name (and fails if it exists);
 `--name-prefix my-run` picks `my-run.ini`, then `my-run-2.ini`, and so on. It
-prints the path it wrote. Then validate as above.
+prints the path it wrote. It checks syntax only; the validation command above
+and a `--dry-run` are the full check.
 
 The last command prints every resolved path and setting, or exits non-zero with
 a `CONFIG ERROR:` line naming the offending key and file. Run it before you

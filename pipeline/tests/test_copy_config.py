@@ -27,7 +27,7 @@ SMALL = """\
 [paths]
 data_root = /path/to/data   # inline note
 
-[Train]
+[train]
 Max_Num_Iterations = 30000
 vis = viewer
 """
@@ -79,7 +79,7 @@ class CopyConfigTests(unittest.TestCase):
     def test_overrides_keep_comments_and_other_lines(self):
         code, printed, err = run(
             "--source", str(self.small), "--destination-dir", str(self.dest),
-            "--name", "c.ini", "--set", "TRAIN.max_num_iterations=500",
+            "--name", "c.ini", "--set", "train.max_num_iterations=500",
         )
         self.assertEqual(code, 0, err)
         text = Path(printed).read_text(encoding="utf-8")
@@ -137,13 +137,77 @@ class CopyConfigTests(unittest.TestCase):
             "--source", str(self.small), "--destination-dir", str(self.dest),
             "--name", "f.ini", "--set", "train.no_such_key=1")
         self.assertEqual(code, 2)
-        self.assertIn("not found in source", err)
+        self.assertIn("not a key the loader knows", err)
         self.assertFalse((self.dest / "f.ini").exists())
+
+    def test_known_key_missing_from_source_is_added_under_its_section(self):
+        code, printed, err = run(
+            "--source", str(self.small), "--destination-dir", str(self.dest),
+            "--name", "g.ini", "--set", "paths.datasets_dirname=ds",
+            "--set", "train.method=splatfacto")
+        self.assertEqual(code, 0, err)
+        text = Path(printed).read_text(encoding="utf-8")
+        parsed = read(printed)
+        self.assertEqual(parsed["paths"]["datasets_dirname"], "ds")
+        self.assertEqual(parsed["train"]["method"], "splatfacto")
+        lines = text.splitlines()
+        self.assertEqual(lines.index("datasets_dirname = ds"),
+                         lines.index("data_root = /path/to/data   # inline note") + 1)
+        self.assertEqual(parsed["train"]["vis"], "viewer")
+
+    def test_known_key_in_absent_section_creates_the_section(self):
+        code, printed, err = run(
+            "--source", str(self.small), "--destination-dir", str(self.dest),
+            "--name", "h.ini", "--set", "run.id_prefix=tomato")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(read(printed)["run"]["id_prefix"], "tomato")
+        self.assertEqual(read(printed)["paths"]["data_root"], "/path/to/data")
+
+    def test_added_key_works_when_source_lacks_trailing_newline(self):
+        bare = self.tmp / "bare.ini"
+        bare.write_text("[paths]\ndata_root = x", encoding="utf-8")
+        code, printed, err = run(
+            "--source", str(bare), "--destination-dir", str(self.dest),
+            "--name", "i.ini", "--set", "paths.outputs_dirname=o")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(read(printed)["paths"]["outputs_dirname"], "o")
+
+    def test_unknown_key_in_unknown_section_is_still_refused(self):
+        code, _, err = run(
+            "--source", str(self.small), "--destination-dir", str(self.dest),
+            "--name", "j.ini", "--set", "bogus.thing=1")
+        self.assertEqual(code, 2)
+        self.assertFalse((self.dest / "j.ini").exists())
+
+    def test_value_that_would_become_an_inline_comment_is_refused(self):
+        for value in ("a #b", "a ;b", "a\t#b", "#b", ";b"):
+            with self.subTest(value=value):
+                code, _, err = run(
+                    "--source", str(self.small), "--destination-dir",
+                    str(self.dest), "--name", "k.ini",
+                    "--set", f"train.vis={value}")
+                self.assertEqual(code, 2)
+                self.assertIn("inline comment", err)
+                self.assertFalse((self.dest / "k.ini").exists())
+
+    def test_section_names_are_case_sensitive_like_the_loader(self):
+        code, _, err = run(
+            "--source", str(self.small), "--destination-dir", str(self.dest),
+            "--name", "m.ini", "--set", "TRAIN.vis=off")
+        self.assertEqual(code, 2)
+        self.assertFalse((self.dest / "m.ini").exists())
+
+    def test_hash_inside_a_word_is_allowed(self):
+        code, printed, err = run(
+            "--source", str(self.small), "--destination-dir", str(self.dest),
+            "--name", "l.ini", "--set", "train.vis=a#b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(read(printed)["train"]["vis"], "a#b")
 
     def test_duplicate_set_target_is_rejected(self):
         code, _, err = run(
             "--source", str(self.small), "--destination-dir", str(self.dest),
-            "--set", "train.vis=a", "--set", "TRAIN.VIS=b")
+            "--set", "train.vis=a", "--set", "train.VIS=b")
         self.assertEqual(code, 2)
         self.assertIn("duplicate", err)
 
