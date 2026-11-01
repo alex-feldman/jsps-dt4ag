@@ -146,14 +146,14 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
 
   <div id="existingBox" class="hidden">
     <label for="existingSets">Mask directories in the capture, comma separated</label>
-    <input type="text" id="existingSets" placeholder="masks, masks_silver-car" autocomplete="off">
+    <input type="text" id="existingSets" placeholder="masks, masks_plant" autocomplete="off">
     <div id="existingChips" class="chips"></div>
     <p class="hint"><code>masks</code> is the default set; <code>masks_X</code> is variant <code>X</code> (<code>pipeline/LAYOUT.md</code>, "Several mask sets on one capture").</p>
   </div>
 
   <div id="generateBox" class="hidden">
     <label for="prompts">Prompts, one per line. Each prompt is its own mask variant.</label>
-    <textarea id="prompts" placeholder="silver car&#10;wheel"></textarea>
+    <textarea id="prompts" placeholder="plant&#10;leaf"></textarea>
     <div id="promptPreview" class="hint"></div>
     <details>
       <summary>samask location and command</summary>

@@ -30,17 +30,6 @@ from pathlib import Path
 PIPELINE_DIR = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = PIPELINE_DIR / "scripts" / "rgb-mask" / "rgb-mask-batch.py"
 
-# Kept in step with test_dt4ag_config.FORBIDDEN_TERMS. The pipeline
-# reconstructs arbitrary scenes; no committed file may imply a subject.
-FORBIDDEN_TERMS = [
-    "plant",
-    "tomato",
-    "tanashi",
-    "soybean",
-    "houseplant",
-    "arabidopsis",
-]
-
 
 def _load_script():
     """Import the hyphenated script file as a module, or return None."""
@@ -484,25 +473,6 @@ class TestArguments(unittest.TestCase):
         self.assertIn("binarize", help_text)
 
 
-# --------------------------------------------------------------------------
-# committed-file hygiene
-# --------------------------------------------------------------------------
-
-class TestObjectAgnostic(unittest.TestCase):
-    """The pipeline reconstructs arbitrary scenes; the script names no subject."""
-
-    def test_script_names_no_subject(self):
-        text = SCRIPT_PATH.read_text(encoding="utf-8").lower()
-        for term in FORBIDDEN_TERMS:
-            with self.subTest(term=term):
-                self.assertNotIn(term, text)
-
-    def test_readme_names_no_subject(self):
-        readme = SCRIPT_PATH.parent / "README.md"
-        text = readme.read_text(encoding="utf-8").lower()
-        for term in FORBIDDEN_TERMS:
-            with self.subTest(term=term):
-                self.assertNotIn(term, text)
 
 
 if __name__ == "__main__":

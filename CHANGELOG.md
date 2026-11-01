@@ -169,6 +169,9 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
+- The run builder's example mask prompts are `plant` and `leaf`, the variants
+  used for stem extraction (plant minus leaf).
+
 - Default exports now include the 15,000-step checkpoint and the final checkpoint
   in a standard 30,000-step run. DEFAULT_CHECKPOINT_INTERVAL in
   pipeline/dt4ag_config.py owns the default; an explicit zero still means
@@ -196,6 +199,13 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Reconcile the alpha release history and adopt release-time versioning. Define
   the v0.3.0 alpha, beta and release gates, with an ordered release plan.
+
+### Removed
+
+- The subject-neutral wording rule (Alex, 2026-11-01). Tests no longer fail
+  when a committed file names a subject such as plants; the rule dated from
+  an AI model that balked at biological terms. The pipeline still contains no
+  subject-specific logic.
 
 ## [0.3.0-alpha.14] - 2026-10-20
 

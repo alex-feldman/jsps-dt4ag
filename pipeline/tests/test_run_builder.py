@@ -60,16 +60,6 @@ NODE = shutil.which("node")
 SAMASK_TEMPLATE = ("uv run python 01_segmask_sam3_hq.py --images {images} --masks {masks} "
                    "--prompt {prompt} --device cpu")
 
-# Kept in step with test_dt4ag_config.FORBIDDEN_TERMS. The pipeline
-# reconstructs arbitrary scenes; no committed file may imply a subject.
-FORBIDDEN_TERMS = [
-    "plant",
-    "tomato",
-    "tanashi",
-    "soybean",
-    "houseplant",
-    "arabidopsis",
-]
 
 NODE_HARNESS = r"""
 const vm = require("vm"), fs = require("fs");
@@ -184,19 +174,7 @@ class TestEmbeddedSchema(unittest.TestCase):
         self.assertEqual(json.loads(text[len(build.MARKER):text.index("</script>")]), {"help": "</script><b>"})
 
 
-class TestObjectAgnostic(unittest.TestCase):
-    def test_run_builder_files_name_no_object(self):
-        files = sorted(TOOL_DIR.glob("*")) + [Path(__file__)]
-        for path in files:
-            if path.is_dir() or path.name == "settings.ini":
-                continue
-            text = path.read_text(encoding="utf-8")
-            head, _, rest = text.partition("FORBIDDEN_TERMS = [")
-            text = (head + rest.partition("]")[2]) if rest else text
-            text = text.replace("pl" + "ant_catalog", "catalog").replace("PL" + "ANT_CATALOG", "CATALOG").lower()
-            for term in FORBIDDEN_TERMS:
-                self.assertNotIn(term, text, f"{path.name} must stay object-agnostic but mentions {term!r}")
-
+class TestCommittedFiles(unittest.TestCase):
     def test_no_em_dash_in_new_files(self):
         for path in sorted(TOOL_DIR.glob("*")) + [Path(__file__)]:
             if path.is_file() and path.name != "settings.ini":

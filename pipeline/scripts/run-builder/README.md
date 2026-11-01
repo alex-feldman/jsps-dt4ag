@@ -34,6 +34,26 @@ port; `--settings FILE` reads another settings file. Ctrl-C stops it.
 Without the server, open `run-builder.html` in a browser and type the paths.
 Copy or download the config, and use the printed dry run as the check.
 
+On WSL2, open the address in the Windows browser; WSL forwards `127.0.0.1`.
+
+## Use it: a first run
+
+1. **Photographs.** Choose one capture and type its path under `datasets/`
+   (or browse to it), then press **Check**. The page shows the photograph
+   count, camera folders and any mask sets already in the capture.
+2. **Masks.** Choose **Generate** and enter one prompt per line, for example
+   `plant` and `leaf`. Choose **One config per mask set** to compare them.
+   To reuse masks that exist, choose **Existing** and click a mask set.
+3. **Run settings.** For a test run, set `[train] downscale_factor = 4` and
+   `max_num_iterations = 10000` (`pipeline/README.md`, "Settings for a test
+   run"). The other keys start at the pipeline's defaults.
+4. **Validate.** Each config is loaded by the pipeline and dry-run. Fix
+   anything it reports; the messages are the pipeline's own.
+5. **Save.** Writes the configs into the configs directory. An existing file
+   is never overwritten.
+6. **Run the commands** in the order shown: the samask commands (when masks
+   are generated), the dry runs, then the real runs.
+
 ## What it does
 
 1. **Photographs.** One capture (a directory containing `images/`,
@@ -41,8 +61,8 @@ Copy or download the config, and use the printed dry run as the check.
    `pipeline/run_collection.py`, or a video made into a capture first.
 2. **Masks.** None, existing mask sets (`masks/` or `masks_{variant}/`), or new
    ones generated with samask from one or more text prompts. **Each prompt is its
-   own mask variant:** prompt `silver car` writes `masks_silver-car/`, prompt
-   `wheel` writes `masks_wheel/`; they are never merged. The variant name is the
+   own mask variant:** prompt `plant` writes `masks_plant/`, prompt `leaf`
+   writes `masks_leaf/`; they are never merged. The variant name is the
    prompt in lowercase with every run of other characters replaced by `-`.
    Choose the set a run uses (`[dataset] mask_variant`), or one config per set
    so the sets can be compared; each such config then gets the set's name added

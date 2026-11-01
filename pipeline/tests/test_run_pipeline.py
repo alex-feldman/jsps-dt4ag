@@ -52,17 +52,6 @@ from run_pipeline import (  # noqa: E402
     verify_export,
 )
 
-# Kept in step with test_dt4ag_config.FORBIDDEN_TERMS. The pipeline
-# reconstructs arbitrary scenes; no committed file may imply a subject.
-FORBIDDEN_TERMS = [
-    "plant",
-    "tomato",
-    "tanashi",
-    "soybean",
-    "houseplant",
-    "arabidopsis",
-]
-
 CONFIG_TEMPLATE = """\
 [paths]
 data_root = {data_root}
@@ -656,42 +645,6 @@ class TestHostLimits(TempTreeTestCase):
 # --------------------------------------------------------------------------
 # the committed runner itself
 # --------------------------------------------------------------------------
-
-class TestObjectAgnostic(unittest.TestCase):
-    """The runner, its tests and the pipeline README must imply no subject."""
-
-    @staticmethod
-    def _scannable(path: Path) -> str:
-        """File text with this suite's own list of forbidden terms removed.
-
-        Without this the check trips over the very literal that defines it.
-        """
-        text = path.read_text(encoding="utf-8")
-        # The provenance namespace is an API name, not a subject assumption.
-        text = text.replace("pl" + "ant_catalog", "catalog").replace("PL" + "ANT_CATALOG", "CATALOG")
-        head, _, rest = text.partition("FORBIDDEN_TERMS = [")
-        if not rest:
-            return text.lower()
-        return (head + rest.partition("]")[2]).lower()
-
-    def test_committed_files_name_no_object(self):
-        for relative in (
-            "run_pipeline.py",
-            "run_collection.py",
-            "README.md",
-            "tests/test_run_pipeline.py",
-            "tests/test_run_collection.py",
-        ):
-            path = PIPELINE_DIR / relative
-            text = self._scannable(path)
-            for term in FORBIDDEN_TERMS:
-                self.assertNotIn(
-                    term,
-                    text,
-                    f"{relative} must stay object-agnostic, but it mentions "
-                    f"{term!r}",
-                )
-
 
 class GpuArchCheckTests(unittest.TestCase):
     """The startup guard that refuses an unsupported GPU.
