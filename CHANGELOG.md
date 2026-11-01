@@ -160,6 +160,18 @@ Dates are the tag date, not the commit date, where they differ.
   `mask_extensions` is required with `use_masks = true` and lists the
   `run-log.csv` columns and how an older log is widened.
 
+- `pipeline/scripts/organ-analysis/color_splat.py`, a colored display splat
+  export. It applies a frame calibration to a raw 3DGS export, then recolors the
+  selected leaf regions from `leaf_ids2.npz` or a validated plant-asset directory,
+  in variant A (selected regions colored, other appearance kept), variant B
+  (other rows also grayed) or both, and writes a new output directory with a
+  `.color.json` sidecar, `legend.md` and `legend.json`. `--viewer supersplat`
+  adds a rotated, `display_only` copy for SuperSplat. The analysis copy changes
+  only `f_dc_*` and `f_rest_*`. It refuses a missing or mismatched source PLY
+  hash and a label-count mismatch. `leaf_lift.opacity_keep` and
+  `viewer.PALETTE` are now shared by the export and the existing code. See
+  `pipeline/scripts/organ-analysis/README.md`.
+
 ### Fixed
 
 - A run log whose tail a crash left as NUL bytes no longer stops every later

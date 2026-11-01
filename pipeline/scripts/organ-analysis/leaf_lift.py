@@ -11,6 +11,11 @@ from pathlib import Path
 def read_json(path):
     return json.loads(Path(path).read_text())
 
+def opacity_keep(data, cutoff):
+    """Rows retained by the shared strict sigmoid-opacity threshold."""
+    op = 1 / (1 + np.exp(-data['opacity'].astype(np.float64)))
+    return op > cutoff
+
 def run(geom, output, params):
     OUT = str(output)
     RD, RM, MAXR, MIN_G = (params[k] for k in ['RD','RM','MAXR','MIN_G'])
@@ -18,8 +23,7 @@ def run(geom, output, params):
     C0 = 0.28209479177387814
     fmap = read_json(OUT + "/frame_map.json")
     data = geom.load_ply()
-    op = 1 / (1 + np.exp(-data["opacity"].astype(np.float64)))
-    keep = op > params["opacity_cutoff"]
+    keep = opacity_keep(data, params["opacity_cutoff"])
     d = data[keep]
     X = np.stack([d["x"], d["y"], d["z"]], 1).astype(np.float64)
     smid = np.median(np.exp(np.stack([d["scale_0"], d["scale_1"], d["scale_2"]], 1).astype(np.float64)), 1)

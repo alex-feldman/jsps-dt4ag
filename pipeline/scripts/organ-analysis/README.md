@@ -339,6 +339,27 @@ Limits:
 - The plant frame inherits the calibration's up and origin, which are geometric estimates.
 - SH degree 0 to 4 and scalar vertex properties only.
 
+## Color a calibrated splat by leaf region
+
+`color_splat.py` applies the current frame calibration to the raw export, then colors the selected leaf regions. It writes a new output directory and refuses an existing one.
+
+```text
+python pipeline/scripts/organ-analysis/color_splat.py \
+  --input /path/to/export.ply \
+  --calibration /path/to/current-calibration.json \
+  --labels /path/to/organ-run/leaf_ids2.npz \
+  --out-dir /path/to/new-color-output \
+  [--variant A|B|both] [--viewer supersplat] [--include-residual] [--opacity-cutoff {value}]
+```
+
+`--labels` accepts a completed organ-analysis `leaf_ids2.npz` or a validated plant-asset directory. Label rows use the opacity-filtered analysis order; `color_splat.py` imports `leaf_lift.opacity_keep`, which is also called by `leaf_lift.run`. When label coordinates are present, they are checked against the filtered input positions. `color_splat.py:load_labels` validates the label package and its source-Ply provenance. It refuses a missing or mismatched source PLY hash and a label-count mismatch.
+
+The default region selection comes from `organ-evidence.json`'s supported-cluster roster or `plant.json`'s leaf roster. A supported cluster is an association status, not human anatomical acceptance. `--include-residual` adds the remaining positive label IDs. Variant A colors the selected regions and preserves other appearance; variant B also grays the other rows. `color_splat.py:recolor` owns the exact DC and higher-order SH changes.
+
+For each selected variant, the new directory contains `{input stem}_leafcolor-{A,B}.ply` and its `.color.json` sidecar. With `--viewer supersplat`, it also contains the corresponding `-supersplat.ply` and a separate `-supersplat.color.json` sidecar. The analysis PLY remains the file for measurement. The display copy has `display_only: true`; open only that copy in SuperSplat. `legend.md` and `legend.json` list the region colors and counts. The palette is shared with `viewer.PALETTE`.
+
+The sidecars record the input, calibration and labels hashes, selected regions, palette source, cutoff, counts, variant, tool version and self-checks. A plant-asset directory hash is computed from its sorted leaf NPZ hashes. The output checks require unchanged vertex/property layout, permit changes only to `f_dc_*` and `f_rest_*` in the analysis copy, and verify that the display positions follow the viewer rotation (`color_splat.py:check_analysis`, `transform_splat.py:viewer_copy`).
+
 ## Plant asset package
 
 After branch/endpoint review, `package_plant_asset.py` turns a reviewed organ result into one versioned, capture-scoped folder: `plant-asset/`. It reuses the review outputs and human decisions; it does not rerun masks, leaf lifting or skeletonization. `plant_asset.py` owns the contract (`SCHEMA`, `SCHEMA_VERSION`, `validate_asset`) and the single-leaf export; `DESIGN.md` explains the rules.
@@ -557,6 +578,8 @@ also hide unconfirmed groups for inspection only.
 ```text
 python -m unittest discover -s pipeline/scripts/organ-analysis/tests -v
 ```
+
+`test_color_splat.py` covers synthetic PLY and calibration fixtures, both label formats, provenance and row-count refusals, both color variants, sidecars and the display rotation. Real-data regeneration is a separate acceptance step.
 
 The real-data regression additionally compares every NPZ array, leaf membership JSON and full skeleton JSON against the preserved Welzo baseline in a fresh directory. That dataset is private/machine-local and is not part of the repository. No public claim of multi-plant or other-species validation is made.
 
