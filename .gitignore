@@ -31,3 +31,8 @@ venv/
 # carry real dataset names and machine-specific paths, so they stay local.
 pipeline/configs/*.ini
 !pipeline/configs/example.ini
+
+# --- Run builder local settings ---
+# Machine-specific paths (data root, samask location); see
+# pipeline/scripts/run-builder/settings.example.ini.
+pipeline/scripts/run-builder/settings.ini

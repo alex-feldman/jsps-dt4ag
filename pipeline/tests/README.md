@@ -135,6 +135,24 @@ photograph modified after the run and old record shapes all run again. The
 per-capture child is a fake that writes the catalog job a run would, or
 `run_pipeline.main` with every external command mocked. Nothing reconstructs.
 
+`test_config_schema.py` checks `dt4ag_config.CONFIG_SCHEMA` against the loader:
+the keys `load_config` reads (recorded by wrapping its parser) are exactly the
+schema's plus the retired ones, a config written at every schema default loads
+to the same values as one omitting every optional key, every listed choice loads
+and an unlisted one is refused, and every key has a help row in
+`configs/README.md`.
+
+`test_run_builder.py` covers `scripts/run-builder/`. The page's `builder-core`
+script runs under Node (skipped without `node` on PATH) and its output is checked
+with the pipeline itself: generated configs load with `load_config` for one
+capture, a collection and each mask variant, collection and capture dry runs
+succeed in process, and generated commands parse with the real `run_pipeline`,
+`run_collection` and `video-frames` parsers. The embedded schema must equal
+`config_schema()`. The server tests cover settings, listing, capture summaries,
+discovery, validation and save, including refusals outside the data root and of
+an existing file, and the HTTP layer's host, origin and content-type checks on a
+real 127.0.0.1 server.
+
 Catalog job progress, failure-path, SIGTERM, probe and old-record fixtures are
 in `test_plant_catalog.py`; see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for
 the producer contract and what the fixtures cover.

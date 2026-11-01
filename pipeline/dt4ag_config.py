@@ -21,7 +21,8 @@ Typical use::
     project_id = cfg.make_run_id()
 
 Run ``python dt4ag_config.py <path-to.ini>`` to validate a config from the
-shell and print the resolved values.
+shell and print the resolved values, or ``python dt4ag_config.py --schema`` to
+print every key it reads, with defaults, allowed values and help, as JSON.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import configparser
 
@@ -48,6 +49,8 @@ __all__ = [
     "detect_colmap_version",
     "read_capture_metadata",
     "CAPTURE_METADATA_FILENAME",
+    "CONFIG_SCHEMA",
+    "config_schema",
 ]
 
 
@@ -246,6 +249,19 @@ VIS_MODES = ("viewer", "viewer+tensorboard", "tensorboard")
 #: Default intermediate export cadence for the standard 30,000-step profile.
 #: A value of zero remains available for final-only export.
 DEFAULT_CHECKPOINT_INTERVAL = 15000
+
+#: ``[colmap] data_type`` values. ``auto`` is the legacy directory-name heuristic
+#: (``Dt4agConfig.resolve_colmap_data_type``).
+COLMAP_DATA_TYPES = ("auto", "individual", "video")
+
+#: ``[nerfstudio] scene_type`` values.
+SCENE_TYPES = ("images", "video")
+
+#: Sections every config must carry. ``[host]`` is optional and absent here.
+REQUIRED_SECTIONS = ("paths", "dataset", "run", "colmap", "nerfstudio", "train", "export")
+
+#: The keys ``[host]`` knows. Any other key there is refused at load.
+HOST_KEYS = ("memory_high", "process_cpus")
 
 
 def eval_token(mode: str, fraction: float = 0.9, interval: int = 8) -> str:
@@ -1010,7 +1026,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     except configparser.Error as exc:
         raise ConfigError(f"could not parse config file {source}: {exc}") from exc
 
-    for section in ("paths", "dataset", "run", "colmap", "nerfstudio", "train", "export"):
+    for section in REQUIRED_SECTIONS:
         _require_section(parser, section, source)
 
     # [paths]
@@ -1299,10 +1315,10 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
 
     # [colmap]
     colmap_data_type = _get_str(parser, "colmap", "data_type", source, "auto").lower()
-    if colmap_data_type not in ("auto", "individual", "video"):
+    if colmap_data_type not in COLMAP_DATA_TYPES:
         raise ConfigError(
             f"key 'data_type' in section [colmap] of config file {source} must be "
-            f"one of auto, individual, video; got {colmap_data_type!r}"
+            f"one of {', '.join(COLMAP_DATA_TYPES)}; got {colmap_data_type!r}"
         )
     colmap_single_camera = _get_int(parser, "colmap", "single_camera", source, 1)
     colmap_single_camera_per_folder = _get_int(
@@ -1313,7 +1329,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
 
     # [nerfstudio]
     scene_type = _get_str(parser, "nerfstudio", "scene_type", source, "images").lower()
-    if scene_type not in ("images", "video"):
+    if scene_type not in SCENE_TYPES:
         raise ConfigError(
             f"key 'scene_type' in section [nerfstudio] of config file {source} "
             f"must be images or video, got {scene_type!r}"
@@ -1468,7 +1484,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         # misspelled memory_high would otherwise leave the run uncapped while
         # the config reads as capped.
         unknown = sorted(set(parser.options("host")) - set(parser.defaults())
-                         - {"memory_high", "process_cpus"})
+                         - set(HOST_KEYS))
         if unknown:
             raise ConfigError(
                 f"unknown key(s) {', '.join(unknown)} in section [host] of config "
@@ -1536,6 +1552,160 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     )
 
 
+# --------------------------------------------------------------------------
+# exported schema: every key the loader reads, for tools that write configs
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ConfigKey:
+    """One key ``load_config`` reads, as a config-writing tool needs to know it.
+
+    ``default`` is the value as it would be written in the INI file, or None
+    when the key is required or its default is computed at load
+    (``default_note`` then says how). ``kind`` is one of ``text``, ``int``,
+    ``float``, ``bool`` and ``choice``; ``choices`` lists a choice key's values.
+    The loader stays the authority: ``tests/test_config_schema.py`` fails when
+    this table and ``load_config`` disagree about a key, a default or a choice.
+    """
+
+    section: str
+    key: str
+    kind: str = "text"
+    default: Optional[str] = ""
+    choices: Tuple[str, ...] = ()
+    required: bool = False
+    default_note: str = ""
+
+
+def _k(section: str, key: str, kind: str = "text", default: Optional[str] = "", **extra) -> ConfigKey:
+    return ConfigKey(section, key, kind, default, **extra)
+
+
+#: Every key ``load_config`` reads, in the order ``configs/example.ini`` lists
+#: them. Help text is not repeated here: ``config_schema`` takes it from the
+#: key tables in ``configs/README.md``, which document each key once.
+CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
+    _k("paths", "data_root", default=None, required=True),
+    _k("paths", "datasets_dirname", default="datasets"),
+    _k("paths", "colmap_dirname", default="colmap"),
+    _k("paths", "outputs_dirname", default="outputs"),
+    _k("paths", "exports_dirname", default="exports"),
+    _k("paths", "derived_dirname", default="derived"),
+    _k("dataset", "images_subpath", default=None, required=True),
+    _k("dataset", "image_extensions"),
+    _k("dataset", "mask_extensions"),
+    _k("dataset", "mask_variant"),
+    _k("dataset", "use_masks", "bool", "false"),
+    _k("dataset", "masked_images_parent_subpath"),
+    _k("run", "id_prefix", default="run"),
+    _k("run", "date"),
+    _k("run", "run_count"),
+    _k("run", "colmap_version"),
+    _k("run", "log_file", default="run-log.csv"),
+    _k("colmap", "data_type", "choice", "auto", choices=COLMAP_DATA_TYPES),
+    _k("colmap", "single_camera", "int", "1"),
+    _k("colmap", "single_camera_per_folder", "int", "1"),
+    _k("colmap", "dense", "int", "0"),
+    _k("colmap", "extra_args"),
+    _k("nerfstudio", "scene_type", "choice", "images", choices=SCENE_TYPES),
+    _k("nerfstudio", "video_path"),
+    _k("nerfstudio", "skip_colmap", "bool", "true"),
+    _k("nerfstudio", "colmap_model_path", default="sparse/0"),
+    _k("train", "method", default="splatfacto"),
+    _k("train", "max_num_iterations", "int", "30000"),
+    _k("train", "steps_per_save", "int", "2500"),
+    _k("train", "save_only_latest_checkpoint", "bool", "false"),
+    _k("train", "eval_mode", "choice", "fraction", choices=EVAL_MODES),
+    _k("train", "train_split_fraction", "float", "0.9"),
+    _k("train", "eval_interval", "int", "8"),
+    _k("train", "downscale_factor", "int", "0"),
+    _k("train", "vis", "choice", "viewer", choices=VIS_MODES),
+    _k("train", "use_scale_regularization", "bool", "true"),
+    _k("train", "background_color", default="random"),
+    _k("train", "quit_on_train_completion", "bool", "false"),
+    _k("train", "max_log_size", "int", "0"),
+    _k("export", "format", default="gaussian-splat"),
+    _k("export", "checkpoint_interval", "int", str(DEFAULT_CHECKPOINT_INTERVAL)),
+    _k("export", "env_label", default="env"),
+    _k("export", "platform_label", default=None, default_note="the running platform (sys.platform)"),
+    _k("export", "export_3dgs", "bool", "false"),
+    _k("export", "gauss_to_pc_script"),
+    _k("host", "memory_high"),
+    _k("host", "process_cpus"),
+)
+
+#: Keys the loader still reads only to refuse them, so no tool should write them.
+RETIRED_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("dataset", "mask_subpath"),
+    ("dataset", "masked_images_subpath"),
+)
+
+#: Where the per-key help text lives (one table per section).
+CONFIG_README = Path(__file__).resolve().parent / "configs" / "README.md"
+
+_README_SECTION_RE = re.compile(r"^###\s+`\[([a-z_-]+)\]`\s*$")
+_README_ROW_RE = re.compile(r"^\|\s*`([a-z0-9_]+)`\s*\|")
+
+
+def readme_key_help(readme: Path = CONFIG_README) -> dict:
+    """``{(section, key): help}`` from the "Controls" column of ``configs/README.md``.
+
+    Each section's table sits under a ``### `[section]` `` heading, one row per
+    key: key, required, default, controls. Returns an empty dict when the file
+    is absent (an installed copy without docs), so a schema is still produced.
+    """
+    if not readme.is_file():
+        return {}
+    found = {}
+    section = None
+    for line in readme.read_text(encoding="utf-8").splitlines():
+        heading = _README_SECTION_RE.match(line)
+        if heading:
+            section = heading.group(1)
+            continue
+        if line.startswith("#"):
+            section = None if line.startswith("## ") else section
+            continue
+        row = _README_ROW_RE.match(line)
+        if section and row:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) >= 4:
+                found[(section, row.group(1))] = "|".join(cells[3:]).strip()
+    return found
+
+
+def config_schema() -> dict:
+    """The config format as JSON-ready data: sections, keys, defaults, choices, help.
+
+    For tools that write configs (``scripts/run-builder/``). ``python
+    dt4ag_config.py --schema`` prints it.
+    """
+    help_text = readme_key_help()
+    sections = []
+    for key in CONFIG_SCHEMA:
+        if not sections or sections[-1]["name"] != key.section:
+            sections.append({
+                "name": key.section,
+                "required": key.section in REQUIRED_SECTIONS,
+                "keys": [],
+            })
+        sections[-1]["keys"].append({
+            "key": key.key,
+            "kind": key.kind,
+            "default": key.default,
+            "choices": list(key.choices),
+            "required": key.required,
+            "default_note": key.default_note,
+            "help": help_text.get((key.section, key.key), ""),
+        })
+    return {
+        "schema": "dt4ag-config-schema",
+        "version": 1,
+        "sections": sections,
+        "retired": [list(pair) for pair in RETIRED_KEYS],
+    }
+
+
 def find_config(explicit=None, start=None) -> Path:
     """Locate a config file.
 
@@ -1561,6 +1731,10 @@ def find_config(explicit=None, start=None) -> Path:
 
 
 def _main(argv: List[str]) -> int:
+    if argv[1:] == ["--schema"]:
+        import json
+        print(json.dumps(config_schema(), indent=2))
+        return 0
     try:
         path = find_config(argv[1] if len(argv) > 1 else None)
         cfg = load_config(path)

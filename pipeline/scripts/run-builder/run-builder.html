@@ -1,0 +1,1510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run builder</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --fg: #1d2330; --muted: #5b6475; --border: #d8dde6;
+  --accent: #2f5fd0; --accent-fg: #ffffff; --code-bg: #f0f2f6; --warn-bg: #fff6dc; --warn-fg: #6b4b00;
+  --ok: #1f7a3a; --err: #b42318; --chip: #e8edf8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171d; --card: #1c2028; --fg: #e4e7ee; --muted: #9aa3b5; --border: #313846;
+    --accent: #7aa2ff; --accent-fg: #0d1220; --code-bg: #242a35; --warn-bg: #3a3014; --warn-fg: #f4d78a;
+    --ok: #6fd08f; --err: #ff8a80; --chip: #27304a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171d; --card: #1c2028; --fg: #e4e7ee; --muted: #9aa3b5; --border: #313846;
+  --accent: #7aa2ff; --accent-fg: #0d1220; --code-bg: #242a35; --warn-bg: #3a3014; --warn-fg: #f4d78a;
+  --ok: #6fd08f; --err: #ff8a80; --chip: #27304a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header, main { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 24px; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 0 0 12px; }
+h3 { font-size: 1rem; margin: 16px 0 8px; }
+p { margin: 6px 0; }
+.lede { color: var(--muted); margin: 0 0 12px; }
+.status { padding: 8px 12px; border-radius: 6px; background: var(--card); border: 1px solid var(--border); }
+.banner { padding: 8px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-fg); margin-top: 8px; }
+section.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; margin: 16px 0; }
+label { display: block; font-weight: 600; margin: 10px 0 4px; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; margin: 4px 16px 4px 0; }
+.hint { color: var(--muted); font-size: 0.9rem; }
+input[type=text], select, textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+textarea { min-height: 70px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9rem; }
+.row { display: flex; gap: 8px; align-items: flex-end; }
+.row > .grow { flex: 1; min-width: 0; }
+button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-fg); cursor: pointer; white-space: nowrap; }
+button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 16px; }
+.field .key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; font-weight: 600; }
+.field details { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+.field details summary { cursor: pointer; }
+.field.changed .key::after { content: " (changed)"; color: var(--accent); font-weight: 500; }
+details.group { border-top: 1px solid var(--border); padding: 6px 0; }
+details.group > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.86rem; }
+code { background: var(--code-bg); padding: 0 4px; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0; white-space: pre-wrap; word-break: break-all; }
+.step { border-left: 3px solid var(--border); padding: 2px 0 2px 12px; margin: 14px 0; }
+.step .title { font-weight: 600; }
+.step .what { color: var(--muted); }
+.step .head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.chip { background: var(--chip); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
+  font-size: 0.85rem; cursor: pointer; color: var(--fg); }
+.warnings li { color: var(--warn-fg); background: var(--warn-bg); padding: 4px 8px; border-radius: 4px; margin: 4px 0; list-style: none; }
+.warnings { padding: 0; }
+.ok { color: var(--ok); font-weight: 600; }
+.err { color: var(--err); font-weight: 600; }
+.browser { border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; max-height: 320px; overflow: auto; }
+.browser button { margin: 2px 4px 2px 0; }
+.browser .entry { display: block; width: 100%; text-align: left; background: transparent; color: var(--fg);
+  border: none; padding: 3px 4px; }
+.browser .entry:hover { background: var(--chip); }
+.hidden { display: none !important; }
+footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Run builder</h1>
+  <p class="lede">Answer the questions below. It writes a pipeline config and the exact commands to run. It
+    runs nothing itself: you run the dry run, then the real run, in your terminal.</p>
+  <div id="status" class="status">Starting...</div>
+  <div id="stale" class="banner hidden">This page's copy of the config schema differs from the pipeline's.
+    Run <code>python3 pipeline/scripts/run-builder/build.py</code> and reload.</div>
+</header>
+
+<main>
+<section class="card" id="s-input">
+  <h2>1. Photographs</h2>
+  <label for="dataRoot">Data root</label>
+  <input type="text" id="dataRoot" placeholder="/path/to/data" autocomplete="off">
+  <p class="hint">The directory holding <code>datasets/</code>, <code>colmap/</code>, <code>outputs/</code> and <code>exports/</code> (<code>pipeline/LAYOUT.md</code>).</p>
+  <div id="datasetsField"></div>
+
+  <label>What are you reconstructing?</label>
+  <label class="inline"><input type="radio" name="mode" value="capture" checked> One capture</label>
+  <label class="inline"><input type="radio" name="mode" value="collection"> A collection of captures</label>
+  <label class="inline"><input type="radio" name="mode" value="video"> A video, made into a capture first</label>
+
+  <div id="videoBox" class="hidden">
+    <label for="videoSource">Video file</label>
+    <input type="text" id="videoSource" placeholder="/path/to/video.mp4" autocomplete="off">
+    <label for="videoReviewRoot">Review folder</label>
+    <input type="text" id="videoReviewRoot" placeholder="/path/to/data/evals/my-video" autocomplete="off">
+    <label for="videoFfmpeg">Folder holding ffmpeg and ffprobe (empty: on PATH)</label>
+    <input type="text" id="videoFfmpeg" placeholder="" autocomplete="off">
+    <p class="hint">The video path is <code>pipeline/VIDEO-WORKFLOW.md</code>: review, choose the interval, extract into a new capture, then continue below with that capture.</p>
+  </div>
+
+  <div id="captureBox">
+    <label for="capture" id="captureLabel">Capture, relative to the datasets directory</label>
+    <div class="row">
+      <div class="grow"><input type="text" id="capture" placeholder="scene-01/capture-a" autocomplete="off"></div>
+      <button type="button" class="secondary server-only" id="browseCapture">Browse</button>
+      <button type="button" class="server-only" id="checkCapture">Check</button>
+    </div>
+    <p class="hint">A capture is a directory containing <code>images/</code>.</p>
+    <div id="captureInfo" class="hint"></div>
+  </div>
+
+  <div id="collectionBox" class="hidden">
+    <label for="collection">Collection, relative to the datasets directory</label>
+    <div class="row">
+      <div class="grow"><input type="text" id="collection" placeholder="scene-01" autocomplete="off"></div>
+      <button type="button" class="secondary server-only" id="browseCollection">Browse</button>
+      <button type="button" class="server-only" id="findCaptures">Find captures</button>
+    </div>
+    <label for="captures">Captures in it, one per line, relative to the datasets directory</label>
+    <textarea id="captures" placeholder="scene-01/capture-a&#10;scene-01/capture-b"></textarea>
+    <p class="hint"><code>run_collection.py</code> finds the captures itself; this list is for the mask commands and the base config. "Find captures" fills it with <code>run_collection.discover_captures</code>.</p>
+    <div id="collectionInfo" class="hint"></div>
+  </div>
+  <div id="browser" class="browser hidden"></div>
+</section>
+
+<section class="card" id="s-masks">
+  <h2>2. Masks</h2>
+  <label class="inline"><input type="radio" name="maskMode" value="none" checked> No masks (the full scene)</label>
+  <label class="inline"><input type="radio" name="maskMode" value="existing"> Use existing mask sets</label>
+  <label class="inline"><input type="radio" name="maskMode" value="generate"> Generate masks with samask</label>
+
+  <div id="existingBox" class="hidden">
+    <label for="existingSets">Mask directories in the capture, comma separated</label>
+    <input type="text" id="existingSets" placeholder="masks, masks_silver-car" autocomplete="off">
+    <div id="existingChips" class="chips"></div>
+    <p class="hint"><code>masks</code> is the default set; <code>masks_X</code> is variant <code>X</code> (<code>pipeline/LAYOUT.md</code>, "Several mask sets on one capture").</p>
+  </div>
+
+  <div id="generateBox" class="hidden">
+    <label for="prompts">Prompts, one per line. Each prompt is its own mask variant.</label>
+    <textarea id="prompts" placeholder="silver car&#10;wheel"></textarea>
+    <div id="promptPreview" class="hint"></div>
+    <details>
+      <summary>samask location and command</summary>
+      <label for="samaskDir">samask directory</label>
+      <input type="text" id="samaskDir" placeholder="/path/to/samask" autocomplete="off">
+      <label for="samaskCommand">Command template, run inside that directory</label>
+      <input type="text" id="samaskCommand" placeholder="see settings.example.ini" autocomplete="off">
+      <p class="hint">Placeholders: <code>{images}</code>, <code>{masks}</code>, <code>{prompt}</code>, <code>{capture}</code>, <code>{variant}</code>, each filled shell-quoted. samask lives in its own repository and environment; this page only prints its commands.</p>
+      <label for="samaskExt">Extension samask writes masks with</label>
+      <input type="text" id="samaskExt" placeholder=".png" autocomplete="off">
+    </details>
+  </div>
+
+  <div id="variantChoice" class="hidden">
+    <h3>Which mask set does a run use?</h3>
+    <label class="inline"><input type="radio" name="configFor" value="one" checked> One config, using
+      <select id="useVariant" style="width:auto"></select></label><br>
+    <label class="inline"><input type="radio" name="configFor" value="each"> One config per mask set, to compare them</label><br>
+    <label class="inline"><input type="checkbox" id="prefixVariant" checked> Add the mask set name to <code>[run] id_prefix</code> in each config</label>
+  </div>
+  <div id="maskExtField"></div>
+</section>
+
+<section class="card" id="s-settings">
+  <h2>3. Run settings</h2>
+  <p class="hint">Every key, default, allowed value and help line here comes from <code>dt4ag_config.config_schema()</code>. The loader checks the values; the dry run shows its errors.</p>
+  <div id="commonFields" class="grid"></div>
+  <h3>All other settings</h3>
+  <div id="otherFields"></div>
+</section>
+
+<section class="card" id="s-output">
+  <h2>4. Config and commands</h2>
+  <div class="grid">
+    <div><label for="configName">Config name</label>
+      <input type="text" id="configName" placeholder="my-run" autocomplete="off"></div>
+    <div><label for="configsDir">Configs directory</label>
+      <input type="text" id="configsDir" placeholder="/path/to/data/configs" autocomplete="off"></div>
+  </div>
+  <div id="catalogCapture">
+    <label class="inline"><input type="checkbox" id="catalogEnabled"> Record a catalog job for this run (<code>pipeline/CATALOG-RECORDS.md</code>)</label>
+  </div>
+  <div class="grid" id="catalogFields">
+    <div><label for="catalogRoot">Catalog root</label>
+      <input type="text" id="catalogRoot" placeholder="the data root" autocomplete="off"></div>
+    <div><label for="catalogRootId">Catalog root ID (kebab-case)</label>
+      <input type="text" id="catalogRootId" placeholder="my-data" autocomplete="off"></div>
+    <div id="captureIdBox"><label for="catalogCaptureId">Catalog capture ID</label>
+      <input type="text" id="catalogCaptureId" placeholder="filled by Check" autocomplete="off"></div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button type="button" class="server-only" id="validate">Validate with the pipeline</button>
+    <button type="button" class="server-only secondary" id="save">Save config</button>
+  </div>
+  <p class="hint" id="serverHint"></p>
+  <div id="serverResult"></div>
+  <ul id="warnings" class="warnings"></ul>
+  <h3>Config</h3>
+  <div id="configsOut"></div>
+  <h3>Commands, in order</h3>
+  <div id="stepsOut"></div>
+</section>
+</main>
+<footer>pipeline/scripts/run-builder/run-builder.html. The CLI runs everything; this page only writes configs and commands.</footer>
+
+<script type="application/json" id="config-schema">
+{
+ "schema": "dt4ag-config-schema",
+ "version": 1,
+ "sections": [
+  {
+   "name": "paths",
+   "required": true,
+   "keys": [
+    {
+     "key": "data_root",
+     "kind": "text",
+     "default": null,
+     "choices": [],
+     "required": true,
+     "default_note": "",
+     "help": "Root of the working data tree. Absolute, or relative to the config file. Must exist. Replaces the hardcoded `/media/alex/T5Red/DT-data/` and the implicit `Path.cwd().parent` the notebook actually relied on."
+    },
+    {
+     "key": "datasets_dirname",
+     "kind": "text",
+     "default": "datasets",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Name of the input-images directory under `data_root`. Must exist."
+    },
+    {
+     "key": "colmap_dirname",
+     "kind": "text",
+     "default": "colmap",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Name of the COLMAP workspace directory. Created on demand."
+    },
+    {
+     "key": "outputs_dirname",
+     "kind": "text",
+     "default": "outputs",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Name of the nerfstudio output directory. Created on demand."
+    },
+    {
+     "key": "exports_dirname",
+     "kind": "text",
+     "default": "exports",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Name of the top-level exports directory."
+    },
+    {
+     "key": "derived_dirname",
+     "kind": "text",
+     "default": "derived",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Name of the directory holding the pipeline's rebuildable intermediates, currently the composited masked images. Created on demand, and safe to delete at any time."
+    }
+   ]
+  },
+  {
+   "name": "dataset",
+   "required": true,
+   "keys": [
+    {
+     "key": "images_subpath",
+     "kind": "text",
+     "default": null,
+     "choices": [],
+     "required": true,
+     "default_note": "",
+     "help": "Path of the image directory, relative to `<data_root>/<datasets_dirname>`. Must exist. Must be relative; an absolute path is an error. Ends in `images` under the canonical layout."
+    },
+    {
+     "key": "image_extensions",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Which files under `images_subpath` are photographs, comma separated. Empty means every supported image type."
+    },
+    {
+     "key": "mask_extensions",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Which files are masks. Always kept out of SfM."
+    },
+    {
+     "key": "mask_variant",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Which of a capture's mask sets to read: empty for `<capture>/masks/`, `X` for `<capture>/masks_X/`. A single directory name, never a path (`/` and `..` are refused). Also keys the composite directory, so two variants never share composites. Recorded in the run log's `mask_variant` column and the archived per-run config. Requires the canonical layout; on a legacy capture it is refused rather than left inert. Set with `use_masks = false` it is accepted with a note in the run log."
+    },
+    {
+     "key": "use_masks",
+     "kind": "bool",
+     "default": "false",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Composite each mask into its photograph's alpha channel as a pre-step. Every photograph must have a mask; a partial set is an error."
+    },
+    {
+     "key": "masked_images_parent_subpath",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "The PARENT composites are written under; the pipeline appends `<mask_variant>/<capture_rel>` to it (the variant segment only when set). Relative values resolve against `data_root`, not the datasets directory. A path inside `datasets/` is refused, because that tree is input. Replaces `masked_images_subpath`, which named the composite directory itself; that key is refused when non-empty, since renaming it mechanically would move the composites."
+    }
+   ]
+  },
+  {
+   "name": "run",
+   "required": true,
+   "keys": [
+    {
+     "key": "id_prefix",
+     "kind": "text",
+     "default": "run",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "First component of the run id."
+    },
+    {
+     "key": "date",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`yymmdd`. Empty means today's date. Set it to reproduce a past run id."
+    },
+    {
+     "key": "run_count",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Empty means auto-increment: one more than the highest counter already present for that date under this dataset's `colmap/` and `outputs/` directories."
+    },
+    {
+     "key": "colmap_version",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Empty means detect by running `colmap --version` (then the bare `colmap` banner). If detection fails and this is empty, loading raises rather than recording a fake version."
+    },
+    {
+     "key": "log_file",
+     "kind": "text",
+     "default": "run-log.csv",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "CSV run log, appended to once per run. Relative paths resolve under `data_root`."
+    }
+   ]
+  },
+  {
+   "name": "colmap",
+   "required": true,
+   "keys": [
+    {
+     "key": "data_type",
+     "kind": "choice",
+     "default": "auto",
+     "choices": [
+      "auto",
+      "individual",
+      "video"
+     ],
+     "required": false,
+     "default_note": "",
+     "help": "`auto`, `individual` or `video`. `video` selects COLMAP's video matching mode for an already-extracted image sequence; it does not decode a movie. `auto` uses the legacy directory-name heuristic and cannot infer video under the canonical `images/` layout."
+    },
+    {
+     "key": "single_camera",
+     "kind": "int",
+     "default": "1",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--single_camera`."
+    },
+    {
+     "key": "single_camera_per_folder",
+     "kind": "int",
+     "default": "1",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--single_camera_per_folder`."
+    },
+    {
+     "key": "dense",
+     "kind": "int",
+     "default": "0",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--dense`. Sparse only by default."
+    },
+    {
+     "key": "extra_args",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Passed verbatim after the generated flags."
+    }
+   ]
+  },
+  {
+   "name": "nerfstudio",
+   "required": true,
+   "keys": [
+    {
+     "key": "scene_type",
+     "kind": "choice",
+     "default": "images",
+     "choices": [
+      "images",
+      "video"
+     ],
+     "required": false,
+     "default_note": "",
+     "help": "`images` or `video`."
+    },
+    {
+     "key": "video_path",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow."
+    },
+    {
+     "key": "skip_colmap",
+     "kind": "bool",
+     "default": "true",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM."
+    },
+    {
+     "key": "colmap_model_path",
+     "kind": "text",
+     "default": "sparse/0",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--colmap-model-path`."
+    }
+   ]
+  },
+  {
+   "name": "train",
+   "required": true,
+   "keys": [
+    {
+     "key": "method",
+     "kind": "text",
+     "default": "splatfacto",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "The nerfstudio method name."
+    },
+    {
+     "key": "max_num_iterations",
+     "kind": "int",
+     "default": "30000",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--max-num-iterations`. Must be positive."
+    },
+    {
+     "key": "steps_per_save",
+     "kind": "int",
+     "default": "2500",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. nerfstudio's own default is 2000."
+    },
+    {
+     "key": "save_only_latest_checkpoint",
+     "kind": "bool",
+     "default": "false",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest."
+    },
+    {
+     "key": "eval_mode",
+     "kind": "choice",
+     "default": "fraction",
+     "choices": [
+      "fraction",
+      "interval",
+      "all"
+     ],
+     "required": false,
+     "default_note": "",
+     "help": "Which photographs train: `fraction` holds a share out for `ns-eval`, `interval` holds out every n-th, `all` trains on every photograph (and `ns-eval` then scores fit on photographs it trained on, not generalization). Passed as `nerfstudio-data --eval-mode`, always, so the training set is stated and not inherited. `filename` mode is not offered."
+    },
+    {
+     "key": "train_split_fraction",
+     "kind": "float",
+     "default": "0.9",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Share of photographs that train, when `eval_mode = fraction`. Must be above 0 and below 1: 1.0 holds nothing out and makes `ns-eval` crash, so use `eval_mode = all` for that. The run also refuses to start if the fraction would hold out 0 of the registered photographs."
+    },
+    {
+     "key": "eval_interval",
+     "kind": "int",
+     "default": "8",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Every n-th photograph is held out, when `eval_mode = interval`. At least 2."
+    },
+    {
+     "key": "downscale_factor",
+     "kind": "int",
+     "default": "0",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Training resolution as a power-of-two divisor of the source images. `0` lets nerfstudio choose by probing the downscale pyramid on disk, so the resolution is not a recorded input; `1` is native resolution; `2`, `4`, `8` and so on read `images_N/`, which must already exist. Anything else is refused. Pin it for any run that has to be reproducible; the effective value appears as `dsN` in the export filename. Use `4` for test runs (`pipeline/README.md`, \"Settings for a test run\")."
+    },
+    {
+     "key": "vis",
+     "kind": "choice",
+     "default": "viewer",
+     "choices": [
+      "viewer",
+      "viewer+tensorboard",
+      "tensorboard"
+     ],
+     "required": false,
+     "default_note": "",
+     "help": "nerfstudio `--vis`. `viewer` (default, nothing passed) computes no metric during training. `viewer+tensorboard` also writes TensorBoard event files (see below); `tensorboard` writes them without the viewer. Anything else is refused. `quit_on_train_completion = true` still ends a `viewer+tensorboard` run. Recorded in `run-log.csv` (`vis` column) and the archived config's `[run-record]`."
+    },
+    {
+     "key": "use_scale_regularization",
+     "kind": "bool",
+     "default": "true",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--pipeline.model.use-scale-regularization`."
+    },
+    {
+     "key": "background_color",
+     "kind": "text",
+     "default": "random",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--pipeline.model.background-color`."
+    },
+    {
+     "key": "quit_on_train_completion",
+     "kind": "bool",
+     "default": "false",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--viewer.quit-on-train-completion`."
+    },
+    {
+     "key": "max_log_size",
+     "kind": "int",
+     "default": "0",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "`--logging.local-writer.max-log-size`."
+    }
+   ]
+  },
+  {
+   "name": "export",
+   "required": true,
+   "keys": [
+    {
+     "key": "format",
+     "kind": "text",
+     "default": "gaussian-splat",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "The `ns-export` subcommand."
+    },
+    {
+     "key": "checkpoint_interval",
+     "kind": "int",
+     "default": "15000",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Export every checkpoint whose step is a multiple of this, plus the final one. For the standard 30,000-step config this exports step 15,000 and the final step. `0` explicitly exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Set checkpoint_interval to 0 explicitly for final-only export in that mode. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only."
+    },
+    {
+     "key": "env_label",
+     "kind": "text",
+     "default": "env",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Free-text label baked into the export filename to record which environment produced it. Was the hardcoded `conda_env_name`."
+    },
+    {
+     "key": "platform_label",
+     "kind": "text",
+     "default": null,
+     "choices": [],
+     "required": false,
+     "default_note": "the running platform (sys.platform)",
+     "help": "Second label in the export filename."
+    },
+    {
+     "key": "export_3dgs",
+     "kind": "bool",
+     "default": "false",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x."
+    },
+    {
+     "key": "gauss_to_pc_script",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "Path to `gauss_to_pc.py`. Required when `export_3dgs = true`."
+    }
+   ]
+  },
+  {
+   "name": "host",
+   "required": false,
+   "keys": [
+    {
+     "key": "memory_high",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "A cgroup v2 `MemoryHigh` for each external stage command (`colmap`, `ns-process-data`, `ns-train`, `ns-export`), for example `8G` or `6000M`: a whole number with an optional `K`, `M`, `G` or `T` suffix (powers of 1024; lowercase is accepted and upper-cased). Below `512M` is refused as a likely typo. Each command is prefixed with `systemd-run --user --scope --quiet -p MemoryHigh=<value>`, so the file cache the command creates is charged to it and evicted at the cap instead of growing the WSL VM. MemoryHigh throttles and never kills. Before the first stage the runner checks that such a scope can be created (`systemd-run --user --scope --quiet -p MemoryHigh=64M true`) and that the user manager delegates the `memory` controller; if not, the run stops with the reason rather than running uncapped. `--dry-run` prints the prefixed commands without that check. The optional `gauss_to_pc` conversion is not wrapped."
+    },
+    {
+     "key": "process_cpus",
+     "kind": "text",
+     "default": "",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "A CPU list as `taskset -c` reads it (`0,1`, `0-3`, `0-3,6`). `ns-process-data` (and its ffmpeg downscale) then runs only on those CPUs. Other stages are not affected. Whether the CPUs exist is checked at run start, not at load."
+    }
+   ]
+  }
+ ],
+ "retired": [
+  [
+   "dataset",
+   "mask_subpath"
+  ],
+  [
+   "dataset",
+   "masked_images_subpath"
+  ]
+ ]
+}
+</script>
+
+<script id="builder-core">
+// Pure functions: state in, configs and commands out. No DOM. Tests run this
+// block under Node (tests/test_run_builder.py) and check the output with the
+// real loader and argument parsers.
+globalThis.RunBuilder = (function () {
+  "use strict";
+
+  function shellQuote(value) {
+    var s = String(value);
+    if (s === "") return "''";
+    if (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s)) return s;
+    return "'" + s.replace(/'/g, "'\"'\"'") + "'";
+  }
+
+  function render(argv) { return argv.map(shellQuote).join(" "); }
+
+  // A prompt as a mask variant name: lowercase, runs of anything else as "-".
+  function slug(prompt) {
+    return String(prompt).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+
+  function joinPath() {
+    var parts = Array.prototype.slice.call(arguments).filter(function (p) { return p !== undefined && p !== null && String(p) !== ""; });
+    if (!parts.length) return "";
+    var joined = parts.map(String).join("/").replace(/\/+/g, "/");
+    return joined.length > 1 ? joined.replace(/\/$/, "") : joined;
+  }
+
+  function schemaKeys(schema) {
+    var keys = [];
+    (schema.sections || []).forEach(function (section) {
+      section.keys.forEach(function (key) { keys.push({ section: section.name, spec: key }); });
+    });
+    return keys;
+  }
+
+  function value(schema, state, section, key) {
+    var values = (state.values || {})[section] || {};
+    if (Object.prototype.hasOwnProperty.call(values, key)) return String(values[key]);
+    var found = null;
+    schemaKeys(schema).forEach(function (k) { if (k.section === section && k.spec.key === key) found = k.spec; });
+    return found && found.default !== null ? found.default : "";
+  }
+
+  function datasetsDir(schema, state) {
+    return joinPath(state.dataRoot, value(schema, state, "paths", "datasets_dirname"));
+  }
+
+  // A path typed relative to the datasets directory, or absolute inside it.
+  function relToDatasets(path, root) {
+    var p = String(path || "").trim().replace(/\/+$/, "");
+    if (root && (p === root || p.indexOf(root + "/") === 0)) p = p.slice(root.length);
+    return p.replace(/^\/+/, "");
+  }
+
+  // The mask sets this plan uses: [{variant, prompt}] with "" for masks/ itself.
+  function maskSets(state, warnings) {
+    var masks = state.masks || {};
+    var sets = [];
+    var seen = {};
+    if (masks.mode === "existing") {
+      (masks.existing || []).forEach(function (raw) {
+        var name = String(raw).trim().replace(/\/+$/, "");
+        if (!name) return;
+        var variant = name === "masks" ? "" : (name.indexOf("masks_") === 0 ? name.slice(6) : null);
+        if (variant === null) { warnings.push("\"" + name + "\" is not a mask directory name (masks or masks_X); left out."); return; }
+        if (seen[variant]) return;
+        seen[variant] = true;
+        sets.push({ variant: variant, prompt: null });
+      });
+      if (!sets.length) warnings.push("No existing mask directory named; the config uses no masks.");
+    } else if (masks.mode === "generate") {
+      (masks.prompts || []).forEach(function (raw) {
+        var prompt = String(raw).trim();
+        if (!prompt) return;
+        var variant = slug(prompt);
+        if (!variant) { warnings.push("The prompt \"" + prompt + "\" gives no usable variant name; left out."); return; }
+        if (seen[variant]) { warnings.push("The prompts \"" + seen[variant] + "\" and \"" + prompt + "\" both make masks_" + variant + "/; the second is left out."); return; }
+        seen[variant] = prompt;
+        sets.push({ variant: variant, prompt: prompt });
+      });
+      if (!sets.length) warnings.push("No prompt given; the config uses no masks.");
+    }
+    return sets;
+  }
+
+  function setLabel(variant) { return variant ? variant : "masks"; }
+
+  function cleanValue(v, where, warnings) {
+    var s = String(v);
+    if (/[\r\n]/.test(s)) {
+      warnings.push(where + " had a line break, which an INI value cannot hold; it was joined into one line.");
+      s = s.replace(/[\r\n]+/g, " ");
+    }
+    return s.trim();
+  }
+
+  function iniText(schema, state, overrides, header, warnings) {
+    var lines = header.map(function (h) { return "# " + h; });
+    lines.push("");
+    (schema.sections || []).forEach(function (section) {
+      lines.push("[" + section.name + "]");
+      section.keys.forEach(function (spec) {
+        var v = Object.prototype.hasOwnProperty.call(overrides[section.name] || {}, spec.key)
+          ? overrides[section.name][spec.key] : value(schema, state, section.name, spec.key);
+        lines.push(spec.key + " = " + cleanValue(v, "[" + section.name + "] " + spec.key, warnings));
+      });
+      lines.push("");
+    });
+    return lines.join("\n");
+  }
+
+  function configsFor(schema, state, warnings) {
+    var masks = state.masks || {};
+    var sets = maskSets(state, warnings);
+    var datasets = datasetsDir(schema, state);
+    var mode = state.mode || "capture";
+    var images;
+    if (mode === "collection") {
+      var captures = captureList(state, datasets);
+      if (captures.length) {
+        images = joinPath(captures[0], "images");
+      } else {
+        images = joinPath(relToDatasets(state.collection, datasets), "images");
+        warnings.push("List at least one capture of the collection: the base config needs one real images_subpath to load, and run_collection.py replaces it for each capture.");
+      }
+    } else {
+      images = joinPath(relToDatasets(state.capture, datasets), "images");
+    }
+    if (!String(state.dataRoot || "").trim()) warnings.push("Set the data root.");
+
+    var chosen;
+    var each = masks.configFor === "each" && sets.length > 0;
+    if (!sets.length) {
+      chosen = [null];
+    } else if (each) {
+      chosen = sets;
+    } else {
+      var use = sets.filter(function (s) { return s.variant === (masks.use || ""); })[0];
+      if (!use) {
+        use = sets[0];
+        if (masks.use !== undefined && masks.use !== null && masks.use !== "" ) warnings.push("The chosen mask set is not in the list; using " + setLabel(use.variant) + ".");
+      }
+      chosen = [use];
+    }
+
+    var base = String(state.configName || "").trim().replace(/\.ini$/, "") || "run-config";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(base)) {
+      warnings.push("The config name may use letters, digits, '.', '_' and '-' only; using run-config.");
+      base = "run-config";
+    }
+    var prefix = value(schema, state, "run", "id_prefix");
+    var generate = masks.mode === "generate";
+    var maskExt = value(schema, state, "dataset", "mask_extensions");
+    if (!maskExt && sets.length) {
+      // Without mask_extensions the loader refuses use_masks = true, so fall back
+      // to the samask extension for existing sets too, and say so.
+      maskExt = String((state.samask || {}).maskExtension || "").trim();
+      if (!generate) {
+        warnings.push(maskExt
+          ? "[dataset] mask_extensions was empty; using " + maskExt + " from the samask setting. Check it matches the files in the mask set."
+          : "Set [dataset] mask_extensions (for example .png): the pipeline refuses masks without it.");
+      }
+    }
+    return chosen.map(function (set) {
+      var o = { paths: { data_root: String(state.dataRoot || "").trim().replace(/\/+$/, "") || "/" },
+                dataset: { images_subpath: images }, run: {} };
+      var header = ["Written by the run builder (pipeline/scripts/run-builder/) on " + (state.today || "") + "."];
+      if (mode === "collection") header.push("Collection base config: run_collection.py replaces [dataset] images_subpath for each capture.");
+      if (set) {
+        o.dataset.use_masks = "true";
+        o.dataset.mask_variant = set.variant;
+        o.dataset.mask_extensions = maskExt;
+        header.push("Mask set: " + (set.variant ? "masks_" + set.variant + "/" : "masks/")
+          + (set.prompt ? " (samask prompt \"" + set.prompt + "\")" : "") + ".");
+        if (each && masks.prefixVariant !== false) o.run.id_prefix = prefix + "-" + setLabel(set.variant);
+      } else {
+        o.dataset.use_masks = "false";
+        o.dataset.mask_variant = "";
+      }
+      header.push("Check it with the dry run printed beside it before the real run.");
+      var name = (each ? base + "-" + setLabel(set.variant) : base) + ".ini";
+      return { name: name, variant: set ? set.variant : null, prompt: set ? set.prompt : null,
+               text: iniText(schema, state, o, header, warnings) };
+    });
+  }
+
+  function captureList(state, datasets) {
+    return (state.captures || []).map(function (c) { return relToDatasets(c, datasets); })
+      .filter(function (c) { return c; });
+  }
+
+  var PLACEHOLDER = /\{(images|masks|prompt|capture|variant)\}/g;
+
+  function samaskSteps(schema, state, warnings) {
+    var masks = state.masks || {};
+    if (masks.mode !== "generate") return [];
+    var sets = maskSets(state, []);
+    var datasets = datasetsDir(schema, state);
+    var captures = state.mode === "collection" ? captureList(state, datasets)
+      : [relToDatasets(state.capture, datasets)];
+    var samask = state.samask || {};
+    var template = String(samask.command || "").trim();
+    var directory = String(samask.directory || "").trim();
+    if (!template) warnings.push("Set the samask command template (settings.ini, or the field under Masks) to get the mask commands.");
+    if (template && !directory) warnings.push("Set the samask directory: its commands run inside it.");
+    var unknown = (template.match(/\{[^}]*\}/g) || []).filter(function (p) { return !p.match(/^\{(images|masks|prompt|capture|variant)\}$/); });
+    if (unknown.length) warnings.push("The samask template has placeholders this page does not fill: " + unknown.join(", ") + ".");
+    if (state.mode === "collection" && !captures.length) warnings.push("List the collection's captures to get a samask command for each.");
+    var steps = [];
+    captures.forEach(function (capture) {
+      sets.forEach(function (set) {
+        var fill = {
+          images: joinPath(datasets, capture, "images"),
+          masks: joinPath(datasets, capture, "masks_" + set.variant),
+          prompt: set.prompt, capture: joinPath(datasets, capture), variant: set.variant
+        };
+        var command = template ? template.replace(PLACEHOLDER, function (_, name) { return shellQuote(fill[name]); }) : "";
+        if (command && directory) command = "(cd " + shellQuote(directory) + " && " + command + ")";
+        steps.push({ kind: "samask", title: "Masks: \"" + set.prompt + "\" for " + capture,
+          what: "Writes masks_" + set.variant + "/ beside images/ in " + capture + ", in samask's own environment. It reads images/ and writes only the mask directory.",
+          command: command, fill: fill });
+      });
+    });
+    return steps;
+  }
+
+  function pipelineSteps(schema, state, configs, warnings) {
+    var datasets = datasetsDir(schema, state);
+    var dir = String(state.configsDir || "").trim().replace(/\/+$/, "");
+    if (!dir) warnings.push("Set the configs directory; the commands below name the config by its file name only.");
+    var catalog = state.catalog || {};
+    var root = String(catalog.root || "").trim() || String(state.dataRoot || "").trim();
+    var rootId = String(catalog.rootId || "").trim();
+    var dry = [], real = [];
+    configs.forEach(function (config) {
+      var path = dir ? joinPath(dir, config.name) : config.name;
+      var label = configs.length > 1 ? " (" + config.name + ")" : "";
+      var argv, what, whatRun;
+      if (state.mode === "collection") {
+        if (!rootId) warnings.push("Set the catalog root ID: a collection run reads completion from catalog records and refuses to start without one.");
+        argv = ["uv", "run", "python", "pipeline/run_collection.py", "--config", path,
+                "--collection", relToDatasets(state.collection, datasets), "--catalog-root", root, "--catalog-root-id", rootId];
+        what = "Finds every capture, validates each capture's derived config, and lists each as run, skip or invalid with the reason. Writes and runs nothing.";
+        whatRun = "Runs the captures one at a time and skips those whose catalog record shows they completed. Long, and uses the GPU.";
+      } else {
+        argv = ["uv", "run", "python", "pipeline/run_pipeline.py", "--config", path];
+        if (catalog.enabled) {
+          if (!rootId || !String(catalog.captureId || "").trim()) warnings.push("A catalog job needs the catalog root ID and the capture ID.");
+          argv = argv.concat(["--catalog-root", root, "--catalog-root-id", rootId,
+                              "--catalog-capture-id", String(catalog.captureId || "").trim()]);
+        }
+        what = "Loads the config, derives the run id, counts the photographs and prints every command it would run. Runs nothing.";
+        whatRun = "Runs the four stages (COLMAP, ns-process-data, ns-train, ns-export) and verifies the export. Long, and uses the GPU.";
+      }
+      var dryArgv = argv.concat(["--dry-run"]);
+      dry.push({ kind: "dry-run", title: "Dry run" + label, what: what, argv: dryArgv, command: render(dryArgv), config: config.name });
+      real.push({ kind: "run", title: "Run" + label, what: whatRun, argv: argv, command: render(argv), config: config.name });
+    });
+    return dry.concat(real);
+  }
+
+  function videoSteps(schema, state) {
+    if (state.mode !== "video") return [];
+    var v = state.video || {};
+    var argv = ["python3", "pipeline/scripts/video-frames/video-frames.py", "review",
+                "--source", String(v.source || "").trim(), "--review-root", String(v.reviewRoot || "").trim()];
+    if (String(v.ffmpegPrefix || "").trim()) argv = argv.concat(["--ffmpeg-prefix", String(v.ffmpegPrefix).trim()]);
+    var datasets = datasetsDir(schema, state);
+    var capture = joinPath(datasets, relToDatasets(state.capture, datasets));
+    return [
+      { kind: "video", title: "Review the video", argv: argv, command: render(argv),
+        what: "Hashes the movie and writes a page of labeled thumbnails in a new folder under the review folder. Reads the movie and writes nothing else." },
+      { kind: "note", title: "Choose the interval and extract", command: "",
+        what: "Open the index.html it prints, choose the range and interval, and copy the extract command the page shows, with --capture " + capture + " (it must not exist yet). Run it as printed (it ends in --dry-run), then again without --dry-run. Look at the frames before going on (pipeline/VIDEO-WORKFLOW.md, steps 2 and 3; step 4 lists the config keys to check for extracted frames)." }
+    ];
+  }
+
+  function setupSteps(state) {
+    var lines = [];
+    if (String(state.repoRoot || "").trim()) lines.push("cd " + shellQuote(String(state.repoRoot).trim()));
+    if (String(state.shellSetup || "").trim()) lines.push(String(state.shellSetup).trim());
+    if (!lines.length) return [{ kind: "note", title: "Where to run these", command: "",
+      what: "Run every command below from the repository root, in a terminal where colmap and uv are on PATH (pipeline/QUICKSTART.md, section 5)." }];
+    return [{ kind: "setup", title: "Terminal setup", command: lines.join("\n"),
+      what: "Run once in a new terminal: it moves to the repository" + (state.shellSetup ? " and runs your shell setup line." : ".") }];
+  }
+
+  function plan(schema, state) {
+    var warnings = [];
+    var configs = configsFor(schema, state, warnings);
+    var steps = setupSteps(state)
+      .concat(videoSteps(schema, state))
+      .concat(samaskSteps(schema, state, warnings))
+      .concat(pipelineSteps(schema, state, configs, warnings));
+    var unique = warnings.filter(function (w, i) { return warnings.indexOf(w) === i; });
+    return { configs: configs, steps: steps, warnings: unique,
+             masksPending: (state.masks || {}).mode === "generate" && configs.some(function (c) { return c.variant !== null; }) };
+  }
+
+  return { plan: plan, shellQuote: shellQuote, render: render, slug: slug, joinPath: joinPath,
+           relToDatasets: relToDatasets, schemaKeys: schemaKeys };
+})();
+</script>
+
+<script id="builder-ui">
+(function () {
+  "use strict";
+  var RB = globalThis.RunBuilder;
+  var SCHEMA = JSON.parse(document.getElementById("config-schema").textContent);
+  var STORE = "run-builder-state-v1";
+  // Keys the sections above set; they are not shown among the run settings.
+  var MANAGED = { "paths.data_root": 1, "paths.datasets_dirname": 1, "dataset.images_subpath": 1,
+                  "dataset.use_masks": 1, "dataset.mask_variant": 1, "dataset.mask_extensions": 1 };
+  var COMMON = ["run.id_prefix", "train.max_num_iterations", "train.downscale_factor", "train.eval_mode",
+                "train.train_split_fraction", "train.eval_interval", "train.quit_on_train_completion",
+                "export.checkpoint_interval", "export.env_label", "export.platform_label",
+                "export.export_3dgs", "export.gauss_to_pc_script", "host.memory_high", "host.process_cpus"];
+  var server = false;
+  var lastCapture = null;
+
+  var state = {
+    mode: "capture", dataRoot: "", capture: "", collection: "", captures: [],
+    masks: { mode: "none", existing: [], prompts: [], use: "", configFor: "one", prefixVariant: true },
+    // run_pipeline.py refuses the train stage while this is false (pipeline/README.md).
+    values: { train: { quit_on_train_completion: "true" } },
+    configName: "", configsDir: "", repoRoot: "", shellSetup: "",
+    samask: { directory: "", command: "", maskExtension: "" },
+    catalog: { enabled: false, root: "", rootId: "", captureId: "" },
+    video: { source: "", reviewRoot: "", ffmpegPrefix: "" }, today: ""
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === "class") node.className = attrs[k]; else node.setAttribute(k, attrs[k]);
+    });
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function load() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(STORE) || "null");
+      if (saved && typeof saved === "object") {
+        Object.keys(saved).forEach(function (k) { if (k in state) state[k] = saved[k]; });
+      }
+    } catch (e) { /* no storage: start fresh */ }
+  }
+  function store() {
+    try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* ignore */ }
+  }
+
+  function spec(section, key) {
+    var found = null;
+    SCHEMA.sections.forEach(function (s) { if (s.name === section) s.keys.forEach(function (k) { if (k.key === key) found = k; }); });
+    return found;
+  }
+
+  // Help text is Markdown from configs/README.md: show `code` and **bold**, escape the rest.
+  function helpNode(text) {
+    var span = el("span");
+    String(text).split(/(`[^`]*`)/).forEach(function (part) {
+      if (/^`[^`]*`$/.test(part)) { span.appendChild(el("code", {}, part.slice(1, -1))); return; }
+      part.split(/(\*\*[^*]+\*\*)/).forEach(function (bit) {
+        if (/^\*\*[^*]+\*\*$/.test(bit)) span.appendChild(el("strong", {}, bit.slice(2, -2)));
+        else span.appendChild(document.createTextNode(bit));
+      });
+    });
+    return span;
+  }
+
+  function currentValue(section, key) {
+    var v = (state.values[section] || {})[key];
+    if (v !== undefined) return String(v);
+    var s = spec(section, key);
+    return s && s.default !== null ? s.default : "";
+  }
+
+  function field(section, key) {
+    var s = spec(section, key);
+    if (!s) return el("div");
+    var wrap = el("div", { class: "field" });
+    var id = "f-" + section + "-" + key;
+    var label = el("label", { for: id });
+    label.appendChild(el("span", { class: "key" }, "[" + section + "] " + key));
+    wrap.appendChild(label);
+    var input;
+    if (s.kind === "bool" || s.kind === "choice") {
+      input = el("select", { id: id });
+      var options = s.kind === "bool" ? ["true", "false"] : s.choices;
+      options.forEach(function (o) { input.appendChild(el("option", { value: o }, o)); });
+    } else {
+      input = el("input", { id: id, type: "text", autocomplete: "off" });
+      if (s.kind === "int" || s.kind === "float") input.setAttribute("inputmode", "decimal");
+      if (s.default_note) input.setAttribute("placeholder", "empty: " + s.default_note);
+      else if (s.default === "") input.setAttribute("placeholder", "empty");
+    }
+    input.value = currentValue(section, key);
+    function mark() {
+      var dflt = s.default === null ? "" : s.default;
+      wrap.classList.toggle("changed", input.value !== dflt);
+    }
+    mark();
+    input.addEventListener("input", function () {
+      state.values[section] = state.values[section] || {};
+      state.values[section][key] = input.value;
+      mark(); update();
+    });
+    input.addEventListener("change", function () {
+      state.values[section] = state.values[section] || {};
+      state.values[section][key] = input.value;
+      mark(); update();
+    });
+    wrap.appendChild(input);
+    if (s.help) {
+      var details = el("details");
+      details.appendChild(el("summary", {}, "default " + (s.default === null ? (s.default_note || "none, required") : (s.default === "" ? "empty" : s.default))));
+      details.appendChild(helpNode(s.help));
+      wrap.appendChild(details);
+    }
+    return wrap;
+  }
+
+  function buildSettings() {
+    var common = $("commonFields");
+    common.textContent = "";
+    COMMON.forEach(function (name) {
+      var parts = name.split(".");
+      common.appendChild(field(parts[0], parts[1]));
+    });
+    var other = $("otherFields");
+    other.textContent = "";
+    SCHEMA.sections.forEach(function (section) {
+      var keys = section.keys.filter(function (k) {
+        var n = section.name + "." + k.key;
+        return !MANAGED[n] && COMMON.indexOf(n) < 0;
+      });
+      if (!keys.length) return;
+      var group = el("details", { class: "group" });
+      group.appendChild(el("summary", {}, "[" + section.name + "]" + (section.required ? "" : " (optional section)")));
+      var grid = el("div", { class: "grid" });
+      keys.forEach(function (k) { grid.appendChild(field(section.name, k.key)); });
+      group.appendChild(grid);
+      other.appendChild(group);
+    });
+    $("datasetsField").textContent = "";
+    $("datasetsField").appendChild(field("paths", "datasets_dirname"));
+    $("maskExtField").textContent = "";
+    $("maskExtField").appendChild(field("dataset", "mask_extensions"));
+  }
+
+  function bindText(id, get, set) {
+    var input = $(id);
+    input.value = get() || "";
+    input.addEventListener("input", function () { set(input.value); update(); });
+  }
+
+  function lines(text) { return String(text).split(/\n/).map(function (l) { return l.trim(); }).filter(Boolean); }
+
+  function bindAll() {
+    bindText("dataRoot", function () { return state.dataRoot; }, function (v) { state.dataRoot = v; });
+    bindText("capture", function () { return state.capture; }, function (v) { state.capture = v; });
+    bindText("collection", function () { return state.collection; }, function (v) { state.collection = v; });
+    $("captures").value = (state.captures || []).join("\n");
+    $("captures").addEventListener("input", function () { state.captures = lines($("captures").value); update(); });
+    bindText("videoSource", function () { return state.video.source; }, function (v) { state.video.source = v; });
+    bindText("videoReviewRoot", function () { return state.video.reviewRoot; }, function (v) { state.video.reviewRoot = v; });
+    bindText("videoFfmpeg", function () { return state.video.ffmpegPrefix; }, function (v) { state.video.ffmpegPrefix = v; });
+    bindText("existingSets", function () { return (state.masks.existing || []).join(", "); },
+      function (v) { state.masks.existing = v.split(",").map(function (s) { return s.trim(); }).filter(Boolean); });
+    $("prompts").value = (state.masks.prompts || []).join("\n");
+    $("prompts").addEventListener("input", function () { state.masks.prompts = lines($("prompts").value); update(); });
+    bindText("samaskDir", function () { return state.samask.directory; }, function (v) { state.samask.directory = v; });
+    bindText("samaskCommand", function () { return state.samask.command; }, function (v) { state.samask.command = v; });
+    bindText("samaskExt", function () { return state.samask.maskExtension; }, function (v) { state.samask.maskExtension = v; });
+    bindText("configName", function () { return state.configName; }, function (v) { state.configName = v; });
+    bindText("configsDir", function () { return state.configsDir; }, function (v) { state.configsDir = v; });
+    bindText("catalogRoot", function () { return state.catalog.root; }, function (v) { state.catalog.root = v; });
+    bindText("catalogRootId", function () { return state.catalog.rootId; }, function (v) { state.catalog.rootId = v; });
+    bindText("catalogCaptureId", function () { return state.catalog.captureId; }, function (v) { state.catalog.captureId = v; });
+    $("catalogEnabled").checked = !!state.catalog.enabled;
+    $("catalogEnabled").addEventListener("change", function () { state.catalog.enabled = $("catalogEnabled").checked; update(); });
+    $("prefixVariant").checked = state.masks.prefixVariant !== false;
+    $("prefixVariant").addEventListener("change", function () { state.masks.prefixVariant = $("prefixVariant").checked; update(); });
+    $("useVariant").addEventListener("change", function () { state.masks.use = $("useVariant").value; update(); });
+    radios("mode", function () { return state.mode; }, function (v) { state.mode = v; });
+    radios("maskMode", function () { return state.masks.mode; }, function (v) { state.masks.mode = v; });
+    radios("configFor", function () { return state.masks.configFor; }, function (v) { state.masks.configFor = v; });
+  }
+
+  function radios(name, get, set) {
+    document.querySelectorAll("input[name=" + name + "]").forEach(function (r) {
+      r.checked = r.value === get();
+      r.addEventListener("change", function () { if (r.checked) { set(r.value); update(); } });
+    });
+  }
+
+  function show(id, on) { $(id).classList.toggle("hidden", !on); }
+
+  function variantNames() {
+    if (state.masks.mode === "existing") {
+      return (state.masks.existing || []).map(function (n) { return n === "masks" ? "" : n.replace(/^masks_/, ""); });
+    }
+    if (state.masks.mode === "generate") {
+      return (state.masks.prompts || []).map(RB.slug).filter(Boolean);
+    }
+    return [];
+  }
+
+  function refreshChoices() {
+    var names = variantNames().filter(function (n, i, all) { return all.indexOf(n) === i; });
+    var select = $("useVariant");
+    var keep = state.masks.use;
+    select.textContent = "";
+    names.forEach(function (n) { select.appendChild(el("option", { value: n }, n ? "masks_" + n + "/" : "masks/")); });
+    if (names.indexOf(keep) >= 0) select.value = keep;
+    else if (names.length) { select.value = names[0]; state.masks.use = names[0]; }
+    show("variantChoice", names.length > 0);
+    $("promptPreview").textContent = state.masks.mode === "generate" && names.length
+      ? "Writes " + names.map(function (n) { return "masks_" + n + "/"; }).join(", ") + ", one directory per prompt; they are never merged." : "";
+  }
+
+  function copyButton(text) {
+    var b = el("button", { type: "button", class: "secondary" }, "Copy");
+    b.addEventListener("click", function () {
+      function done() { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallback(text); done(); });
+      } else { fallback(text); done(); }
+    });
+    return b;
+  }
+  function fallback(text) {
+    var t = el("textarea"); t.value = text; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+    t.remove();
+  }
+  function downloadButton(name, text) {
+    var b = el("button", { type: "button", class: "secondary" }, "Download");
+    b.addEventListener("click", function () {
+      var url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+      var a = el("a", { href: url, download: name }); document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+    return b;
+  }
+
+  var current = null;
+  function update() {
+    show("captureBox", state.mode !== "collection");
+    show("collectionBox", state.mode === "collection");
+    show("videoBox", state.mode === "video");
+    $("captureLabel").textContent = state.mode === "video"
+      ? "New capture the frames go into, relative to the datasets directory"
+      : "Capture, relative to the datasets directory";
+    show("existingBox", state.masks.mode === "existing");
+    show("generateBox", state.masks.mode === "generate");
+    show("maskExtField", state.masks.mode !== "none");
+    show("catalogCapture", state.mode !== "collection");
+    show("catalogFields", state.mode === "collection" || state.catalog.enabled);
+    show("captureIdBox", state.mode !== "collection");
+    refreshChoices();
+    state.today = new Date().toISOString().slice(0, 10);
+    current = RB.plan(SCHEMA, state);
+    renderPlan(current);
+    store();
+  }
+
+  function renderPlan(p) {
+    var w = $("warnings"); w.textContent = "";
+    p.warnings.forEach(function (text) { w.appendChild(el("li", {}, text)); });
+    var out = $("configsOut"); out.textContent = "";
+    p.configs.forEach(function (c) {
+      var step = el("div", { class: "step" });
+      var head = el("div", { class: "head" });
+      head.appendChild(el("span", { class: "title" }, c.name));
+      var buttons = el("span"); buttons.appendChild(copyButton(c.text)); buttons.appendChild(downloadButton(c.name, c.text));
+      head.appendChild(buttons);
+      step.appendChild(head);
+      step.appendChild(el("pre", {}, c.text));
+      out.appendChild(step);
+    });
+    var steps = $("stepsOut"); steps.textContent = "";
+    p.steps.forEach(function (s, i) {
+      var step = el("div", { class: "step" });
+      var head = el("div", { class: "head" });
+      head.appendChild(el("span", { class: "title" }, (i + 1) + ". " + s.title));
+      if (s.command) head.appendChild(copyButton(s.command));
+      step.appendChild(head);
+      step.appendChild(el("div", { class: "what" }, s.what));
+      if (s.command) step.appendChild(el("pre", {}, s.command));
+      steps.appendChild(step);
+    });
+  }
+
+  // ------------------------------------------------------------------ server
+  function api(action, body) {
+    return fetch("/api/" + action, { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; }); });
+  }
+
+  function datasetsDirname() { return currentValue("paths", "datasets_dirname"); }
+
+  function captureSummary(c) {
+    var parts = [c.photographs + " photograph" + (c.photographs === 1 ? "" : "s")
+      + (c.cameras.length ? " in " + c.cameras.length + " camera folder" + (c.cameras.length === 1 ? "" : "s") : "")];
+    if (!c.is_capture) parts = ["no images/ directory here, so this is not a capture"];
+    if (c.mask_sets.length) parts.push("mask sets: " + c.mask_sets.map(function (m) {
+      return m.directory + " (" + m.files + (m.extensions.length ? ", " + m.extensions.join(" ") : "") + ")"; }).join(", "));
+    else parts.push("no mask sets");
+    return parts.join("; ");
+  }
+
+  function checkCapture() {
+    api("capture", { path: state.capture, datasets_dirname: datasetsDirname() }).then(function (c) {
+      lastCapture = c;
+      $("captureInfo").textContent = captureSummary(c);
+      if (c.capture_id && !state.catalog.captureId) { state.catalog.captureId = c.capture_id; $("catalogCaptureId").value = c.capture_id; }
+      renderChips(c.mask_sets);
+      update();
+    }, function (e) { $("captureInfo").textContent = e.message; });
+  }
+
+  function renderChips(sets) {
+    var chips = $("existingChips"); chips.textContent = "";
+    (sets || []).forEach(function (m) {
+      var chip = el("button", { type: "button", class: "chip" }, "+ " + m.directory);
+      chip.addEventListener("click", function () {
+        if (state.masks.existing.indexOf(m.directory) < 0) state.masks.existing.push(m.directory);
+        $("existingSets").value = state.masks.existing.join(", ");
+        if (!currentValue("dataset", "mask_extensions") && m.extensions.length) {
+          state.values.dataset = state.values.dataset || {};
+          state.values.dataset.mask_extensions = m.extensions.join(",");
+          buildSettings();
+        }
+        update();
+      });
+      chips.appendChild(chip);
+    });
+  }
+
+  function findCaptures() {
+    api("discover", { path: state.collection, datasets_dirname: datasetsDirname() }).then(function (d) {
+      state.captures = d.captures.map(function (c) { return c.rel; });
+      $("captures").value = state.captures.join("\n");
+      var sets = {};
+      d.captures.forEach(function (c) { c.mask_sets.forEach(function (m) { sets[m.directory] = m; }); });
+      renderChips(Object.keys(sets).map(function (k) { return sets[k]; }));
+      $("collectionInfo").textContent = d.captures.length + " captures: " + d.captures.map(function (c) {
+        return c.rel + " (" + c.photographs + " photographs" + (c.mask_sets.length ? ", " + c.mask_sets.map(function (m) { return m.directory; }).join(" ") : "") + ")"; }).join("; ")
+        + (d.ignored.length ? ". Ignored: " + d.ignored.map(function (i) { return i.path + " (" + i.why + ")"; }).join("; ") : "");
+      update();
+    }, function (e) { $("collectionInfo").textContent = e.message; });
+  }
+
+  function browse(target) {
+    var box = $("browser");
+    var datasets = RB.joinPath(state.dataRoot, datasetsDirname());
+    var start = target === "capture" ? state.capture : state.collection;
+    function open(path) {
+      api("list", { path: path }).then(function (listing) {
+        box.textContent = "";
+        show("browser", true);
+        var bar = el("div");
+        bar.appendChild(el("code", {}, listing.path));
+        var use = el("button", { type: "button" }, "Use this folder");
+        use.addEventListener("click", function () {
+          var rel = RB.relToDatasets(listing.path, datasets);
+          if (target === "capture") { state.capture = rel; $("capture").value = rel; }
+          else { state.collection = rel; $("collection").value = rel; }
+          show("browser", false); update();
+        });
+        var close = el("button", { type: "button", class: "secondary" }, "Close");
+        close.addEventListener("click", function () { show("browser", false); });
+        bar.appendChild(el("br")); bar.appendChild(use); bar.appendChild(close);
+        box.appendChild(bar);
+        if (listing.parent) {
+          var up = el("button", { type: "button", class: "entry" }, ".. (up)");
+          up.addEventListener("click", function () { open(listing.parent); });
+          box.appendChild(up);
+        }
+        listing.entries.forEach(function (e) {
+          var b = el("button", { type: "button", class: "entry" }, e.name + "/" + (e.is_capture ? "   capture" : "") + (e.symlink ? "   (link)" : ""));
+          b.addEventListener("click", function () { open(e.path); });
+          box.appendChild(b);
+        });
+      }, function (e) { box.textContent = e.message; show("browser", true); });
+    }
+    open(start ? RB.joinPath(datasets, RB.relToDatasets(start, datasets)) : datasets);
+  }
+
+  function serverBody() {
+    return { kind: state.mode === "collection" ? "collection" : "capture",
+             collection: RB.relToDatasets(state.collection, RB.joinPath(state.dataRoot, datasetsDirname())),
+             catalog_root: state.catalog.root || state.dataRoot, catalog_root_id: state.catalog.rootId,
+             masks_pending: current.masksPending,
+             configs: current.configs.map(function (c) { return { name: c.name, text: c.text }; }) };
+  }
+
+  function validate() {
+    var box = $("serverResult"); box.textContent = "Validating...";
+    api("validate", serverBody()).then(function (r) {
+      box.textContent = "";
+      r.results.forEach(function (res) {
+        var div = el("div", { class: "step" });
+        div.appendChild(el("div", { class: "title" }, res.name));
+        if (res.loads) {
+          div.appendChild(el("div", { class: "ok" }, "load_config accepts it."));
+        } else if (res.loads_without_masks) {
+          div.appendChild(el("div", { class: "hint" }, "load_config accepts everything except the masks, which samask has not written yet. Run the samask commands, then validate again. The loader says:"));
+          div.appendChild(el("pre", {}, res.error));
+        } else {
+          div.appendChild(el("div", { class: "err" }, "load_config refuses it:"));
+          div.appendChild(el("pre", {}, res.error));
+        }
+        if (res.dry_run) {
+          var code = res.dry_run.exit_code;
+          div.appendChild(el("div", { class: code === 0 ? "ok" : "err" }, "Dry run exit " + code + (code === 0 ? "." : ": read the output.")));
+          div.appendChild(el("pre", {}, res.dry_run.output));
+        }
+        box.appendChild(div);
+      });
+    }, function (e) { box.textContent = ""; box.appendChild(el("pre", {}, e.message)); });
+  }
+
+  function save() {
+    var box = $("serverResult"); box.textContent = "Saving...";
+    var body = serverBody(); body.directory = state.configsDir;
+    api("save", body).then(function (r) {
+      box.textContent = "";
+      box.appendChild(el("div", { class: "ok" }, "Saved: " + r.written.join(", ")));
+      if (r.masks_pending) box.appendChild(el("div", { class: "hint" }, "Masks are still to be generated: run the samask commands before the dry run."));
+    }, function (e) { box.textContent = ""; box.appendChild(el("pre", {}, e.message)); });
+  }
+
+  function connect() {
+    var status = $("status");
+    function fileMode() {
+      server = false;
+      document.querySelectorAll(".server-only").forEach(function (b) { b.disabled = true; });
+      status.textContent = "Opened without the local server: type the paths yourself, copy or download the config, and use the printed dry run as the check. Start serve.py (README.md) to browse folders, validate and save.";
+      $("serverHint").textContent = "Validate and Save need the local server.";
+    }
+    if (!/^https?:$/.test(location.protocol)) { fileMode(); return; }
+    api("info", {}).then(function (info) {
+      server = true;
+      var s = info.settings;
+      if (!state.dataRoot) state.dataRoot = s.data_root;
+      if (!state.configsDir) state.configsDir = s.configs_dir;
+      if (!state.catalog.root) state.catalog.root = s.catalog_root;
+      if (!state.catalog.rootId) state.catalog.rootId = s.catalog_root_id;
+      if (!state.samask.directory) state.samask.directory = s.samask_directory;
+      if (!state.samask.command) state.samask.command = s.samask_command;
+      if (!state.samask.maskExtension) state.samask.maskExtension = s.samask_mask_extension;
+      state.repoRoot = info.repo_root;
+      state.shellSetup = s.shell_setup;
+      ["dataRoot", "configsDir"].forEach(function (id) { $(id).value = state[id]; });
+      $("catalogRoot").value = state.catalog.root; $("catalogRootId").value = state.catalog.rootId;
+      $("samaskDir").value = state.samask.directory; $("samaskCommand").value = state.samask.command;
+      $("samaskExt").value = state.samask.maskExtension;
+      status.textContent = "Connected to the local server. Data root " + s.data_root + (s.source ? " (settings: " + s.source + ")" : "") + ".";
+      show("stale", !info.schema_matches);
+      update();
+    }, fileMode);
+  }
+
+  load();
+  buildSettings();
+  bindAll();
+  $("checkCapture").addEventListener("click", checkCapture);
+  $("findCaptures").addEventListener("click", findCaptures);
+  $("browseCapture").addEventListener("click", function () { browse("capture"); });
+  $("browseCollection").addEventListener("click", function () { browse("collection"); });
+  $("validate").addEventListener("click", validate);
+  $("save").addEventListener("click", save);
+  update();
+  connect();
+})();
+</script>
+</body>
+</html>

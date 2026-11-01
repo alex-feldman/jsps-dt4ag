@@ -245,10 +245,21 @@ scratch.
   specification that must stay editable, and `SEQUENTIAL-RUNS.md` records gaps
   rather than a decision.
 
+## Future, not scheduled
+
+- [ ] Launch and monitor runs from the run builder
+- [ ] Submit jobs to a pipeline host over the LAN. Input data placement is the
+      open problem: the photographs must already be on the host, or travel there
+      with the job.
+
 ## Explicit non-goals
 
 - **macOS support.** Blocked upstream, not by this code. Revisit only if gsplat
   publishes a non-CUDA backend.
 - **Mask generation.** Producing masks is a separate concern with its own
   repository. This pipeline applies masks; it does not create them.
-- **A GUI.** The notebook covers exploration and the CLI covers everything else.
+
+**No longer a non-goal: a GUI** (Alex, 2026-11-01). Previously listed here as "the
+notebook covers exploration and the CLI covers everything else". Changed to: a
+local run builder that writes configs and commands
+(`pipeline/scripts/run-builder/`); the CLI stays the interface that runs things.
