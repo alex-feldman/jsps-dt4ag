@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- A test fails when any tracked `.ipynb` has stored cell outputs or a
+  non-null execution count, naming the file and cell and pointing to
+  `nbstripout`. The notebook was already committed clean; this keeps it so.
+
 - `pipeline/CAMERA-PROFILES.md` now opens with guidance for any camera: the
   pipeline does not correct lens distortion itself, Nerfstudio 1.1.5 undistorts
   and crops images in memory during training, and four practical rules for
