@@ -9,10 +9,112 @@ import time
 import importlib.metadata
 import re
 import shlex
+import shutil
 import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+#: The milestone ladder, in order. Skipped stages leave gaps; nothing is synthesized.
+MILESTONES = ("config_ok", "prereqs_ok", "masks_composited", "colmap_done", "transforms_ok",
+              "pyramid_ok", "trained", "checkpoint_found", "exported", "verified")
+PROGRESS_SCHEMA_VERSION = 2
+#: Every progress field of the current schema; ``read_progress`` returns them all.
+PROGRESS_FIELDS = ("milestones", "furthest_milestone", "active_stage", "stages", "resolved",
+                   "dependencies", "gpu", "artifacts", "failure")
+#: Runner exit codes that name a failure cause; any other nonzero code is "error".
+EXIT_CAUSES = {2: "config", 130: "interrupted", 143: "terminated"}
+CANCELLED_CAUSES = ("interrupted", "terminated")
+PROBE_TIMEOUT = 10
+_COLMAP_VERSION = re.compile(r"COLMAP\s+\d+\.\d+(?:\.\d+)?[^\n]*", re.IGNORECASE)
+_NVIDIA_SMI_WSL = Path("/usr/lib/wsl/lib/nvidia-smi")
+
+
+def read_progress(record):
+    """Progress of any job record in the current shape.
+
+    A field the record's schema did not have is None; a job written before
+    progress existed reads as schema_version 0.
+    """
+    progress = record.get("progress") or {}
+    return dict(schema_version=progress.get("schema_version", 0),
+                **{field: progress.get(field) for field in PROGRESS_FIELDS})
+
+
+def _probe(argv):
+    """Combined output of a bounded command, or None. Never raises."""
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=PROBE_TIMEOUT, check=False)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def colmap_version():
+    """COLMAP banner version; 3.12 rejects --version and prints it bare."""
+    for argv in (["colmap", "--version"], ["colmap"]):
+        probed = _probe(argv)
+        match = _COLMAP_VERSION.search(probed[1]) if probed else None
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def ffmpeg_version():
+    probed = _probe(["ffmpeg", "-version"])
+    if not probed or probed[0] != 0 or not probed[1].strip():
+        return None
+    return probed[1].strip().splitlines()[0]
+
+
+def gpu_inventory():
+    """GPUs the driver reports, or None when nvidia-smi cannot answer."""
+    binary = shutil.which("nvidia-smi") or (str(_NVIDIA_SMI_WSL) if _NVIDIA_SMI_WSL.is_file() else None)
+    if binary is None:
+        return None
+    for fields in (("name", "compute_cap", "memory.total", "driver_version"),
+                   ("name", "memory.total", "driver_version")):
+        probed = _probe([binary, "--query-gpu=" + ",".join(fields), "--format=csv,noheader,nounits"])
+        if not probed or probed[0] != 0:
+            continue
+        devices = []
+        for line in probed[1].strip().splitlines():
+            values = {key: value.strip() for key, value in zip(fields, line.split(","))
+                      if value.strip() not in ("", "N/A", "[N/A]")}
+            memory = values.get("memory.total", "")
+            devices.append(dict(name=values.get("name"), compute_capability=values.get("compute_cap"),
+                memory_total_mib=int(memory) if memory.isdigit() else None,
+                driver_version=values.get("driver_version")))
+        return dict(devices=devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
+    return None
+
+
+def measure(path):
+    """(size_bytes, file_count) without following links; file_count only for directories."""
+    path = Path(path)
+    try:
+        if path.is_dir() and not path.is_symlink():
+            total = count = 0
+            for folder, _, files in os.walk(path):
+                for name in files:
+                    total += os.lstat(os.path.join(folder, name)).st_size
+                    count += 1
+            return total, count
+        return path.stat().st_size, None
+    except OSError:
+        return None, None
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    try:
+        with Path(path).open("rb") as stream:
+            for block in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
 
 
 def now():
@@ -27,7 +129,8 @@ def git_value(repo, *args):
 class CatalogJob:
     """One invocation; completion never implies review or acceptance."""
     def __init__(self, root, root_id, capture_id, repo, *, title, job_type,
-                 command, config, selected_images=None, context_refs=None, pm_refs=None):
+                 command, config, selected_images=None, context_refs=None, pm_refs=None,
+                 hash_artifacts=False):
         self.root = Path(root).expanduser().resolve()
         for value in (root_id, capture_id):
             if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value):
@@ -39,6 +142,7 @@ class CatalogJob:
         self.directory = self.root / "catalog"
         self.context_refs = context_refs or []
         self.pm_refs = pm_refs or []
+        self.hash_artifacts = hash_artifacts
         version = None
         project = Path(repo) / "pyproject.toml"
         if project.is_file():
@@ -54,16 +158,20 @@ class CatalogJob:
             logs=[], input_artifact_ids=[], output_artifact_ids=[], exit_code=None, error_summary=None)
         if git_value(repo, "status", "--porcelain"):
             self.record["diagnostics"].append("Producer checkout has uncommitted changes; commit alone does not identify its working tree.")
-        self.record["progress"] = dict(schema_version=1, milestones=[], furthest_milestone=None,
-            active_stage=None, stages={}, resolved={}, dependencies={})
+        self.record["progress"] = dict(schema_version=PROGRESS_SCHEMA_VERSION, milestones=[],
+            furthest_milestone=None, active_stage=None, stages={}, resolved={}, dependencies={},
+            gpu=None, artifacts=[], failure=None)
         self._stage_started = None
         self.save()
 
     def milestone(self, name):
+        if name not in MILESTONES:
+            raise ValueError(f"Unknown milestone {name!r}; the ladder is plant_catalog.MILESTONES")
         progress = self.record["progress"]
         if not any(item["name"] == name for item in progress["milestones"]):
             progress["milestones"].append(dict(name=name, verified_at=now()))
-        progress["furthest_milestone"] = name
+        progress["furthest_milestone"] = max((item["name"] for item in progress["milestones"]),
+                                             key=MILESTONES.index)
         self.save()
 
     def resolved(self, **values):
@@ -71,20 +179,26 @@ class CatalogJob:
         self.save()
 
     def dependencies(self):
+        """Tool versions, None when unknown. A probe failure never fails the run."""
         versions = {"python": platform.python_version()}
         for package in ("nerfstudio", "gsplat", "torch"):
             try:
                 versions[package] = importlib.metadata.version(package)
-            except importlib.metadata.PackageNotFoundError:
+            except Exception:  # missing or broken metadata is an unknown version
                 versions[package] = None
-        for name, command in (("colmap", ["colmap", "--version"]), ("ffmpeg", ["ffmpeg", "-version"])):
+        for name, probe in (("colmap", colmap_version), ("ffmpeg", ffmpeg_version)):
             try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
-                lines = (result.stdout + result.stderr).strip().splitlines()
-                versions[name] = lines[0] if lines and result.returncode == 0 else None
-            except (OSError, subprocess.TimeoutExpired):
+                versions[name] = probe()
+            except Exception:
                 versions[name] = None
         self.record["progress"]["dependencies"] = versions
+        self.save()
+
+    def gpu(self):
+        try:
+            self.record["progress"]["gpu"] = gpu_inventory()
+        except Exception:
+            self.record["progress"]["gpu"] = None
         self.save()
 
     def start_stage(self, stage):
@@ -168,16 +282,28 @@ class CatalogJob:
     def artifact(self, path, *, role, media_type=None, coordinate_frame=None):
         identity = "artifact-" + uuid.uuid4().hex
         record = self.common("artifact", identity, Path(path).name)
+        location = self.pointer(path)
+        # Large outputs are linked in place; hashing is opt-in and files only.
+        digest = sha256_file(path) if self.hash_artifacts and Path(path).is_file() else None
         record.update(capture_id=self.capture_id, producing_job_id=self.id,
-            media_type=media_type, role=role, location=self.pointer(path), sha256=None,
+            media_type=media_type, role=role, location=location, sha256=digest,
             coordinate_frame=coordinate_frame, calibration_ref=None, review_status="not_reviewed")
-        # Large outputs are linked in place; hashing is explicitly unknown.
         self.write(record)
+        size, files = measure(path)
         self.record["output_artifact_ids"].append(identity)
+        self.record["progress"]["artifacts"].append(dict(artifact_id=identity, role=role,
+            relative_path=location["relative_path"], size_bytes=size, file_count=files))
         self.save()
 
     def finish(self, code, error=None):
-        self.end_stage("completed" if code == 0 else "cancelled" if code == 130 else "failed")
-        self.record.update(ended_at=now(), execution_status="completed" if code == 0 else
-            "cancelled" if code == 130 else "failed", exit_code=code, error_summary=error)
+        progress = self.record["progress"]
+        if code == 0:
+            status = "completed"
+        else:
+            cause = EXIT_CAUSES.get(code, "error")
+            status = "cancelled" if cause in CANCELLED_CAUSES else "failed"
+            progress["failure"] = dict(cause=cause, stage=progress["active_stage"],
+                                       after_milestone=progress["furthest_milestone"])
+        self.end_stage(status)
+        self.record.update(ended_at=now(), execution_status=status, exit_code=code, error_summary=error)
         self.save()

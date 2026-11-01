@@ -1,5 +1,9 @@
 """Durable catalog progress without external tools, GPU or user data."""
+import hashlib
 import json
+import os
+import signal
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -7,12 +11,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from plant_catalog import CatalogJob
+import plant_catalog
+from plant_catalog import CatalogJob, MILESTONES, read_progress
 import run_pipeline as runner
 from test_run_pipeline import make_config
 
 
-class CatalogTests(unittest.TestCase):
+class CatalogFixture(unittest.TestCase):
+    """Temporary catalog root plus helpers; holds no tests of its own."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -28,6 +35,13 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(files), 1)
         return json.loads(files[0].read_text())
 
+    def invoke(self, config, *extra):
+        with patch('plant_catalog.git_value', return_value=None), patch('plant_catalog.subprocess.run', side_effect=FileNotFoundError):
+            return runner.main(['--config', str(config), '--catalog-root', str(self.root),
+                '--catalog-root-id', 'test-root', '--catalog-capture-id', 'capture-a', *extra])
+
+
+class CatalogTests(CatalogFixture):
     def test_atomic_update_failure_preserves_previous_record(self):
         job = self.job()
         before = self.read()
@@ -58,11 +72,6 @@ class CatalogTests(unittest.TestCase):
         self.assertGreaterEqual(record['progress']['stages']['train']['elapsed_seconds'], 0)
         self.assertIsNone(record['progress']['active_stage'])
 
-    def invoke(self, config, *extra):
-        with patch('plant_catalog.git_value', return_value=None), patch('plant_catalog.subprocess.run', side_effect=FileNotFoundError):
-            return runner.main(['--config', str(config), '--catalog-root', str(self.root),
-                '--catalog-root-id', 'test-root', '--catalog-capture-id', 'capture-a', *extra])
-
     def test_invalid_config_is_recorded_without_fabricated_capture(self):
         self.assertEqual(self.invoke(self.root / 'absent.ini'), 2)
         record = self.read()
@@ -70,6 +79,8 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(record['capture_id'], 'capture-a')
         self.assertIsNone(record['selected_images'])
         self.assertEqual(record['progress']['milestones'], [])
+        self.assertEqual(record['progress']['failure'],
+                         dict(cause='config', stage=None, after_milestone=None))
         self.assertFalse((self.root / 'catalog/captures').exists())
 
     def test_dry_run_creates_no_catalog(self):
@@ -87,10 +98,12 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(record['progress']['furthest_milestone'], 'config_ok')
         self.assertIn('missing tool', record['error_summary'])
         self.assertTrue(record['evidence'])
+        self.assertEqual(record['progress']['failure'],
+                         dict(cause='error', stage=None, after_milestone='config_ok'))
 
     def test_stage_failure_and_interrupt(self):
-        for exception, code, status in [(runner.StageError('bad solve'), 1, 'failed'),
-                                         (KeyboardInterrupt(), 130, 'cancelled')]:
+        for exception, code, status, cause in [(runner.StageError('bad solve'), 1, 'failed', 'error'),
+                                                (KeyboardInterrupt(), 130, 'cancelled', 'interrupted')]:
             with self.subTest(status=status), tempfile.TemporaryDirectory() as folder:
                 self.root = Path(folder)
                 cfg = make_config(self.root)
@@ -101,6 +114,8 @@ class CatalogTests(unittest.TestCase):
                 self.assertEqual(record['execution_status'], status)
                 self.assertEqual(record['progress']['furthest_milestone'], 'prereqs_ok')
                 self.assertEqual(record['progress']['stages']['colmap']['status'], status)
+                self.assertEqual(record['progress']['failure'],
+                                 dict(cause=cause, stage='colmap', after_milestone='prereqs_ok'))
 
     def test_success_verifies_before_marking_milestone(self):
         cfg = make_config(self.root)
@@ -201,3 +216,225 @@ class CatalogTests(unittest.TestCase):
                 self.assertEqual(record['progress']['stages']['export']['status'], 'completed' if valid else 'failed')
                 self.assertEqual(len(record['output_artifact_ids']), 1 if valid else 0)
                 self.assertEqual('verified' in [m['name'] for m in record['progress']['milestones']], valid)
+
+
+class ProgressSchemaTwoTests(CatalogFixture):
+    """Schema 2 fields: ladder, failure, GPU, artifacts, SIGTERM, old records."""
+
+    def solve_fixture(self):
+        cfg = make_config(self.root)
+        (cfg.images_path / 'one.jpg').write_bytes(b'image')
+        def solve(*args):
+            sparse = cfg.colmap_workspace(cfg.make_run_id()) / 'sparse/0'
+            sparse.mkdir(parents=True)
+            (sparse / 'cameras.bin').write_bytes(b'camera')
+        return cfg, solve
+
+    def test_success_records_ladder_failure_and_artifact_sizes(self):
+        cfg, solve = self.solve_fixture()
+        with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=solve):
+            self.assertEqual(self.invoke(cfg.source, '--stage', 'colmap'), 0)
+        record = self.read()
+        progress = record['progress']
+        self.assertEqual(progress['schema_version'], plant_catalog.PROGRESS_SCHEMA_VERSION)
+        self.assertIsNone(progress['failure'])
+        self.assertIsNone(progress['gpu'])  # no probe can run under the mocked subprocess
+        names = [m['name'] for m in progress['milestones']]
+        self.assertEqual(names, sorted(names, key=MILESTONES.index))
+        self.assertEqual(names, ['config_ok', 'prereqs_ok', 'colmap_done'])
+        [entry] = progress['artifacts']
+        self.assertEqual(entry['artifact_id'], record['output_artifact_ids'][0])
+        self.assertEqual(entry['role'], 'colmap-output')
+        artifact = json.loads((self.root / 'catalog/artifacts' / (entry['artifact_id'] + '.json')).read_text())
+        self.assertEqual(entry['relative_path'], artifact['location']['relative_path'])
+        self.assertIsNone(artifact['sha256'])  # hashing is off by default
+        workspace = self.root / entry['relative_path']
+        files = [p for p in workspace.rglob('*') if p.is_file()]
+        self.assertEqual(entry['file_count'], len(files))
+        self.assertEqual(entry['size_bytes'], sum(p.stat().st_size for p in files))
+        self.assertEqual(set(progress), {'schema_version', *plant_catalog.PROGRESS_FIELDS})
+
+    def test_sigterm_finalizes_as_terminated_and_restores_handler(self):
+        cfg, _ = self.solve_fixture()
+        before = signal.getsignal(signal.SIGTERM)
+        def killed(*args):
+            os.kill(os.getpid(), signal.SIGTERM)
+        with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=killed):
+            self.assertEqual(self.invoke(cfg.source, '--stage', 'colmap'), runner.EXIT_TERMINATED)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+        record = self.read()
+        self.assertEqual(record['execution_status'], 'cancelled')
+        self.assertEqual(record['exit_code'], 143)
+        self.assertIn('SIGTERM', record['error_summary'])
+        self.assertEqual(record['progress']['stages']['colmap']['status'], 'cancelled')
+        self.assertEqual(record['progress']['failure'],
+                         dict(cause='terminated', stage='colmap', after_milestone='prereqs_ok'))
+
+    def test_sigterm_handler_only_while_a_catalog_job_is_active(self):
+        cfg = make_config(self.root)
+        seen = []
+        def capture(*args):
+            seen.append(signal.getsignal(signal.SIGTERM))
+            return 0
+        with patch.object(runner, 'run_pipeline', side_effect=capture):
+            self.assertEqual(runner.main(['--config', str(cfg.source)]), 0)
+        self.assertIsNot(seen[0], runner._raise_terminated)
+        self.assertEqual(runner.EXIT_TERMINATED, 143)
+        self.assertEqual(plant_catalog.EXIT_CAUSES[runner.EXIT_TERMINATED], 'terminated')
+
+    def test_truncated_write_leaves_previous_record(self):
+        job = self.job()
+        job.milestone('config_ok')
+        before = self.read()
+        def partial(record, stream, **kwargs):
+            stream.write('{"schema_version": 1, "kind": "jo')
+            raise OSError('disk full')
+        with patch('plant_catalog.json.dump', side_effect=partial):
+            with self.assertRaises(OSError):
+                job.milestone('prereqs_ok')
+        self.assertEqual(self.read(), before)
+        self.assertEqual(list((self.root / 'catalog/jobs').glob('*.tmp')), [])
+
+    def test_ladder_refuses_unknown_names_and_ranks_furthest(self):
+        job = self.job()
+        before = self.read()
+        with self.assertRaises(ValueError):
+            job.milestone('nearly_done')
+        self.assertEqual(self.read(), before)
+        job.milestone('exported')
+        job.milestone('config_ok')
+        self.assertEqual(self.read()['progress']['furthest_milestone'], 'exported')
+
+    def test_old_records_read_with_explicit_schema_version(self):
+        legacy = dict(schema_version=1, kind='job', id='job-legacy')
+        version_one = dict(schema_version=1, kind='job', id='job-one', progress=dict(
+            schema_version=1, milestones=[dict(name='config_ok', verified_at='t')],
+            furthest_milestone='config_ok', active_stage='colmap', stages={}, resolved={}, dependencies={}))
+        view = read_progress(legacy)
+        self.assertEqual(view['schema_version'], 0)
+        self.assertTrue(all(view[field] is None for field in plant_catalog.PROGRESS_FIELDS))
+        view = read_progress(version_one)
+        self.assertEqual(view['schema_version'], 1)
+        self.assertEqual(view['furthest_milestone'], 'config_ok')
+        self.assertEqual(view['active_stage'], 'colmap')
+        self.assertIsNone(view['gpu'])
+        self.assertIsNone(view['artifacts'])
+        self.assertIsNone(view['failure'])
+        current = self.job().record
+        self.assertEqual(read_progress(current)['schema_version'], 2)
+        self.assertEqual(read_progress(current)['artifacts'], [])
+
+    def test_consumer_fixtures_keep_the_external_read_contract(self):
+        """The producer side of catalog-consumer-compat.cjs, without Mission Control."""
+        target = self.root / 'fixtures'
+        script = Path(__file__).resolve().parent / 'catalog_consumer_fixtures.py'
+        result = subprocess.run([sys.executable, str(script), str(target)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        jobs = {path.stem: json.loads(path.read_text()) for path in (target / 'catalog/jobs').glob('*.json')}
+        self.assertEqual(len(jobs), 3)
+        legacy = jobs.pop('job-legacy')
+        self.assertNotIn('progress', legacy)
+        completed = [job for job in jobs.values() if job['execution_status'] == 'completed']
+        failed = [job for job in jobs.values() if job['execution_status'] == 'failed']
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(completed[0]['progress']['furthest_milestone'], 'colmap_done')
+        self.assertIsNone(failed[0]['selected_images'])
+        self.assertIsNone(failed[0]['progress']['furthest_milestone'])
+        for job in (legacy, *jobs.values()):
+            # Catalog v1 fields stay as they were; schema 2 only adds inside progress.
+            self.assertEqual(job['schema_version'], 1)
+            self.assertEqual(set(legacy) - {'progress'}, set(job) - {'progress'})
+
+    def test_hash_flag_reaches_the_job(self):
+        cfg, solve = self.solve_fixture()
+        with patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=solve), \
+                patch.object(runner, 'CatalogJob', wraps=CatalogJob) as made:
+            self.assertEqual(self.invoke(cfg.source, '--stage', 'colmap', '--catalog-hash-artifacts'), 0)
+        self.assertIs(made.call_args.kwargs['hash_artifacts'], True)
+
+
+class ArtifactAndProbeTests(unittest.TestCase):
+    """Sizes, opt-in hashes and tool probes that degrade to None."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def job(self, **kwargs):
+        with patch('plant_catalog.git_value', return_value=None):
+            return CatalogJob(self.root, 'test-root', 'capture-a', self.root, title='test',
+                              job_type='reconstruction', command='test', config={}, **kwargs)
+
+    def test_hashing_is_opt_in_and_files_only(self):
+        output = self.root / 'out'
+        (output / 'nested').mkdir(parents=True)
+        (output / 'nested/a.bin').write_bytes(b'abc')
+        ply = self.root / 'export.ply'
+        ply.write_bytes(b'ply data')
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                job = self.job(hash_artifacts=enabled)
+                job.artifact(ply, role='point-cloud')
+                job.artifact(output, role='train-output')
+                file_entry, folder_entry = job.record['progress']['artifacts']
+                self.assertEqual((file_entry['size_bytes'], file_entry['file_count']), (8, None))
+                self.assertEqual((folder_entry['size_bytes'], folder_entry['file_count']), (3, 1))
+                hashes = [json.loads((self.root / 'catalog/artifacts' / (entry['artifact_id'] + '.json')).read_text())['sha256']
+                          for entry in (file_entry, folder_entry)]
+                self.assertEqual(hashes, [hashlib.sha256(b'ply data').hexdigest() if enabled else None, None])
+
+    def test_unreadable_artifact_size_is_unknown(self):
+        self.assertEqual(plant_catalog.measure(self.root / 'absent'), (None, None))
+
+    def test_dependency_probes_degrade_to_unknown(self):
+        job = self.job()
+        for failure in (FileNotFoundError(), subprocess.TimeoutExpired('colmap', 10), PermissionError()):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch('plant_catalog.importlib.metadata.version', side_effect=RuntimeError('broken metadata')), \
+                    patch('plant_catalog.subprocess.run', side_effect=failure):
+                job.dependencies()
+                versions = job.record['progress']['dependencies']
+                self.assertTrue(versions['python'])
+                for name in ('nerfstudio', 'gsplat', 'torch', 'colmap', 'ffmpeg'):
+                    self.assertIsNone(versions[name], name)
+
+    def test_colmap_banner_version_when_version_flag_is_rejected(self):
+        banner = 'COLMAP 3.12.0 (Commit abc123 on 2025-01-01 without CUDA)\n\nUsage:\n  colmap [command]\n'
+        replies = [subprocess.CompletedProcess(['colmap', '--version'], 1, '', 'unrecognised option'),
+                   subprocess.CompletedProcess(['colmap'], 0, banner, '')]
+        with patch('plant_catalog.subprocess.run', side_effect=replies):
+            self.assertEqual(plant_catalog.colmap_version(),
+                             'COLMAP 3.12.0 (Commit abc123 on 2025-01-01 without CUDA)')
+        with patch('plant_catalog.subprocess.run',
+                   return_value=subprocess.CompletedProcess(['ffmpeg'], 1, '', 'error')):
+            self.assertIsNone(plant_catalog.ffmpeg_version())
+
+    def test_gpu_inventory_without_nvidia_smi_is_unknown(self):
+        with patch('plant_catalog.shutil.which', return_value=None), \
+                patch.object(plant_catalog, '_NVIDIA_SMI_WSL', self.root / 'absent'):
+            self.assertIsNone(plant_catalog.gpu_inventory())
+
+    def test_gpu_inventory_parses_devices_and_falls_back(self):
+        full = subprocess.CompletedProcess([], 0, 'NVIDIA GeForce RTX 3080, 8.6, 10240, 555.42\n', '')
+        rejected = subprocess.CompletedProcess([], 6, '', 'Field "compute_cap" is not a valid field')
+        older = subprocess.CompletedProcess([], 0, 'Tesla T4, [N/A], 470.1\n', '')
+        with patch('plant_catalog.shutil.which', return_value='/usr/bin/nvidia-smi'), \
+                patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': '0'}):
+            with patch('plant_catalog.subprocess.run', return_value=full):
+                self.assertEqual(plant_catalog.gpu_inventory(), dict(cuda_visible_devices='0', devices=[dict(
+                    name='NVIDIA GeForce RTX 3080', compute_capability='8.6',
+                    memory_total_mib=10240, driver_version='555.42')]))
+            with patch('plant_catalog.subprocess.run', side_effect=[rejected, older]):
+                self.assertEqual(plant_catalog.gpu_inventory()['devices'], [dict(
+                    name='Tesla T4', compute_capability=None, memory_total_mib=None, driver_version='470.1')])
+            with patch('plant_catalog.subprocess.run', return_value=rejected):
+                self.assertIsNone(plant_catalog.gpu_inventory())
+
+    def test_gpu_probe_error_is_recorded_as_unknown(self):
+        job = self.job()
+        with patch('plant_catalog.gpu_inventory', side_effect=RuntimeError('driver crashed')):
+            job.gpu()
+        self.assertIsNone(job.record['progress']['gpu'])
