@@ -52,7 +52,10 @@ On WSL2, open the address in the Windows browser; WSL forwards `127.0.0.1`.
 5. **Save.** Writes the configs into the configs directory. An existing file
    is never overwritten.
 6. **Run the commands** in the order shown: the samask commands (when masks
-   are generated), the dry runs, then the real runs.
+   are generated), the dry runs, then the real runs. The box left of each
+   Copy button ticks itself when you copy, so you can see what you have
+   already pasted. With one config per mask set, each real run is a separate
+   reconstruction: run only the ones you want.
 
 ## What it does
 

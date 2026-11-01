@@ -63,6 +63,8 @@ pre { background: var(--code-bg); border: 1px solid var(--border); border-radius
 .step .title { font-weight: 600; }
 .step .what { color: var(--muted); }
 .step .head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.copy-group { display: inline-flex; align-items: center; gap: 6px; }
+.copy-group input[type=checkbox] { width: 1.1rem; height: 1.1rem; margin: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .chip { background: var(--chip); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
   font-size: 0.85rem; cursor: pointer; color: var(--fg); }
@@ -981,6 +983,7 @@ globalThis.RunBuilder = (function () {
       }
       var dryArgv = argv.concat(["--dry-run"]);
       dry.push({ kind: "dry-run", title: "Dry run" + label, what: what, argv: dryArgv, command: render(dryArgv), config: config.name });
+      if (configs.length > 1) whatRun += " This is one of " + configs.length + " separate reconstructions, one per config: run only the ones you want.";
       real.push({ kind: "run", title: "Run" + label, what: whatRun, argv: argv, command: render(argv), config: config.name });
     });
     return dry.concat(real);
@@ -1248,10 +1251,13 @@ globalThis.RunBuilder = (function () {
       ? "Writes " + names.map(function (n) { return "masks_" + n + "/"; }).join(", ") + ", one directory per prompt; they are never merged." : "";
   }
 
-  function copyButton(text) {
+  function copyButton(text, onCopied) {
     var b = el("button", { type: "button", class: "secondary" }, "Copy");
     b.addEventListener("click", function () {
-      function done() { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200); }
+      function done() {
+        b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200);
+        if (onCopied) onCopied();
+      }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done, function () { fallback(text); done(); });
       } else { fallback(text); done(); }
@@ -1262,6 +1268,20 @@ globalThis.RunBuilder = (function () {
     var t = el("textarea"); t.value = text; document.body.appendChild(t); t.select();
     try { document.execCommand("copy"); } catch (e) { /* ignore */ }
     t.remove();
+  }
+  // Texts copied this session. A changed command is new text, so its mark starts clear.
+  var copied = {};
+  function copyWithMark(text) {
+    var group = el("span", { class: "copy-group" });
+    var mark = el("input", { type: "checkbox", title: "Copied (tick or untick by hand)",
+                             "aria-label": "Copied" });
+    mark.checked = !!copied[text];
+    mark.addEventListener("change", function () {
+      if (mark.checked) copied[text] = true; else delete copied[text];
+    });
+    group.appendChild(mark);
+    group.appendChild(copyButton(text, function () { copied[text] = true; mark.checked = true; }));
+    return group;
   }
   function downloadButton(name, text) {
     var b = el("button", { type: "button", class: "secondary" }, "Download");
@@ -1302,7 +1322,7 @@ globalThis.RunBuilder = (function () {
       var step = el("div", { class: "step" });
       var head = el("div", { class: "head" });
       head.appendChild(el("span", { class: "title" }, c.name));
-      var buttons = el("span"); buttons.appendChild(copyButton(c.text)); buttons.appendChild(downloadButton(c.name, c.text));
+      var buttons = el("span", { class: "copy-group" }); buttons.appendChild(copyWithMark(c.text)); buttons.appendChild(downloadButton(c.name, c.text));
       head.appendChild(buttons);
       step.appendChild(head);
       step.appendChild(el("pre", {}, c.text));
@@ -1313,7 +1333,7 @@ globalThis.RunBuilder = (function () {
       var step = el("div", { class: "step" });
       var head = el("div", { class: "head" });
       head.appendChild(el("span", { class: "title" }, (i + 1) + ". " + s.title));
-      if (s.command) head.appendChild(copyButton(s.command));
+      if (s.command) head.appendChild(copyWithMark(s.command));
       step.appendChild(head);
       step.appendChild(el("div", { class: "what" }, s.what));
       if (s.command) step.appendChild(el("pre", {}, s.command));

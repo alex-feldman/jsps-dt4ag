@@ -359,6 +359,19 @@ class TestGeneratedConfigs(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(run_collection.main(args), 0, out.getvalue())
 
+    def test_each_run_step_says_it_is_a_separate_reconstruction(self):
+        self.tree.capture("scene-01/capture-a")
+        both = plan(self.tree.state(capture="scene-01/capture-a",
+                                    masks={"mode": "generate", "prompts": ["plant", "leaf"],
+                                           "configFor": "each"}))
+        runs = [s for s in both["steps"] if s["kind"] == "run"]
+        self.assertEqual(len(runs), 2)
+        for step in runs:
+            self.assertIn("one of 2 separate reconstructions", step["what"])
+        one = plan(self.tree.state(capture="scene-01/capture-a"))
+        [run] = [s for s in one["steps"] if s["kind"] == "run"]
+        self.assertNotIn("separate reconstructions", run["what"])
+
     def test_single_capture_dry_run_succeeds(self):
         self.tree.capture("scene-01/capture-a")
         p = plan(self.tree.state(capture="scene-01/capture-a"))
