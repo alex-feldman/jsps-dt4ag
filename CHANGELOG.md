@@ -171,6 +171,9 @@ Dates are the tag date, not the commit date, where they differ.
 
 - The run builder's example mask prompts are `plant` and `leaf`, the variants
   used for stem extraction (plant minus leaf).
+- The run builder marks each copied command with a checkbox beside its Copy
+  button, and says on each real run that it is one of several separate
+  reconstructions when there is more than one config.
 
 - Default exports now include the 15,000-step checkpoint and the final checkpoint
   in a standard 30,000-step run. DEFAULT_CHECKPOINT_INTERVAL in
