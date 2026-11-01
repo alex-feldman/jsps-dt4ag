@@ -168,7 +168,8 @@ your capture:
 ```text
 Prepare a dry run for the capture at {data_root}/datasets/{capture}/images with
 10,000 iterations and no masks. Follow AGENTS.md. Copy
-pipeline/configs/example.ini to {data_root}/configs/{capture}.ini and set only
+pipeline/configs/example.ini to {data_root}/configs/{capture}.ini (or run
+pipeline/copy_config.py with --destination-dir, --name and --set) and set only
 data_root, images_subpath, max_num_iterations = 10000,
 quit_on_train_completion = true and use_masks = false. Validate it with
 uv run python pipeline/dt4ag_config.py {data_root}/configs/{capture}.ini, then run

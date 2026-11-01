@@ -18,6 +18,12 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- `pipeline/copy_config.py`, a helper that copies `configs/example.ini` (or
+  `--source`) to a new run config. `--destination-dir` picks the folder,
+  `--name` or `--name-prefix` picks the file name, and repeated
+  `--set SECTION.KEY=VALUE` changes keys that already exist while keeping
+  comments. It never overwrites a file or edits the source, and rejects a
+  malformed or unknown `--set`. Covered by `tests/test_copy_config.py`.
 - `pipeline/scripts/run-builder/`, a run builder: a local page that asks for
   the data root, one capture or a collection (or a video, through the existing
   `video-frames` commands), masks (none, an existing set, or new sets from samask
