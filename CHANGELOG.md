@@ -18,6 +18,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- A test fails when any tracked `.ipynb` has stored cell outputs or a
+  non-null execution count, naming the file and cell and pointing to
+  `nbstripout`. The notebook was already committed clean; this keeps it so.
+
 - Add a programmatic camera-path generator that sorts solved video-frame poses
   chronologically, smooths and resamples the route, adds a small end reveal, and
   records source-hash provenance; document terminal rendering from the generated

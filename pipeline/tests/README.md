@@ -88,6 +88,12 @@ only the guard's own process group (exit 75), and an in-run cache release. The
 Windows side is a fake and sudo is never called, so it needs neither WSL nor
 Windows.
 
+`test_notebook_outputs.py` fails if any notebook listed by `git ls-files` has
+stored cell outputs or a non-null execution count, and names the file and cell
+and the `nbstripout` command that fixes it. The check is a pure function over
+a parsed notebook, tested on in-memory dirty and clean notebooks; the
+repository test is skipped outside a git checkout.
+
 Every test is hermetic. Each one builds its own data tree in a
 `tempfile.TemporaryDirectory` and throws it away afterwards.
 

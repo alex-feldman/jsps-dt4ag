@@ -136,7 +136,10 @@ earlier one.
 
 **Commit the notebook with its cell outputs cleared.** Executed cells store
 real dataset paths inside the `.ipynb`; `tests/test_dt4ag_config.py` fails the
-build if subject-specific terms reach the committed copy.
+build if subject-specific terms reach the committed copy. `tests/test_notebook_outputs.py` also fails the build if any
+tracked `.ipynb` has stored outputs or an execution count. To clear them, run
+`nbstripout NOTEBOOK` (`pip install nbstripout`, optional) or
+`jupyter nbconvert --clear-output --inplace NOTEBOOK`.
 
 ## Settings for a test run
 
