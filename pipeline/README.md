@@ -44,6 +44,8 @@ unversioned on a removable drive.
 | `scripts/camera-path/` | Builds a stabilized, programmatic Nerfstudio camera path from solved frame poses, with a small reveal move and provenance sidecar; see its README for the render command. |
 | `RUN-FLOW.md` | The runner's control flow and every point at which it refuses to continue. For debugging a failed run or extending the runner. |
 | `LAYOUT.md` | The directory structure the pipeline expects: what a capture is, the `images/` discovery rule, and the input-versus-derived split. |
+| `COORDINATE-FRAMES.md` | Which coordinate frame the COLMAP model, `transforms.json` and the export are in, how a camera pose maps into the export's frame, and how frame names map to photographs. Read before projecting an export into the photographs. |
+| `AGENT-OPERATION.md` | Driving the pipeline with an AI agent (OpenCode) on a local model (Ollama): install, model context, data-folder permissions, and a first dry-run request. |
 | `MASKING.md` | Why a separate mask file and a premade alpha image produce very different reconstructions (76x difference in gaussian count), which mode to use when, and the fix. |
 | `run_collection.py` | Runs every capture beneath a collection, one at a time, from one base config, and skips captures whose catalog record proves they completed. `--dry-run` lists the plan. See `SEQUENTIAL-RUNS.md`. |
 | `SEQUENTIAL-RUNS.md` | Collection runs with `run_collection.py`: discovery, per-capture configs, when a capture counts as completed, the conservative choices still open, and the gaps that remain. |

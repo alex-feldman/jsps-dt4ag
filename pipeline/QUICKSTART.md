@@ -126,6 +126,25 @@ the classic WSL mistake:
    wsl --install Ubuntu-24.04 --location D:\wsl\ubuntu-24.04 --name Ubuntu-24.04 --no-launch
    ```
 
+   **Then watch free space on that Windows drive, not inside WSL.** The distro
+   lives in one virtual disk file, `ext4.vhdx`, which grows as you write and by
+   default does not shrink when you delete files inside WSL. `df` inside WSL
+   reports the virtual disk's ceiling, not what the Windows drive has left. If
+   the drive fills during a run, the stage dies with no message, and WSL may
+   then refuse to start (`Wsl/Service/CreateInstance/E_FAIL`) or `bash` fails
+   with an I/O error. Before a run, check the drive in PowerShell against the
+   run's expected outputs (a finished install plus one 120-image capture measured
+   23 GB of `ext4.vhdx`, see "COLMAP's GPU matcher on WSL2" below) plus any swap
+   growth:
+
+   ```powershell
+   "{0:N1} GB free" -f ((Get-PSDrive D).Free/1GB)
+   ```
+
+   During a run, `wsl-guard.py --drive D` watches it and stops the run before
+   the drive is full (see "The backstop: the guard" below). If WSL will not
+   start, check that drive first.
+
 4. **Limit COLMAP's threads before the first run; you do not need to raise
    WSL's memory cap.** **WSL2 gives the guest 50 percent of host RAM by
    default**: 8 GB on a 16 GB machine. The whole pipeline fits in that, but only
@@ -263,6 +282,28 @@ photographs plus a few GiB for everything else, and stay below the core count.
 
 Changing `--quality` would also move extraction to the GPU, but it changes the
 features themselves. Treat that as a separate experiment, not a memory setting.
+
+### Which COLMAP options `extra_args` accepts
+
+`[colmap] extra_args` is appended verbatim to one `colmap
+automatic_reconstructor` command (`colmap_command` in `run_pipeline.py`), and
+the installed COLMAP is 3.12.0. Two consequences:
+
+- **Use 3.12.0's option names, not the website's.** COLMAP's online
+  documentation follows the newest release, whose names (such as
+  `--FeatureExtraction.use_gpu`) do not exist in 3.12.0. Check what your binary
+  accepts with `colmap automatic_reconstructor -h`.
+- **`automatic_reconstructor` takes only its own coarse options**, among them
+  `--quality`, `--camera_model`, `--num_threads`, `--use_gpu` and `--gpu_index`.
+  It rejects the per-step options that `colmap feature_extractor -h` lists, for
+  example `--SiftExtraction.use_gpu` ("unrecognised option"). Per-step control
+  needs separate `feature_extractor`, matcher and `mapper` commands, which the
+  pipeline does not run.
+
+`--use_gpu 0` is the CPU fallback for COLMAP's extraction and matching.
+`--gpu_index` only chooses which CUDA device COLMAP uses. Neither changes
+training or export, which always need a supported CUDA GPU (section 1).
+Checked 2026-11-01 against COLMAP 3.12.0's `-h` output.
 
 ### Memory: WSL can empty Windows' RAM
 
@@ -719,6 +760,20 @@ It bites when a command uses whatever `python` is first on `PATH`, for example
 `$(which python)`. If you activate the venv instead (`source .venv/bin/activate`),
 do it after the `export`, so the venv comes first.
 
+**A git worktree has no `.venv` of its own.** `.venv` is untracked, so a second
+checkout made with `git worktree add` starts without one, and `uv run` there
+builds a new environment of about 7.4 GB. To run the pipeline or the tests from
+a worktree, use the main checkout's interpreter with that venv's `bin/` first on
+`PATH`:
+
+```bash
+export PATH="{main checkout}/.venv/bin:$HOME/opt/colmap-prefix/bin:$HOME/.local/bin:$PATH"
+{main checkout}/.venv/bin/python pipeline/run_pipeline.py --config my-run.ini --dry-run
+```
+
+This is only safe while the worktree's `pyproject.toml` and `uv.lock` match the
+main checkout's. A branch that changes dependencies needs its own `uv sync`.
+
 Do **not** fetch micromamba from `micro.mamba.pm`: that endpoint serves a
 `.tar.bz2`, and a minimal Ubuntu image has no `bzip2`, so `tar` fails. The
 GitHub URL above is the bare binary.
@@ -951,6 +1006,43 @@ So, for a capture that will actually reconstruct:
    textured subjects such as plants are the easy case, which is what this
    pipeline was built for.
 
+**One image shape per camera.** The default `[colmap] single_camera = 1` and
+`single_camera_per_folder = 1` give every image directory one shared camera.
+If the images in one directory do not all have the same pixel dimensions,
+COLMAP rejects them with `CAMERA_SINGLE_DIM_ERROR: Single camera specified, but
+images have different dimensions`. Mixed shapes usually mean a phone stored
+some photographs rotated: a few landscape files among portrait ones, or the
+other way round. Check before masking, because masks inherit the shape. List
+each file's stored size and EXIF orientation tag (1 means upright as stored):
+
+```bash
+uv run python - /path/to/capture/images <<'EOF'
+import sys
+from pathlib import Path
+from PIL import Image
+for p in sorted(Path(sys.argv[1]).iterdir()):
+    if p.suffix.lower() in {".jpg", ".jpeg", ".png"}:
+        with Image.open(p) as im:
+            print(p.name, im.size, im.getexif().get(274, 1))
+EOF
+```
+
+(`file *.jpg` also prints each JPEG's size and orientation.) To fix it, keep the
+originals in a sibling directory outside `images/`, then make the working copies
+upright in pixels:
+
+- **When the EXIF tag describes the intended rotation**, apply Pillow's
+  `ImageOps.exif_transpose` to each working copy and save it with orientation 1.
+- **When there is no reliable tag**, rotate the pixels of the odd images, not
+  the tag, and reset the tag to 1. Choose the direction by looking at one rotated
+  image beside one reference image.
+
+Then list the sizes again and look at a contact sheet of the set to confirm
+every image is upright. Normalize to the orientation the capture actually has;
+do not rotate a whole set only to match an older capture. Splitting the shapes
+into separate subdirectories also works, but gives each shape its own camera,
+which is worse for a handheld set from one phone.
+
 Lens distortion, camera models and how to spot a bad camera solve:
 [`CAMERA-PROFILES.md`](CAMERA-PROFILES.md).
 
@@ -1021,6 +1113,23 @@ input images and prints every command it would execute, in about a second:
 uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini --dry-run
 ```
 
+**A dry run leaves no record.** It writes no `run-log.csv` row and no archived
+config (`run_pipeline()` skips both while `dry_run` is set), and no catalog
+record. It also skips the prerequisite and host-limit checks, does not composite
+masks, and does not count training views, so it cannot show that a real run
+will pass those gates. Its output exists only on the terminal. To keep it, for
+example to review it later or attach it to a question, capture both streams:
+
+```bash
+set -o pipefail
+uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini --dry-run 2>&1 | tee dry-run.log
+```
+
+`pipefail` keeps the dry run's own exit status, which `tee` would otherwise
+replace. A real run also prints only to the terminal unless catalog emission is
+on ([CATALOG-RECORDS.md](CATALOG-RECORDS.md)); capture it the same way, or run
+it under `wsl-guard.py`, which writes a log.
+
 Useful flags:
 
 ```bash
@@ -1047,6 +1156,34 @@ so runs never overwrite each other:
 ```
 
 Change `[run] id_prefix` to keep a set of runs separate from another set.
+
+**What a finished run leaves on disk**, checked 2026-11-01 against
+`run_pipeline.py` and real run directories:
+
+- **The COLMAP workspace**, `colmap/.../{run-id}/`: COLMAP's `database.db` and
+  sparse model (`sparse/0/`), then what `ns-process-data` adds: `images/` holding
+  copies of the photographs renamed `frame_00001` onward in sorted path order,
+  the downscaled pyramid (`images_2/`, `images_4/`, `images_8/`),
+  `transforms.json` and `sparse_pc.ply`.
+- **The training run**, `outputs/.../{run-id}/splatfacto/{timestamp}/`:
+  nerfstudio's `config.yml`, `dataparser_transforms.json`, the checkpoints in
+  `nerfstudio_models/`, and one `config-step-{step}.yml` per earlier checkpoint
+  the export stage exported (see "Several step counts from one run").
+- **The exports** in `{exports_dirname}/`, one `run-log.csv` row, and the
+  frozen config in `configs/runs/` (the config plus resolved paths and the
+  pipeline's git commit; `configs/README.md`, "Archive your configs").
+- **For a masked run**, the composites in `derived/masked/...`, reused by later
+  runs of the same capture and mask variant, and safe to delete (`LAYOUT.md`).
+
+One temporary tree is removed. When `image_extensions` or `mask_extensions` is
+set and `use_masks` is false, the runner stages the photographs into a sibling
+`{run-id}_sfm-input/` beside the workspace (`sfm_input_path`,
+`stage_sfm_inputs`) and deletes it after a successful process stage. A run that
+stops before then, or an invocation that runs only `--stage colmap`, leaves it
+behind; it is safe to delete, and `--from-stage process` rebuilds it.
+
+**No quality metric is logged** with the default `[train] vis = viewer`:
+training computes none. Use `ns-eval` (section 6).
 
 ### Several step counts from one run
 
@@ -1117,6 +1254,28 @@ generalization; never compare it with a held-out score. With 24 photographs the
 default is 22 train and 2 evaluate, so the standard
 deviation is large and a 0.5 dB difference between two checkpoints is noise.
 Read the LPIPS and SSIM trend and the plateau, not the third digit of PSNR.
+
+**Comparing all-images and held-out training on one capture.** Train both on
+the same COLMAP workspace, so they share camera poses: COLMAP is not
+bit-reproducible, so a second solve would make the two runs incomparable. Run
+the first pass with `[train] eval_mode = all`, then set the held-out value
+(for example `eval_mode = fraction`) and train again on the first run's
+workspace:
+
+```bash
+uv run python pipeline/run_pipeline.py --config pipeline/configs/my-run.ini \
+    --from-stage train --run-id {the first run's id}
+```
+
+COLMAP and `ns-process-data` are not repeated. Each pass gets its own
+timestamped nerfstudio run directory, its own `run-log.csv` row and its own
+archived config, and its exports carry its own eval token. Confirm the split from
+the train stage's log line, not from the config:
+
+```
+training set      : evalall: 24 train, 0 held out of 24 (every photograph trains; ns-eval then scores fit, not generalization)
+training set      : evalfrac90: 22 train, 2 held out of 24
+```
 
 A run that trains with the viewer only (`quit_on_train_completion`, as the
 pipeline does by default) computes NO metrics during training; `ns-eval` is the
@@ -1205,6 +1364,23 @@ Measured stage by stage on a clean `ubuntu:24.04` container, 2026-08-11, same
 10m21s, `ns-export` 10s. A second clean run on 2026-08-13 through
 `scripts/install.sh` agreed: 6m00s, 3m00s, 10m42s, 10s.
 
+**A different capture on a laptop GPU.** Measured 2026-10-05 on an RTX 4050
+Laptop (6 GB) under WSL2, with 24 unmasked photographs at 4096x3072 trained at
+4x downscale (nerfstudio's automatic choice). These numbers are not comparable
+row by row with the table above: fewer, smaller images, a lower training
+resolution and 10,000 steps rather than 30,000.
+
+| Stage | Time |
+|---|---|
+| COLMAP | 1m57s |
+| `ns-process-data` | 15 s |
+| `ns-train` @ 10,000 | 5m15s |
+| `ns-export` | 18 s |
+
+The whole run took 7m46s and exported about 294,000 gaussians. A 20,000-step
+run of the same capture took about 13 minutes while other GPU work overlapped
+it.
+
 **Budget separately, and generously, for `uv sync --frozen` the first time.**
 249 packages and 7.4 GB. It has taken **4 hours 43 minutes** on a link where
 `files.pythonhosted.org` throttled to 150-425 KB/s while
@@ -1244,7 +1420,8 @@ source movie
 ```
 
 Mask compositing was manual until v0.2.0 and is now automatic. Set
-`[dataset] use_masks = true`, put the masks in `{capture}/masks/` mirroring
+`[dataset] use_masks = true` and `mask_extensions` to your masks' extension
+(the config is refused if it is empty), put the masks in `{capture}/masks/` mirroring
 `{capture}/images/`, and the runner composites them, reusing an existing
 complete set rather than rebuilding it. See `LAYOUT.md` for the directory rule
 and `MASKING.md` for why alpha compositing rather than a mask file.
@@ -1422,6 +1599,21 @@ export CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 CUDAHOSTCXX=/usr/bin/g++-10
 level even when nothing is compiled, and that needs `setuptools`. It is an
 explicit dependency in `pyproject.toml` for this reason. If you see this, you
 built a venv by hand rather than with `uv sync --frozen`.
+
+**On WSL2: `Failed to initialize NVML`, `torch is installed but reports no CUDA device`, or COLMAP's `CUDA driver version is insufficient for CUDA runtime version`, while Windows still lists the GPU**
+WSL has lost the GPU. COLMAP's message is the misleading one: it can appear
+after minutes of CPU feature extraction, and the driver is not too old. Check
+inside WSL, not on Windows, before any GPU job:
+
+```bash
+nvidia-smi -L        # or /usr/lib/wsl/lib/nvidia-smi -L if it is not on PATH
+```
+
+A laptop power mode that switches the discrete GPU off (an "eco" or hybrid
+graphics mode in the vendor's control utility) causes it; switch to a mode that
+keeps the GPU on and check again, which needed no WSL restart when this was
+seen (2026-10-20). After a Windows driver update or sleep, stop other WSL work
+and run `wsl --shutdown` in PowerShell, then start the distro again.
 
 **Training starts and never finishes, with no output**
 `[train] quit_on_train_completion = false` leaves the viewer running forever. The

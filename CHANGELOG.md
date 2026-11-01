@@ -142,6 +142,24 @@ Dates are the tag date, not the commit date, where they differ.
   artifacts. `plant_catalog.read_progress` reads older jobs with absent fields
   as null. See `pipeline/CATALOG-RECORDS.md`.
 
+- User instructions that existed only outside the repository are now in it, each
+  checked against the code. New `pipeline/AGENT-OPERATION.md`: driving the
+  pipeline with OpenCode on a local Ollama model, with no hosted-model
+  subscription (model context, data-folder permissions, a first dry-run
+  request); linked from `README.md` and `AGENTS.md`. New
+  `pipeline/COORDINATE-FRAMES.md`: which frame the COLMAP model,
+  `transforms.json` and the export are in, and how to project an export back
+  into the photographs. `QUICKSTART.md` adds: watching free space on the Windows
+  drive that holds WSL; one image shape per camera (`CAMERA_SINGLE_DIM_ERROR`)
+  and how to normalize rotated photographs; which COLMAP 3.12.0 options
+  `extra_args` accepts; that a dry run leaves no record and how to save its
+  output; what a finished run leaves on disk; training all-images and held-out
+  passes on one camera solve; using the main checkout's venv from a git
+  worktree; the GPU lost inside WSL (Troubleshooting); and timings for a
+  24-photograph capture on an RTX 4050 Laptop. `configs/README.md` says
+  `mask_extensions` is required with `use_masks = true` and lists the
+  `run-log.csv` columns and how an older log is widened.
+
 ### Fixed
 
 - A run log whose tail a crash left as NUL bytes no longer stops every later
