@@ -868,6 +868,9 @@ Everything the pipeline needs lives in one INI file. Nothing is hardcoded.
 cp pipeline/configs/example.ini pipeline/configs/my-run.ini
 ```
 
+`python pipeline/copy_config.py --name my-run.ini --set paths.data_root=/path/to/your/data`
+does the same copy and can set keys on the way (see `configs/README.md`).
+
 Or let a page write it: `pipeline/scripts/run-builder/` asks for the capture,
 the masks and the settings, and prints the config with the dry-run and run
 commands (see its README). The keys below are what it fills in.
