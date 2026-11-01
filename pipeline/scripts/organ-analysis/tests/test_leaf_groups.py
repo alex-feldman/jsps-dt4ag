@@ -40,7 +40,7 @@ class LeafGroupViewerTests(unittest.TestCase):
         self.groups = {
             'schema': 'organ-leaf-groups', 'schema_version': 1, 'capture_id': 'tiny-plant',
             'source_labels': {'path': str(self.labels), 'sha256': hashlib.sha256(self.labels.read_bytes()).hexdigest()},
-            'reviewer': 'Alex', 'date': '2026-10-19', 'status': 'accepted',
+            'reviewer': 'Reviewer', 'date': '2026-10-19', 'status': 'accepted',
             'groups': [{'id': 'G1', 'kind': 'same_leaf', 'members': [4, 17]},
                        {'id': 'G2', 'kind': 'side_branch_pair', 'members': [13, 15]}]}
 
@@ -74,7 +74,7 @@ class LeafGroupViewerTests(unittest.TestCase):
             self.assertIn(site, text)
         self.assertNotRegex(text, r'colors\[(p\[3\]|item\.id|leaf\.id|l\.leaf_id)%colors\.length\]')
         self.assertIn('id="leafGroups"', text)
-        self.assertEqual(data['leafGroups']['reviewer'], 'Alex')
+        self.assertEqual(data['leafGroups']['reviewer'], 'Reviewer')
 
     def test_unknown_cluster_rejected(self):
         bad = copy.deepcopy(self.groups)
