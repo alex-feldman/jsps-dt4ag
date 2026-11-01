@@ -173,6 +173,14 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Changed
 
+- QUICKSTART: on WSL2, limit COLMAP's threads (`--num_threads 4` in
+  `[colmap] extra_args`) instead of raising the WSL memory cap. COLMAP's
+  feature extraction needs about 1 GiB per thread on 18 MP photographs; at its
+  default of one thread per core, the worst capture overflowed an 8 GiB VM in
+  16 seconds, and with 4 threads it peaked at 3.7 GiB (new section "COLMAP
+  threads and memory"). The old `memory=22GB` recipe is withdrawn. Also new:
+  "Windows' commit limit: the other way WSL dies". VIDEO-WORKFLOW's thread
+  advice now matches.
 - The run builder's example mask prompts are `plant` and `leaf`, the variants
   used for stem extraction (plant minus leaf).
 - The run builder marks each copied command with a checkbox beside its Copy

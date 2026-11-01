@@ -240,15 +240,26 @@ Windows machine):
 | `--num_threads` | Program memory, peak | Swap | Result | COLMAP time |
 |---|---|---|---|---|
 | default (24) | over 8 GiB within 16 s | 1.5 GiB and climbing | did not fit (stopped) | n/a |
-| 8 | {pending-8-mem} | {pending-8-swap} | {pending-8-result} | {pending-8-time} |
+| 8 | 6.0 GiB after 22 s and still rising | none yet | not finished, see below | n/a |
 | 4 | 3.7 GiB | none | fits | 9m24s |
-| 2 | {pending-2-mem} | {pending-2-swap} | {pending-2-result} | {pending-2-time} |
+| 2 | 1.7 GiB | none | fits | 14m02s |
 
 "Program memory" is the scope's anonymous memory (`scope_anon_max_mib` in the
 guard's status file). The file cache fills the rest of the limit and is
-evicted, so it is not counted.
+evicted, so it is not counted. The 8-thread run was stopped by `wsl-guard.py`
+because Windows itself ran out of RAM, not because it hit the 8 GiB limit, so
+its row is a lower bound.
 
-{pending-recommendation}
+**The cost is close to linear: about 1 GiB per thread for 18 MP photographs,
+with almost nothing fixed.** It scales with the photograph's pixel count, so
+12 MP photographs need roughly two thirds of that. By that rate, 8 threads
+would need about 8 GiB, which leaves no room in an 8 GiB VM.
+
+**Use `--num_threads 4` on a machine with 16 GB of RAM.** It fits the worst
+capture measured with about 4 GiB to spare. Halving it to 2 saves another
+2 GiB but made the camera solve about half again as slow. On a machine with
+more memory available to Linux, allow about 1 GiB per thread for 18 MP
+photographs plus a few GiB for everything else, and stay below the core count.
 
 Changing `--quality` would also move extraction to the GPU, but it changes the
 features themselves. Treat that as a separate experiment, not a memory setting.
