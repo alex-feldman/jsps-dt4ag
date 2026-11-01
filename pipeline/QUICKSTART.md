@@ -1071,7 +1071,9 @@ assuming zero.)
 **Have the pipeline export them: set `[export] checkpoint_interval = 2500`.** The
 export stage then writes one PLY for every checkpoint whose step is a multiple of
 that number, plus the final one, each named `{x}steps_from{y}run` and carrying the
-eval-mode token. `0` (the default) exports the final checkpoint only. It must be a
+eval-mode token. The default is `15000` (`DEFAULT_CHECKPOINT_INTERVAL` in
+`pipeline/dt4ag_config.py`), which exports step 15,000 and the final step of a
+30,000-step run. `0` exports the final checkpoint only. It must be a
 multiple of `steps_per_save`. Exporting takes about 20 seconds per checkpoint.
 
 To export a single earlier step by hand instead, point a copy of the run's
