@@ -167,6 +167,29 @@ class TestDecisions(unittest.TestCase):
         self.assertEqual(len(wg.start_problems({"ram_mib": 5000, "drive_gib": 11.9}, args)), 1)
         self.assertEqual(len(wg.start_problems({"ram_mib": 10, "drive_gib": 1}, args)), 2)
 
+    def test_start_and_stop_on_commit_headroom(self):
+        args = args_for()
+        self.assertEqual(wg.start_problems({"ram_mib": 5000, "commit_mib": 8192}, args), [])
+        [problem] = wg.start_problems({"ram_mib": 5000, "commit_mib": 7000}, args)
+        self.assertIn("commit headroom", problem)
+        self.assertEqual(wg.poll_action({"ram_mib": 9000, "commit_mib": 2047}, args, 0, None), "stop")
+        self.assertIsNone(wg.poll_action({"ram_mib": 9000, "commit_mib": 2048}, args, 0, None))
+        # A probe without the commit figure (older output) is not a trip.
+        self.assertEqual(wg.start_problems({"ram_mib": 5000}, args), [])
+
+    def test_commit_thresholds_are_validated(self):
+        for argv in (["--stop-commit-mib", "9000"], ["--start-commit-mib", "-1"]):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    wg.parse_args(argv)
+                self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(wg.validate_args(args_for()), [])
+
+    def test_probe_reads_commit_headroom(self):
+        self.assertEqual(wg.parse_probe('{"ram_mib":6512,"commit_mib":7100}', None),
+                         {"ram_mib": 6512, "commit_mib": 7100})
+        self.assertIn("FreeVirtualMemory", wg.probe_script(None))
+
     def test_disk_is_ignored_without_a_drive(self):
         self.assertEqual(wg.start_problems({"ram_mib": 5000}, args_for()), [])
 

@@ -39,7 +39,11 @@ stops it if something else (another program, another WSL job) eats the headroom.
    reachable `powershell.exe`), with exit 76.
 2. **Before starting**, reads Windows' available RAM (`Win32_OperatingSystem.
    FreePhysicalMemory`, the figure Task Manager calls "Available", standby
-   included) and, with `--drive`, the drive's free space (`Get-PSDrive`). Below
+   included), the commit headroom (`FreeVirtualMemory`: the commit limit, RAM
+   plus page file, minus what is committed) and, with `--drive`, the drive's free
+   space (`Get-PSDrive`). Below `--start-commit-mib` (default 8192) it refuses
+   with exit 76: when commit runs out Windows stops the whole WSL VM, even with
+   RAM still available, and releasing WSL's cache does not raise it. Below
    `--start-mib` it first tries to release WSL's file cache
    (`sudo -n sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`; skipped quietly
    without passwordless sudo) and polls for up to `--settle` seconds, because
@@ -48,7 +52,8 @@ stops it if something else (another program, another WSL job) eats the headroom.
    nothing.
 3. **During the run**, samples every `--interval` seconds. Below `--relief-mib`
    it releases the cache again, at most once per `--relief-every` seconds. Below
-   `--stop-mib`, or below `--stop-drive-gib` free on the drive, it sends SIGTERM
+   `--stop-mib`, below `--stop-commit-mib` commit headroom (default 2048), or
+   below `--stop-drive-gib` free on the drive, it sends SIGTERM
    to the process group it started, SIGKILL after `--kill-grace` seconds, and
    exits 75. A probe that fails is recorded and is not a trip.
 4. **Never stops anything it did not start.** The runner is launched in a new

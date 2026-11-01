@@ -44,7 +44,10 @@ On WSL2, open the address in the Windows browser; WSL forwards `127.0.0.1`.
 2. **Masks.** Choose **Generate** and enter one prompt per line, for example
    `plant` and `leaf`. Choose **One config per mask set** to compare them.
    To reuse masks that exist, choose **Existing** and click a mask set.
-3. **Run settings.** For a test run, set `[train] downscale_factor = 4` and
+3. **Run settings.** On WSL2 set `[host] memory_high` (for example `6G`) and
+   tick "run under wsl-guard" in step 4: without them a run can exhaust
+   Windows' memory, and Windows then stops WSL and every program in it. For a
+   test run, set `[train] downscale_factor = 4` and
    `max_num_iterations = 10000` (`pipeline/README.md`, "Settings for a test
    run"). The other keys start at the pipeline's defaults.
 4. **Validate.** Each config is loaded by the pipeline and dry-run. Fix
@@ -117,6 +120,7 @@ variables, which win. `settings.example.ini` documents each key.
 | `[run-builder] catalog_root` | `RUN_BUILDER_CATALOG_ROOT` | Catalog root for collection runs; default the data root. |
 | `[run-builder] catalog_root_id` | `RUN_BUILDER_CATALOG_ROOT_ID` | Catalog root ID, kebab-case. |
 | `[run-builder] shell_setup` | `RUN_BUILDER_SHELL_SETUP` | One shell line printed before the commands, for example the PATH export from QUICKSTART section 5. |
+| `[run-builder] wsl_guard` | `RUN_BUILDER_WSL_GUARD` | `true` starts the page with "run under wsl-guard" ticked (WSL2). |
 | `[samask] directory` | `RUN_BUILDER_SAMASK_DIR` | The samask checkout; its commands run inside it. |
 | `[samask] command` | `RUN_BUILDER_SAMASK_COMMAND` | Command template with `{images}`, `{masks}`, `{prompt}`, `{capture}`, `{variant}`. |
 | `[samask] mask_extension` | `RUN_BUILDER_SAMASK_MASK_EXTENSION` | The extension samask writes; becomes `[dataset] mask_extensions`. |

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import configparser
 import csv
+import io
 import os
 import subprocess
 import sys
@@ -851,6 +852,22 @@ class TestRunLog(TempDirTestCase):
         self.assertEqual(rows[0]["colmap_version"], "312")
         self.assertEqual(rows[0]["dataset"], "scene-01/images")
         self.assertEqual(rows[0]["config_file"], str(cfg.source))
+
+    def test_a_crash_zeroed_tail_is_removed_and_kept(self):
+        cfg = self._cfg()
+        cfg.append_run_log("run_260807-01-312")
+        with cfg.run_log.open("ab") as handle:
+            handle.write(b"\0" * 229)
+        with patch("sys.stderr", new=io.StringIO()) as err:
+            cfg.append_run_log("run_260807-02-312")
+        rows = self._rows(cfg)
+        self.assertEqual([r["run_id"] for r in rows], ["run_260807-01-312", "run_260807-02-312"])
+        self.assertIn("229 NUL bytes", rows[1]["note"])
+        self.assertIn("NUL bytes", err.getvalue())
+        backups = list(cfg.run_log.parent.glob(cfg.run_log.name + ".nul-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes().count(b"\0"), 229)
+        self.assertNotIn(b"\0", cfg.run_log.read_bytes())
 
     def test_appends_rather_than_truncating(self):
         cfg = self._cfg()

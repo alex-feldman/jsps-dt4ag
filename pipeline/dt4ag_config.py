@@ -812,6 +812,25 @@ class Dt4agConfig:
             "note": "; ".join(self.notes),
         }
         row.update({k: v for k, v in extra.items() if k in columns})
+        if self.run_log.exists():
+            raw = self.run_log.read_bytes()
+            if b"\0" in raw:
+                # A run stopped mid-append (for example WSL stopped by Windows)
+                # can leave NUL bytes where its row should be, and csv then
+                # refuses the whole log, so every later run would fail here.
+                # Keep the damaged file, drop only the NUL bytes, say so.
+                stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+                backup = self.run_log.with_name(f"{self.run_log.name}.nul-{stamp}")
+                shutil.copy2(self.run_log, backup)
+                cleaned = raw.replace(b"\0", b"")
+                if cleaned and not cleaned.endswith(b"\n"):
+                    cleaned += b"\n"
+                self.run_log.write_bytes(cleaned)
+                nul = raw.count(b"\0")
+                message = (f"run log held {nul} NUL bytes from an interrupted "
+                           f"write; removed them (original kept as {backup.name})")
+                print(f"warning: {message}", file=sys.stderr)
+                row["note"] = "; ".join(part for part in (row["note"], message) if part)
         is_new = not self.run_log.exists()
         if not is_new:
             # An existing log was written under whatever columns were current

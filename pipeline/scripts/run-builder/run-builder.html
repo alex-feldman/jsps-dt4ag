@@ -195,6 +195,9 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
     <div><label for="configsDir">Configs directory</label>
       <input type="text" id="configsDir" placeholder="/path/to/data/configs" autocomplete="off"></div>
   </div>
+  <div id="wslGuardBox">
+    <label class="inline"><input type="checkbox" id="wslGuard"> On WSL2, run under <code>wsl-guard</code>: it refuses to start, or stops the run, before Windows runs out of memory (<code>pipeline/scripts/wsl-guard/</code>)</label>
+  </div>
   <div id="catalogCapture">
     <label class="inline"><input type="checkbox" id="catalogEnabled"> Record a catalog job for this run (<code>pipeline/CATALOG-RECORDS.md</code>)</label>
   </div>
@@ -961,6 +964,13 @@ globalThis.RunBuilder = (function () {
     var root = String(catalog.root || "").trim() || String(state.dataRoot || "").trim();
     var rootId = String(catalog.rootId || "").trim();
     var dry = [], real = [];
+    if (!String(value(schema, state, "host", "memory_high") || "").trim()) {
+      warnings.push("[host] memory_high is empty: on WSL2 nothing caps a stage's memory, and a run can exhaust Windows memory and stop WSL. Set it, for example 6G.");
+    }
+    var guard = !!state.wslGuard;
+    if (guard && state.mode === "collection") {
+      warnings.push("wsl-guard runs run_pipeline.py only, so this collection run is not guarded: keep [host] memory_high set and leave Windows memory headroom.");
+    }
     configs.forEach(function (config) {
       var path = dir ? joinPath(dir, config.name) : config.name;
       var label = configs.length > 1 ? " (" + config.name + ")" : "";
@@ -982,6 +992,11 @@ globalThis.RunBuilder = (function () {
         whatRun = "Runs the four stages (COLMAP, ns-process-data, ns-train, ns-export) and verifies the export. Long, and uses the GPU.";
       }
       var dryArgv = argv.concat(["--dry-run"]);
+      if (guard && state.mode !== "collection") {
+        // Everything after -- goes to run_pipeline.py unchanged (wsl-guard README).
+        argv = ["uv", "run", "python", "pipeline/scripts/wsl-guard/wsl-guard.py", "--"].concat(argv.slice(4));
+        whatRun += " Runs under wsl-guard, which refuses to start (exit 76) or stops the run (exit 75) before Windows runs out of memory.";
+      }
       dry.push({ kind: "dry-run", title: "Dry run" + label, what: what, argv: dryArgv, command: render(dryArgv), config: config.name });
       if (configs.length > 1) whatRun += " This is one of " + configs.length + " separate reconstructions, one per config: run only the ones you want.";
       real.push({ kind: "run", title: "Run" + label, what: whatRun, argv: argv, command: render(argv), config: config.name });
@@ -1056,6 +1071,7 @@ globalThis.RunBuilder = (function () {
     configName: "", configsDir: "", repoRoot: "", shellSetup: "",
     samask: { directory: "", command: "", maskExtension: "" },
     catalog: { enabled: false, root: "", rootId: "", captureId: "" },
+    wslGuard: null,
     video: { source: "", reviewRoot: "", ffmpegPrefix: "" }, today: ""
   };
 
@@ -1209,6 +1225,8 @@ globalThis.RunBuilder = (function () {
     bindText("catalogRoot", function () { return state.catalog.root; }, function (v) { state.catalog.root = v; });
     bindText("catalogRootId", function () { return state.catalog.rootId; }, function (v) { state.catalog.rootId = v; });
     bindText("catalogCaptureId", function () { return state.catalog.captureId; }, function (v) { state.catalog.captureId = v; });
+    $("wslGuard").checked = !!state.wslGuard;
+    $("wslGuard").addEventListener("change", function () { state.wslGuard = $("wslGuard").checked; update(); });
     $("catalogEnabled").checked = !!state.catalog.enabled;
     $("catalogEnabled").addEventListener("change", function () { state.catalog.enabled = $("catalogEnabled").checked; update(); });
     $("prefixVariant").checked = state.masks.prefixVariant !== false;
@@ -1501,6 +1519,10 @@ globalThis.RunBuilder = (function () {
       if (!state.samask.directory) state.samask.directory = s.samask_directory;
       if (!state.samask.command) state.samask.command = s.samask_command;
       if (!state.samask.maskExtension) state.samask.maskExtension = s.samask_mask_extension;
+      if (state.wslGuard === null || state.wslGuard === undefined) {
+        state.wslGuard = /^(1|true|yes|on)$/i.test(String(s.wsl_guard || "").trim());
+        $("wslGuard").checked = state.wslGuard;
+      }
       state.repoRoot = info.repo_root;
       state.shellSetup = s.shell_setup;
       ["dataRoot", "configsDir"].forEach(function (id) { $(id).value = state[id]; });
