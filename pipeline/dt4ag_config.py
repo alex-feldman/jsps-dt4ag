@@ -903,7 +903,7 @@ class Dt4agConfig:
             f"colmap num_threads : {self.colmap_num_threads}"
             + (" (auto: chosen from memory just before the colmap stage)"
                if self.colmap_num_threads == "auto" else ""),
-            f"scene_type        : {self.scene_type}",
+            f"scene_type         : {self.scene_type}",
             f"train_method       : {self.train_method}",
             f"max_num_iterations : {self.max_num_iterations}",
             f"steps_per_save     : {self.steps_per_save} "
