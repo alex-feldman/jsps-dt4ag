@@ -6,6 +6,49 @@ from one reconstruction, not a factory calibration to copy into another run.
 Record the capture mode as well as the camera body: field of view, electronic
 stabilization and in-camera dewarping can change the image geometry.
 
+## Lens distortion and camera models: what the pipeline does
+
+**The pipeline does not correct lens distortion itself, and you do not need to
+correct it first.** Stage 1 runs `colmap automatic_reconstructor`, which fits a
+camera model, including distortion, to your images. Stage 2 runs
+`ns-process-data images --skip-colmap`, which copies that fit into
+`transforms.json` (see the header of `pipeline/run_pipeline.py`). Your image
+files are never rewritten.
+
+During training, Nerfstudio 1.1.5, the version this repository pins, undistorts
+each image in memory with the fitted parameters. It then crops the result to the
+region that has no empty border and adjusts the intrinsics to match
+(`_undistort_image` in `nerfstudio/data/datamanagers/full_images_datamanager.py`,
+which the `splatfacto` method uses). So the training images can show a slightly
+smaller field of view than your originals.
+
+What to do with that:
+
+1. **Use one camera at one setting for a capture.** By default the pipeline asks
+   COLMAP to share one set of intrinsics (`single_camera` and
+   `single_camera_per_folder`, both `1`; see `pipeline/configs/README.md`). Do not
+   mix cameras, lenses, zoom levels or field-of-view modes in one capture. Lock
+   zoom and focus if the camera lets you.
+2. **Prefer the least wide mode that still frames the subject.** Strong
+   wide-angle distortion is harder for the fit to get right; the second capture
+   in the Osmo precedent below is the example of it going wrong. Record the
+   field-of-view and stabilization mode with the capture, because they change the
+   image geometry.
+3. **Do not crop, rescale, dewarp or stabilize in post unless you must.** The fit
+   assumes every frame of a camera shares one geometry. If you do change geometry
+   after capture, apply exactly the same change to every frame of that camera and
+   note it with the capture. Keep one camera's frames at one size and
+   orientation (step 4 of the video-derived image sequences section in
+   `QUICKSTART.md` asks you to check this).
+4. **Check the solve before you train.** Run
+   `pipeline/scripts/camera-review/camera-review.py` after stages 1 and 2 and read
+   `cameras` in `camera-checks.json`. A focal length or distortion coefficient far
+   from what the camera should give, or a flagged camera step, means the solve is
+   suspect. Compare the two Osmo captures below: for that camera the usable fit had
+   `f = 1510.7 px` and `k1 = 0.0034`, the failed one `f = 9316.4 px` and
+   `k1 = 13.3`. Fix the capture or the sampling and solve again; do not train on
+   it hoping the training will repair it.
+
 ## DJI Osmo Action 6
 
 The two captures below came from the same camera and have the same
