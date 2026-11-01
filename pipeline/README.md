@@ -35,7 +35,7 @@ unversioned on a removable drive.
 | `scripts/rgb-mask/` | Applies masks to RGB images as an alpha channel. **The pipeline calls this itself** when `[dataset] use_masks = true`, as a pre-step before any stage runs (`composite_masked_images`). Still runnable by hand for masking a set outside a pipeline run. This is the route that actually removes background geometry: see [`MASKING.md`](MASKING.md). |
 | `scripts/video-frames/` | Prepares a movie as a capture, outside the pipeline: `review` hashes it and makes contact sheets so you can choose a range and interval; `extract` writes a hash-checked, provenance-recorded frame set into a new capture; `subset` makes sparser captures from it as symlinks, copying nothing. Never launches a stage. The workflow is in [`QUICKSTART.md`](QUICKSTART.md#video-derived-image-sequences). |
 | `VIDEO-WORKFLOW.md` | **Start here for a video.** Every step from the video file to the splat as copy-paste commands: review page, choose the interval, extract, config, solve cameras, camera review, train and export. |
-| `CAMERA-PROFILES.md` | Empirical per-camera COLMAP models, fitted intrinsics and Nerfstudio transform representations; includes the DJI Osmo Action 6 precedent and its limits. |
+| `CAMERA-PROFILES.md` | What the pipeline does about lens distortion and how to use a camera with it; empirical per-camera COLMAP models, fitted intrinsics and Nerfstudio transform representations, including the DJI Osmo Action 6 precedent and its limits. |
 | `scripts/wsl-guard/` | Runs `run_pipeline.py` on WSL2 under a guard that watches Windows' available RAM (and optionally a drive's free space) from the Windows side: refuses to start without headroom, releases WSL's file cache when RAM runs low, and stops only its own run before Windows runs out (exit 75; refusal 76). Records the run's cgroup memory and OOM kills, and `--emulate-vm 8G:4G` tests whether a run fits a 16 GB Windows machine. Pairs with the `[host] memory_high` config key, which caps each stage. See QUICKSTART, "Memory: WSL can empty Windows' RAM". |
 | `scripts/camera-review/` | Draws the camera path over the sparse points and reports registration counts plus an advisory warning for an extreme adjacent-camera jump after the `colmap` and `process` stages, so a suspicious solve is easier to catch before training. See its README. |
 | `scripts/ply-check/` | Read-only integrity check of exported splat PLY files: vertex count, sha256, non-finite values (a failure, exit 1), opacity and scale statistics, and an optional centers preview (not a render). Text or `--json`. |
@@ -137,7 +137,10 @@ earlier one.
 
 **Commit the notebook with its cell outputs cleared.** Executed cells store
 real dataset paths inside the `.ipynb`; `tests/test_dt4ag_config.py` fails the
-build if subject-specific terms reach the committed copy.
+build if subject-specific terms reach the committed copy. `tests/test_notebook_outputs.py` also fails the build if any
+tracked `.ipynb` has stored outputs or an execution count. To clear them, run
+`nbstripout NOTEBOOK` (`pip install nbstripout`, optional) or
+`jupyter nbconvert --clear-output --inplace NOTEBOOK`.
 
 ## Settings for a test run
 

@@ -852,6 +852,9 @@ So, for a capture that will actually reconstruct:
    textured subjects such as plants are the easy case, which is what this
    pipeline was built for.
 
+Lens distortion, camera models and how to spot a bad camera solve:
+[`CAMERA-PROFILES.md`](CAMERA-PROFILES.md).
+
 Two more keys are worth setting even though nothing fails without them, because
 they are baked into the export filename and are how a `.ply` records what
 produced it:

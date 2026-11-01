@@ -18,6 +18,16 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- A test fails when any tracked `.ipynb` has stored cell outputs or a
+  non-null execution count, naming the file and cell and pointing to
+  `nbstripout`. The notebook was already committed clean; this keeps it so.
+
+- `pipeline/CAMERA-PROFILES.md` now opens with guidance for any camera: the
+  pipeline does not correct lens distortion itself, Nerfstudio 1.1.5 undistorts
+  and crops images in memory during training, and four practical rules for
+  capture settings and for checking a camera solve before training. QUICKSTART
+  links to it from the capture-quality section.
+
 - `pipeline/run_collection.py` runs every capture beneath a collection, one at
   a time, from one base config. Captures are discovered by the `images/` rule;
   each capture's config is the base with `images_subpath` replaced, validated
