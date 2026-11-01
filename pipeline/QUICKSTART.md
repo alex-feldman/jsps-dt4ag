@@ -126,26 +126,42 @@ the classic WSL mistake:
    wsl --install Ubuntu-24.04 --location D:\wsl\ubuntu-24.04 --name Ubuntu-24.04 --no-launch
    ```
 
-4. **Raise the guest memory cap before the first run.** This is the one thing
-   that actually failed, and it is nasty to diagnose. **WSL2 gives the guest only
-   50 percent of host RAM by default**, and COLMAP peaks near 13 GB on 120 images
-   at 18 MP, so on a 32 GB host the Linux OOM killer takes it mid
-   `automatic_reconstructor`. The pipeline prints nothing, the process simply
-   disappears, and the only evidence is in `dmesg`. It is invisible from inside
-   Linux, where `free -h` just reports a small machine. Create
-   `%USERPROFILE%\.wslconfig`:
+4. **Limit COLMAP's threads before the first run; you do not need to raise
+   WSL's memory cap.** **WSL2 gives the guest 50 percent of host RAM by
+   default**: 8 GB on a 16 GB machine. The whole pipeline fits in that, but only
+   if COLMAP runs on a few threads. By default COLMAP extracts features on one
+   thread per CPU core, and every thread holds a full-size photograph. On 120
+   images at 18 MP, 24 threads filled 8 GB within 16 seconds, and 4 threads
+   peaked at 3.8 GB (see "COLMAP threads and memory" below). Running out is nasty
+   to diagnose: the Linux OOM killer takes COLMAP mid `automatic_reconstructor`,
+   the pipeline prints nothing, the process simply disappears, and the only
+   evidence is in `dmesg`. It is invisible from inside Linux, where `free -h`
+   just reports a small machine. Put this in your run config:
+
+   ```ini
+   [colmap]
+   extra_args = --gpu_index 0 --num_threads 4
+   ```
+
+   (`--gpu_index 0` is the WSL2 matcher fix described below.)
+
+   **Leave the guest memory cap at its default, or cap it at 8 GB on a larger
+   machine.** A higher cap gains this pipeline nothing, and lets WSL's file
+   cache take RAM that Windows needs (see "Memory: WSL can empty Windows' RAM"
+   below). To set it, create `%USERPROFILE%\.wslconfig`:
 
    ```ini
    [wsl2]
-   memory=22GB
-   swap=32GB
-   swapfile=D:\\wsl\\swap.vhdx
+   memory=8GB
    ```
 
-   Then `wsl --shutdown` and start the distro again.
+   Then `wsl --shutdown` and start the distro again. If C: is short of space,
+   `swapfile=D:\\wsl\\swap.vhdx` in the same section moves WSL's swap file to
+   another drive.
 
-   The opposite problem, WSL holding so much file cache that Windows runs out,
-   is covered under "Memory: WSL can empty Windows' RAM" below.
+   An earlier version of this guide recommended `memory=22GB`. That was sized
+   for COLMAP at its default thread count, which peaked near 13 GB on the
+   capture above. With the thread limit it is no longer needed.
 
 5. **Inside WSL, do NOT install any Linux NVIDIA driver.** No
    `apt install nvidia-driver-*`, no `ubuntu-drivers install`. The GPU arrives
@@ -203,6 +219,39 @@ anyway. `sudo apt install libopengl0` silences it.
 Budget disk space on whichever drive holds the distro: the environment alone is
 about 7.4 GB and the COLMAP prefix another 4 GB, before any data. A finished
 install plus one 120-image capture measured 23 GB of `ext4.vhdx`.
+
+### COLMAP threads and memory
+
+**COLMAP's thread count, not the number of photographs, decides how much
+memory the camera solve needs.** `automatic_reconstructor` runs at
+`--quality high` by default. That setting turns on affine-shape estimation,
+which runs feature extraction on the CPU ("Covariant SIFT") even when a GPU is
+present. It runs one extractor per thread, and each extractor holds a decoded
+full-size photograph plus its feature structures. The default thread count is
+every CPU core. So memory grows with cores times image size, which is why a
+many-core machine with modest RAM is the worst case.
+
+`--num_threads N` in `[colmap] extra_args` sets the count. Measured 2026-11-01
+on Ubuntu 24.04 under WSL2 (24 hardware threads, RTX 4050 Laptop), COLMAP stage
+only, 120 unmasked photographs at 5184x3456, inside a hard 8 GiB memory plus
+4 GiB swap limit (`wsl-guard.py --emulate-vm 8G:4G`, the default VM on a 16 GB
+Windows machine):
+
+| `--num_threads` | Program memory, peak | Swap | Result | COLMAP time |
+|---|---|---|---|---|
+| default (24) | over 8 GiB within 16 s | 1.5 GiB and climbing | did not fit (stopped) | n/a |
+| 8 | {pending-8-mem} | {pending-8-swap} | {pending-8-result} | {pending-8-time} |
+| 4 | 3.7 GiB | none | fits | 9m24s |
+| 2 | {pending-2-mem} | {pending-2-swap} | {pending-2-result} | {pending-2-time} |
+
+"Program memory" is the scope's anonymous memory (`scope_anon_max_mib` in the
+guard's status file). The file cache fills the rest of the limit and is
+evicted, so it is not counted.
+
+{pending-recommendation}
+
+Changing `--quality` would also move extraction to the GPU, but it changes the
+features themselves. Treat that as a separate experiment, not a memory setting.
 
 ### Memory: WSL can empty Windows' RAM
 
@@ -275,10 +324,15 @@ capture (`downscale_factor` 4, `[host] process_cpus = 0,1`), run inside a hard
 `MemoryMax=8G` with `MemorySwapMax=4G`, finished in 27 minutes with no
 out-of-memory kills and no swap used. The programs' own memory peaked at
 2.4 GiB; the rest of the 8 GiB was file cache, which the kernel evicted at the
-limit. On such a machine keep the `.wslconfig` default (or `memory=8GB`); a
-`[host] memory_high` below that, such as `6G`, is optional and only throttles
-earlier. Not yet tested on real 16 GB hardware, and the emulation used a 6 GB
-GPU: on a smaller GPU, VRAM rather than RAM is the likelier limit.
+limit. The heaviest camera solve measured so far also fits: 120 photographs at
+5184x3456 with no masks peaked at 3.7 GiB of program memory with
+`--num_threads 4`, but overflowed 8 GiB within 16 seconds at COLMAP's default
+thread count (2026-11-01, same emulation; see "COLMAP threads and memory"). On
+such a machine keep the `.wslconfig` default (or `memory=8GB`) and set
+`--num_threads` as in step 4 of "WSL2, on Windows". A `[host] memory_high` below
+the VM limit, such as `6G`, is optional and only throttles earlier. Not yet
+tested on real 16 GB hardware, and the emulation used a 6 GB GPU: on a smaller
+GPU, VRAM rather than RAM is the likelier limit.
 
 *Check your machine.* On any machine with systemd in WSL you can test the 8 GB
 case before you rely on it, whatever your real RAM. Run one full invocation
@@ -328,8 +382,37 @@ so wait before judging whether it worked.
 
 **Whole-VM fallback.** A lower `memory=` in `%USERPROFILE%\.wslconfig` caps the
 entire VM, cache included, and needs `wsl --shutdown` to take effect. It also caps
-COLMAP and training, so do not set it below what step 4 above says COLMAP needs;
-the per-stage cap is the finer tool.
+COLMAP and training: `8GB` is measured to be enough with COLMAP's threads limited
+(step 4 of "WSL2, on Windows"), and lower values are untested. The per-stage cap
+is the finer tool.
+
+### Windows' commit limit: the other way WSL dies
+
+**WSL can also be stopped by Windows itself, and this happens with plenty of
+"free" RAM showing.** Windows promises memory to programs up to its *commit
+limit*, which is RAM plus the page file. Everything that runs counts against
+it: browsers and every app built on a browser engine (Chrome and Edge, and
+Electron or WebView2 apps such as Slack, Discord, WhatsApp and Zotero) commit
+far more than they are using at the moment. When a growing WSL VM needs memory
+and the commit limit is reached, Windows stops the whole VM: every WSL process
+dies at once, and the event log shows Resource-Exhaustion-Detector event 2004
+with `vmmemWSL` at the top. Measured 2026-11-01 on a 32 GB laptop with a 31 GB
+page file: about 41 GB was committed by Windows apps (Chrome alone 16.7 GB,
+across about 99 processes), and WSL was stopped twice in one afternoon.
+
+Check the headroom before a big run, in PowerShell:
+
+```powershell
+"{0:N1} GB free" -f ((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory/1MB)
+```
+
+That number has to exceed what the WSL VM may still grow by, which is at most
+its `memory=` limit. Closing a browser or chat apps raises it quickly. A smaller
+WSL `memory=` lowers what WSL can claim. A larger Windows page file raises the
+limit itself. `wsl-guard.py` checks this for you. It refuses to start with less
+than 8 GiB of commit headroom (`--start-commit-mib`), and stops its own run if
+headroom falls below 2 GiB (`--stop-commit-mib`), so the run ends with a message
+instead of the VM dying.
 
 ## 0. What you need
 
@@ -380,11 +463,12 @@ and the whole uv path applied unchanged. The GPU arrives through the Windows
 driver and needed no configuration at all.
 
 **Two things are host-side, and neither is visible from inside Linux.** First,
-**WSL2 caps guest RAM at 50 percent of host RAM**, and COLMAP peaks near 13 GB on
-120 images at 18 MP, so on a 32 GB machine the default cap kills it with no
-message. Second, `wsl --install -d <distro>` puts the distro on C:. Both are
-covered in "WSL2, on Windows" under "Pre-steps" above, and you want to read that
-section **before** the first run rather than after diagnosing an OOM.
+**WSL2 caps guest RAM at 50 percent of host RAM**, and COLMAP's default thread
+count (one per core) can overflow that cap on large photographs, with no message;
+limiting the threads fixes it. Second, `wsl --install -d <distro>` puts the
+distro on C:. Both are covered in "WSL2, on Windows" under "Pre-steps" above,
+and you want to read that section **before** the first run rather than after
+diagnosing an OOM.
 
 ### You do need a host compiler
 
@@ -907,9 +991,12 @@ command dies with `uv: command not found`. Export both directories:
 export PATH="$HOME/opt/colmap-prefix/bin:$HOME/.local/bin:$PATH"
 ```
 
-Second, on WSL2 set `[colmap] extra_args = --gpu_index 0` in your config. See
-"COLMAP's GPU matcher on WSL2" below; it is not specific to unattended runs, but
-this is where scripted runs hit it.
+Second, on WSL2 set `[colmap] extra_args = --gpu_index 0 --num_threads 4` in
+your config. `--gpu_index 0` is explained in "COLMAP's GPU matcher on WSL2", and
+`--num_threads` in "COLMAP threads and memory" (both in "Pre-steps" above). Neither is
+specific to unattended runs, but this is where scripted runs hit them. The
+thread limit is worth setting on any machine with many cores and little RAM,
+not only under WSL2.
 
 That runs four stages in order: COLMAP structure-from-motion, `ns-process-data`,
 `ns-train splatfacto`, and `ns-export gaussian-splat`. It exits non-zero if any
