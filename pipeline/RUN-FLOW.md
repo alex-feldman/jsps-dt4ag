@@ -48,12 +48,13 @@ Three kinds of work happen, and they are not the same kind:
 | 4 | Image census (`count_images`, filtered by `is_photograph`) | no photographs survive the extension filter |
 | 5 | Capture provenance (`read_capture_metadata`) | file present but unparseable. Absent is normal and silent |
 | 6 | **Pre-step:** composite masks (`composite_masked_images`) | any photograph has no paired mask; the output count does not match afterwards. Skipped entirely when a complete set already exists in the composite directory for THIS variant, `derived/masked/<variant>/<capture_rel>/`; another variant's composites are a sibling tree and are neither reused nor seen |
-| 7 | Append the run-log row | — |
-| 8 | **Stage colmap** | no `sparse/cameras.bin` afterwards |
-| 9 | **Stage process** | no `transforms.json`; the downscale pyramid is incomplete (`verify_downscale_pyramid`) |
-| 10 | **Stage train** | a pinned `downscale_factor` names a level that is not on disk |
-| 11 | Checkpoint discovery (`discover_checkpoint`) | only a `config.yml` and no weights; the newest run directory predates this invocation |
-| 12 | **Stage export** | the PLY is missing, is no bigger than a bare header, or declares zero vertices (`verify_export`) |
+| 7 | COLMAP thread count (`decide_colmap_threads`, `colmap_threads.py`), only when `colmap` is selected | `[colmap] num_threads = auto` and the memory available now (Linux `MemAvailable`, the stage's cgroup room, and on WSL2 Windows' available RAM and commit headroom less 2 GiB each) is less than one feature-extraction thread plus 256 MiB; the message gives the figures and the override. Nothing is recorded. `--dry-run` prints the same line and reports a refusal without failing. A Windows probe that fails on WSL2 is a warning, and the Linux figures are used |
+| 8 | Append the run-log row | — |
+| 9 | **Stage colmap** | no `sparse/cameras.bin` afterwards |
+| 10 | **Stage process** | no `transforms.json`; the downscale pyramid is incomplete (`verify_downscale_pyramid`) |
+| 11 | **Stage train** | a pinned `downscale_factor` names a level that is not on disk |
+| 12 | Checkpoint discovery (`discover_checkpoint`) | only a `config.yml` and no weights; the newest run directory predates this invocation |
+| 13 | **Stage export** | the PLY is missing, is no bigger than a bare header, or declares zero vertices (`verify_export`) |
 
 ## The two rules behind all of it
 

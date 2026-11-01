@@ -48,14 +48,30 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
 HERE = Path(__file__).resolve().parent
-RUNNER = HERE.parent.parent / "run_pipeline.py"
+PIPELINE_DIR = HERE.parent.parent
+RUNNER = PIPELINE_DIR / "run_pipeline.py"
+if str(PIPELINE_DIR) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_DIR))
+
+# The probe, its parsing and the default thresholds are shared with the
+# runner's COLMAP thread choice (colmap_threads.py).
+from windows_host import (  # noqa: E402
+    GUARD_RELIEF_MIB,
+    GUARD_START_COMMIT_MIB,
+    GUARD_START_MIB,
+    GUARD_STOP_COMMIT_MIB,
+    GUARD_STOP_MIB,
+    POWERSHELL_FALLBACK,
+    WindowsProbeError,
+    find_powershell,
+    is_wsl,
+    probe_script,
+    sample_windows,
+)
+from windows_host import parse_probe as _parse_probe  # noqa: E402
 
 EXIT_GUARD_STOP = 75
 EXIT_REFUSED = 76
-
-#: Where powershell.exe usually lives when WSL interop is on but the Windows
-#: PATH is not appended to the Linux one (``appendWindowsPath=false``).
-POWERSHELL_FALLBACK = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 
 #: Drops only CLEAN cache, after a sync, so it is safe under running jobs. Run
 #: through ``sudo -n``: without passwordless sudo it fails at once and the
@@ -117,23 +133,23 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"Directory for the default log name. Default: "
                              f"$XDG_STATE_HOME/jsps-dt4ag/wsl-guard "
                              f"({default_log_dir()}).")
-    parser.add_argument("--start-mib", type=int, default=4096,
+    parser.add_argument("--start-mib", type=int, default=GUARD_START_MIB,
                         help="Refuse to start below this much Windows available RAM, "
-                             "in MiB (default 4096).")
-    parser.add_argument("--relief-mib", type=int, default=3072,
+                             "in MiB (default %(default)s).")
+    parser.add_argument("--relief-mib", type=int, default=GUARD_RELIEF_MIB,
                         help="During the run, release WSL's file cache below this much "
-                             "Windows available RAM, in MiB (default 3072).")
-    parser.add_argument("--stop-mib", type=int, default=1024,
+                             "Windows available RAM, in MiB (default %(default)s).")
+    parser.add_argument("--stop-mib", type=int, default=GUARD_STOP_MIB,
                         help="Stop the run below this much Windows available RAM, in "
-                             "MiB (default 1024).")
-    parser.add_argument("--start-commit-mib", type=int, default=8192,
+                             "MiB (default %(default)s).")
+    parser.add_argument("--start-commit-mib", type=int, default=GUARD_START_COMMIT_MIB,
                         help="Refuse to start below this much Windows commit headroom (the "
-                             "commit limit minus what is committed), in MiB (default 8192). "
+                             "commit limit minus what is committed), in MiB (default %(default)s). "
                              "Windows stops the whole WSL VM when commit runs out, even with "
                              "RAM still available.")
-    parser.add_argument("--stop-commit-mib", type=int, default=2048,
+    parser.add_argument("--stop-commit-mib", type=int, default=GUARD_STOP_COMMIT_MIB,
                         help="Stop the run below this much Windows commit headroom, in MiB "
-                             "(default 2048).")
+                             "(default %(default)s).")
     parser.add_argument("--drive", default=None,
                         help="Also watch free space on this Windows drive letter, for "
                              "example D (the drive that holds the WSL disk or the data).")
@@ -286,64 +302,16 @@ def config_memory_high(passthrough: Sequence[str]) -> str:
 # the host probe
 # --------------------------------------------------------------------------
 
-def probe_script(drive: Optional[str]) -> str:
-    """The PowerShell that reports Windows available RAM, commit headroom and, optionally, free disk.
-
-    ``FreePhysicalMemory`` is what Task Manager calls "Available": it includes
-    standby (cache Windows can reclaim at once), which is the right figure for
-    "will Windows run out". Without standby it would look alarming on any
-    healthy machine.
-
-    ``FreeVirtualMemory`` is the commit headroom: the commit limit (RAM plus page
-    file) minus what is committed. When it runs out Windows stops the WSL VM
-    outright, even with RAM available (PX13, 2026-11-01: two runs died within
-    seconds of starting COLMAP with about 5 GiB of RAM available and about 7 GiB
-    of commit headroom).
-    """
-    script = ("$o=Get-CimInstance Win32_OperatingSystem;"
-              "$r=[ordered]@{ram_mib=[math]::Floor($o.FreePhysicalMemory/1024);"
-              "commit_mib=[math]::Floor($o.FreeVirtualMemory/1024)};")
-    if drive:
-        script += f"$r['drive_gib']=[math]::Round((Get-PSDrive {drive}).Free/1GB,1);"
-    return script + "$r|ConvertTo-Json -Compress"
-
+# probe_script, find_powershell, is_wsl and POWERSHELL_FALLBACK come from
+# windows_host.py (imported above). parse_probe is wrapped so a garbled probe is
+# a GuardError, as the rest of this file expects.
 
 def parse_probe(text: str, drive: Optional[str]) -> dict:
     """Read the probe's JSON line, tolerating a BOM and stray lines around it."""
-    for line in reversed(text.replace("﻿", "").splitlines()):
-        line = line.strip()
-        if not (line.startswith("{") and line.endswith("}")):
-            continue
-        try:
-            raw = json.loads(line)
-        except ValueError:
-            continue
-        try:
-            sample = {"ram_mib": int(raw["ram_mib"])}
-            if raw.get("commit_mib") is not None:
-                sample["commit_mib"] = int(raw["commit_mib"])
-            if drive:
-                sample["drive_gib"] = float(raw["drive_gib"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise GuardError(f"probe output lacks a usable value ({exc}): {line!r}")
-        return sample
-    raise GuardError(f"probe printed no JSON: {text.strip()[:200]!r}")
-
-
-def find_powershell(which: Callable[[str], Optional[str]] = shutil.which,
-                    exists: Callable[[str], bool] = os.path.exists) -> Optional[str]:
-    found = which("powershell.exe")
-    if found:
-        return found
-    return POWERSHELL_FALLBACK if exists(POWERSHELL_FALLBACK) else None
-
-
-def is_wsl(osrelease_path: str = "/proc/sys/kernel/osrelease") -> bool:
     try:
-        with open(osrelease_path, encoding="utf-8") as handle:
-            return "microsoft" in handle.read().lower()
-    except OSError:
-        return False
+        return _parse_probe(text, drive)
+    except WindowsProbeError as exc:
+        raise GuardError(str(exc)) from exc
 
 
 class Host:
@@ -356,16 +324,9 @@ class Host:
 
     def sample(self) -> dict:
         try:
-            completed = subprocess.run(
-                [self.powershell, "-NoProfile", "-NonInteractive", "-Command", self.script],
-                capture_output=True, text=True, timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise GuardError(f"powershell.exe could not run: {exc}") from exc
-        if completed.returncode != 0:
-            raise GuardError(
-                f"probe exited {completed.returncode}: {completed.stderr.strip()[:200]}")
-        return parse_probe(completed.stdout, self.drive)
+            return sample_windows(self.powershell, self.drive)
+        except WindowsProbeError as exc:
+            raise GuardError(str(exc)) from exc
 
     def release_cache(self) -> bool:
         """True when the cache was dropped; False, having done nothing, without sudo."""

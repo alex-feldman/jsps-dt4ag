@@ -15,6 +15,16 @@ import plant_catalog
 from plant_catalog import CatalogJob, MILESTONES, read_progress
 import run_pipeline as runner
 from test_run_pipeline import make_config
+import colmap_threads
+
+
+def setUpModule():
+    # These tests run the colmap stage, whose thread choice reads the machine's
+    # memory (and Windows', on WSL). Fixed figures keep them hermetic.
+    figures = colmap_threads.HostMemory(linux_available_mib=65536, usable_cpus=8)
+    patcher = patch.object(colmap_threads, "read_host_memory", return_value=figures)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 class CatalogFixture(unittest.TestCase):

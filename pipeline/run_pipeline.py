@@ -48,6 +48,7 @@ if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
 from plant_catalog import CatalogJob
+import colmap_threads  # noqa: E402
 
 from dt4ag_config import (  # noqa: E402
     ConfigError,
@@ -73,6 +74,7 @@ __all__ = [
     "config_for_step",
     "read_run_eval_token",
     "colmap_command",
+    "decide_colmap_threads",
     "process_command",
     "train_command",
     "export_command",
@@ -338,7 +340,14 @@ def composite_masked_images(cfg: Dt4agConfig) -> List[str]:
     ]
 
 
-def colmap_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
+def colmap_command(cfg: Dt4agConfig, workspace: Path,
+                   threads: Optional["colmap_threads.ThreadsDecision"] = None) -> List[str]:
+    """``colmap automatic_reconstructor`` for this config.
+
+    ``threads`` is the run's thread decision (``decide_colmap_threads``); its
+    ``--num_threads`` goes before ``extra_args``, and is left out when
+    ``extra_args`` sets one itself or the config says ``all``.
+    """
     command = [
         "colmap",
         "automatic_reconstructor",
@@ -349,8 +358,21 @@ def colmap_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
         "--single_camera_per_folder", str(cfg.colmap_single_camera_per_folder),
         "--dense", str(cfg.colmap_dense),
     ]
+    if threads is not None:
+        command.extend(threads.command_args())
     command.extend(shlex.split(cfg.colmap_extra_args))
     return command
+
+
+def decide_colmap_threads(cfg: Dt4agConfig, photographs: Sequence[Path]) -> "colmap_threads.ThreadsDecision":
+    """COLMAP's thread count for this run, from ``[colmap] num_threads`` and ``extra_args``.
+
+    With ``auto`` this reads the machine's memory now (Linux, the cgroup, and
+    Windows on WSL) and the photographs' headers; see ``colmap_threads.py``.
+    """
+    return colmap_threads.decide_threads(
+        cfg.colmap_num_threads, cfg.colmap_extra_args, photographs,
+        memory_high=cfg.memory_high, source_file=cfg.source)
 
 
 def process_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
@@ -1630,6 +1652,27 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             "imaging_date": capture_meta.get("capture.imaging_date", ""),
         })
 
+    # COLMAP's thread count: decided once, here, just before the stages and the
+    # run records, so a refusal starts nothing and leaves no record, and the
+    # dry run shows the same line. A dry run reports a refusal instead of
+    # failing: the figures are a snapshot and the real run reads them again.
+    threads: Optional[colmap_threads.ThreadsDecision] = None
+    if "colmap" in stages:
+        threads = decide_colmap_threads(cfg, photographs)
+        for warning in threads.warnings:
+            log(f"WARNING           : {warning}")
+        log(threads.log_line())
+        if threads.refusal:
+            if not dry_run:
+                raise StageError(threads.refusal)
+            log("WARNING           : a real run would refuse to start now: "
+                + threads.refusal.replace("\n  ", " "))
+        log_extra.update({"colmap_threads": threads.recorded,
+                          "colmap_threads_source": threads.source})
+        if job:
+            job.resolved(colmap_threads=threads.recorded,
+                         colmap_threads_source=threads.source)
+
     if not dry_run and {"process", "train", "export"} & set(stages):
         nerfstudio_version = detect_nerfstudio_version()
         log(f"nerfstudio version: {nerfstudio_version}")
@@ -1665,7 +1708,8 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
                     staged = sfm_input_path(cfg, workspace)
                     staged_files = stage_sfm_inputs(cfg, staged)
                     log(f"sfm input tree    : {staged} ({len(staged_files)} photographs)")
-            run_command(host_command(cfg, colmap_command(cfg, workspace), stage), "colmap", dry_run)
+            run_command(host_command(cfg, colmap_command(cfg, workspace, threads), stage),
+                        "colmap", dry_run)
             sparse = workspace / "sparse" / "0"
             if not dry_run and not (sparse / "cameras.bin").is_file():
                 raise StageError(

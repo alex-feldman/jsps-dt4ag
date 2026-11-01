@@ -247,6 +247,7 @@ Feeds `colmap automatic_reconstructor`.
 | `single_camera_per_folder` | no | `1` | `--single_camera_per_folder`. |
 | `dense` | no | `0` | `--dense`. Sparse only by default. |
 | `extra_args` | no | empty | Passed verbatim after the generated flags. Only `automatic_reconstructor`'s own options, with COLMAP 3.12.0 names, are accepted: see `QUICKSTART.md`, "Which COLMAP options `extra_args` accepts". |
+| `num_threads` | no | `auto` | COLMAP's thread count. `auto` chooses it just before the `colmap` stage from the memory available then: the smallest of Linux's `MemAvailable`, the room the stage's cgroup leaves (`[host] memory_high`, or a limit on the runner's own cgroup such as `wsl-guard.py --emulate-vm`) and, on WSL2, Windows' available RAM and commit headroom less 2 GiB each; about 1.1 GiB per thread for photographs extracted at 2400x1600, more for larger ones; never more than the usable CPUs. Below one thread the run refuses to start. A positive whole number is used as given; `all` is COLMAP's own default, one thread per CPU, whatever the memory. A `--num_threads` in `extra_args` always wins. Only the pipeline's `colmap` stage: with `[nerfstudio] skip_colmap = false`, `ns-process-data` runs COLMAP with its own settings. See `QUICKSTART.md`, "COLMAP threads and memory". |
 
 ### `[nerfstudio]`
 

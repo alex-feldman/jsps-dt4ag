@@ -32,6 +32,7 @@ PIPELINE_DIR = Path(__file__).resolve().parent.parent
 if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
+import colmap_threads  # noqa: E402
 import run_pipeline  # noqa: E402
 from dt4ag_config import load_config  # noqa: E402
 from run_pipeline import (  # noqa: E402
@@ -315,6 +316,14 @@ class TestCommands(TempTreeTestCase):
         command = colmap_command(cfg, self.root / "ws")
         self.assertEqual(command[-2:], ["--num_threads", "4"])
 
+    def test_colmap_thread_decision_goes_before_extra_args(self):
+        cfg = make_config(self.root, extra_args="--gpu_index 0")
+        decision = colmap_threads.ThreadsDecision(3, "auto", "3 (auto: ...)", "3")
+        command = colmap_command(cfg, self.root / "ws", decision)
+        self.assertEqual(command[-4:], ["--num_threads", "3", "--gpu_index", "0"])
+        overridden = colmap_threads.ThreadsDecision(None, "extra_args", "", "4")
+        self.assertNotIn("--num_threads", colmap_command(cfg, self.root / "ws", overridden))
+
     def test_process_command_includes_skip_colmap(self):
         cfg = make_config(self.root)
         command = process_command(cfg, self.root / "ws")
@@ -556,7 +565,11 @@ class TestHostLimits(TempTreeTestCase):
         (cfg.images_path / "frame_0001.jpg").write_bytes(b"x")
         args = parse_args(["--config", str(cfg.source), "--dry-run"])
         out = io.StringIO()
+        # The colmap stage's thread choice reads the machine's memory (and
+        # Windows', on WSL); fixed figures keep this hermetic.
+        figures = colmap_threads.HostMemory(linux_available_mib=65536, usable_cpus=8)
         with mock.patch.object(run_pipeline.subprocess, "run") as never, \
+                mock.patch.object(colmap_threads, "read_host_memory", return_value=figures), \
                 redirect_stdout(out):
             self.assertEqual(run_pipeline.run_pipeline(cfg, args), 0)
         never.assert_not_called()

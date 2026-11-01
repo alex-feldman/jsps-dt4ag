@@ -33,6 +33,13 @@ place is `[host] memory_high` in the run config (`configs/README.md`), which cap
 each stage, file cache included. Use both: the cap keeps the run small, the guard
 stops it if something else (another program, another WSL job) eats the headroom.
 
+The Windows probe and the default thresholds live in `pipeline/windows_host.py`,
+which the runner also reads once before the colmap stage to choose COLMAP's
+thread count (`[colmap] num_threads = auto`; QUICKSTART, "COLMAP threads and
+memory"). That choice leaves Windows 2 GiB of RAM (halfway between this guard's
+default `--stop-mib` and `--relief-mib`) and 2 GiB of commit headroom (its
+default `--stop-commit-mib`).
+
 ## What it does
 
 1. **Refuses to run off WSL2** (no `microsoft` in the kernel release, or no

@@ -32,6 +32,16 @@ from dt4ag_config import load_config  # noqa: E402
 from plant_catalog import CatalogJob, MILESTONES  # noqa: E402
 from run_collection import CollectionError, discover_captures  # noqa: E402
 from test_run_pipeline import CONFIG_TEMPLATE  # noqa: E402
+import colmap_threads  # noqa: E402
+
+
+def setUpModule():
+    # These tests run the colmap stage, whose thread choice reads the machine's
+    # memory (and Windows', on WSL). Fixed figures keep them hermetic.
+    figures = colmap_threads.HostMemory(linux_available_mib=65536, usable_cpus=8)
+    patcher = patch.object(colmap_threads, "read_host_memory", return_value=figures)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 ROOT_ID = "test-root"
 #: Photographs are dated well before any job starts; see why_incomplete's mtime check.
