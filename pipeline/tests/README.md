@@ -88,6 +88,23 @@ only the guard's own process group (exit 75), and an in-run cache release. The
 Windows side is a fake and sudo is never called, so it needs neither WSL nor
 Windows.
 
+`test_colmap_threads.py` covers `colmap_threads.py` and `windows_host.py`:
+the measured constants and the Windows reserves derived from the guard's
+thresholds, the JPEG and PNG header reader (a large EXIF block, a Huffman table
+before the frame header, progressive JPEG, and unreadable, truncated and other
+files), the per-thread cost after the 2400 px cap (and uncapped for another
+`--quality`), `--num_threads` and `--quality` in `extra_args`, the budget
+formula on the proposal's worked examples, the CPU ceiling and the refusal below
+one thread, the override rule (`extra_args` wins over `auto`, a number and
+`all`; `all` adds nothing), cgroup room on fake `/proc` and `/sys/fs/cgroup`
+trees, the Windows probe and its failure on WSL, the `[colmap] num_threads` key,
+and the runner: the dry-run line and flag, a refusal that starts and records
+nothing, and the value and source in the archived run record. Windows is a
+scripted function and `read_host_memory` is replaced in every runner test, so no
+`powershell.exe` runs. The other suites that run the colmap stage in process
+(`test_run_pipeline.py`, `test_run_collection.py`, `test_plant_catalog.py`)
+replace it too.
+
 `test_notebook_outputs.py` fails if any notebook listed by `git ls-files` has
 stored cell outputs or a non-null execution count, and names the file and cell
 and the `nbstripout` command that fixes it. The check is a pure function over

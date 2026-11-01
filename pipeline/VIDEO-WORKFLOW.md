@@ -115,7 +115,7 @@ Edit these keys (`configs/README.md` documents every key; `QUICKSTART.md` sectio
 | `[dataset] use_masks` | `false` for a first, unmasked run |
 | `[run] id_prefix` | a short prefix for this video |
 | `[colmap] data_type` | `individual` (exhaustive matching, robust when frames are far apart) or `video` (sequential matching, for closely spaced frames). The pipeline cannot infer `video` from the folder name, so say it explicitly |
-| `[colmap] extra_args` | on WSL2, `--gpu_index 0` (QUICKSTART, "COLMAP's GPU matcher on WSL2"); and `--num_threads 4` on a 16 GB machine: COLMAP needs about 1 GiB per thread for 18 MP frames (QUICKSTART, "COLMAP threads and memory"). Windows running out of RAM during `ns-process-data` is file cache instead, which `[host] memory_high` handles |
+| `[colmap] extra_args` | on WSL2, `--gpu_index 0` (QUICKSTART, "COLMAP's GPU matcher on WSL2"); COLMAP's thread count is chosen from available memory by `[colmap] num_threads = auto` (the default); `--num_threads 4` here fixes it by hand on a 16 GB machine (QUICKSTART, "COLMAP threads and memory"). Windows running out of RAM during `ns-process-data` is file cache instead, which `[host] memory_high` handles |
 | `[host] memory_high` | on WSL2, `8G`: caps each stage, file cache included, so the VM does not empty Windows' RAM (QUICKSTART, "Memory: WSL can empty Windows' RAM"). Empty elsewhere |
 | `[host] process_cpus` | on WSL2 with tight RAM, `0,1`: runs `ns-process-data`'s downscale on two CPUs. Empty elsewhere |
 | `[nerfstudio] scene_type` | `images`, with `video_path` left empty. The pipeline does not decode video |
@@ -296,8 +296,8 @@ for other viewers and downstream use. The linked README owns the exact procedure
   and wait about 40 seconds before Windows shows it. If Windows' available RAM still barely moves, close
   other WSL work and run `wsl --shutdown` in PowerShell. Details and measurements: QUICKSTART, "Memory: WSL
   can empty Windows' RAM".
-- **WSL dies or runs out of memory during COLMAP or masking:** lower `--num_threads` (QUICKSTART, "COLMAP
-  threads and memory"), close browsers and chat apps if Windows' commit headroom is low (QUICKSTART, "Windows'
+- **WSL dies or runs out of memory during COLMAP or masking:** lower `--num_threads` in `extra_args`, or check that
+  `[colmap] num_threads` is `auto` and not `all` (QUICKSTART, "COLMAP threads and memory"), close browsers and chat apps if Windows' commit headroom is low (QUICKSTART, "Windows'
   commit limit"), and check free space on the Windows drive that holds the WSL disk (QUICKSTART, "WSL2, on
   Windows", step 3).
 - **Unattended runs:** `uv` and the COLMAP prefix must be on `PATH` (the first block above), and one GPU job

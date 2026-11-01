@@ -423,6 +423,11 @@ class Dt4agConfig:
     colmap_single_camera_per_folder: int
     colmap_dense: int
     colmap_extra_args: str
+    #: ``[colmap] num_threads``: ``auto`` (choose from available memory, just
+    #: before the colmap stage; ``colmap_threads.py``), ``all`` (COLMAP's
+    #: default, one per CPU) or a positive whole number. ``--num_threads`` in
+    #: ``extra_args`` wins over it.
+    colmap_num_threads: str
 
     # [nerfstudio]
     scene_type: str
@@ -895,7 +900,10 @@ class Dt4agConfig:
             f"run_log            : {self.run_log}",
             f"colmap data_type   : {self.colmap_data_type} "
             f"-> {self.resolve_colmap_data_type()}",
-            f"scene_type         : {self.scene_type}",
+            f"colmap num_threads : {self.colmap_num_threads}"
+            + (" (auto: chosen from memory just before the colmap stage)"
+               if self.colmap_num_threads == "auto" else ""),
+            f"scene_type        : {self.scene_type}",
             f"train_method       : {self.train_method}",
             f"max_num_iterations : {self.max_num_iterations}",
             f"steps_per_save     : {self.steps_per_save} "
@@ -956,6 +964,20 @@ def _validate_mask_variant(value: str, source: Path) -> None:
             f"'<capture>/masks/'. It is a name, not a path, so it cannot "
             f"point outside the capture (see pipeline/LAYOUT.md)."
         )
+
+
+#: The non-numeric values of ``[colmap] num_threads``.
+NUM_THREADS_CHOICES = ("auto", "all")
+
+
+def parse_num_threads(raw: str) -> Optional[str]:
+    """``[colmap] num_threads`` normalized: ``auto``, ``all`` or a positive whole number; None when invalid."""
+    value = raw.strip().lower()
+    if value in NUM_THREADS_CHOICES:
+        return value
+    if value.isdigit() and int(value) >= 1:
+        return str(int(value))
+    return None
 
 
 #: Smallest ``[host] memory_high`` accepted. MemoryHigh never kills; it
@@ -1345,6 +1367,13 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     )
     colmap_dense = _get_int(parser, "colmap", "dense", source, 0)
     colmap_extra_args = _get_str(parser, "colmap", "extra_args", source, "", allow_empty=True)
+    raw_threads = _get_str(parser, "colmap", "num_threads", source, "auto")
+    colmap_num_threads = parse_num_threads(raw_threads)
+    if colmap_num_threads is None:
+        raise ConfigError(
+            f"key 'num_threads' in section [colmap] of config file {source} must be "
+            f"auto, all or a positive whole number, got {raw_threads!r}"
+        )
 
     # [nerfstudio]
     scene_type = _get_str(parser, "nerfstudio", "scene_type", source, "images").lower()
@@ -1543,6 +1572,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         colmap_single_camera_per_folder=colmap_single_camera_per_folder,
         colmap_dense=colmap_dense,
         colmap_extra_args=colmap_extra_args,
+        colmap_num_threads=colmap_num_threads,
         scene_type=scene_type,
         video_path=video_path,
         skip_colmap=skip_colmap,
@@ -1626,6 +1656,7 @@ CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
     _k("colmap", "single_camera_per_folder", "int", "1"),
     _k("colmap", "dense", "int", "0"),
     _k("colmap", "extra_args"),
+    _k("colmap", "num_threads", default="auto"),
     _k("nerfstudio", "scene_type", "choice", "images", choices=SCENE_TYPES),
     _k("nerfstudio", "video_path"),
     _k("nerfstudio", "skip_colmap", "bool", "true"),

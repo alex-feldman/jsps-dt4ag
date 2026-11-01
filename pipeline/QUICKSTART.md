@@ -145,24 +145,28 @@ the classic WSL mistake:
    the drive is full (see "The backstop: the guard" below). If WSL will not
    start, check that drive first.
 
-4. **Limit COLMAP's threads before the first run; you do not need to raise
-   WSL's memory cap.** **WSL2 gives the guest 50 percent of host RAM by
+4. **COLMAP's threads are limited for you; you do not need to raise WSL's
+   memory cap.** **WSL2 gives the guest 50 percent of host RAM by
    default**: 8 GB on a 16 GB machine. The whole pipeline fits in that, but only
    if COLMAP runs on a few threads. By default COLMAP extracts features on one
-   thread per CPU core, and every thread holds a full-size photograph. On 120
+   thread per CPU core, and every thread needs about 1 GiB. On 120
    images at 18 MP, 24 threads filled 8 GB within 16 seconds, and 4 threads
    peaked at 3.8 GB (see "COLMAP threads and memory" below). Running out is nasty
    to diagnose: the Linux OOM killer takes COLMAP mid `automatic_reconstructor`,
    the pipeline prints nothing, the process simply disappears, and the only
    evidence is in `dmesg`. It is invisible from inside Linux, where `free -h`
-   just reports a small machine. Put this in your run config:
+   just reports a small machine. The pipeline's `[colmap] num_threads = auto`
+   (the default) chooses the count from Linux's and Windows' available memory
+   just before the stage. Put the WSL2 matcher fix (described below) in your
+   run config:
 
    ```ini
    [colmap]
-   extra_args = --gpu_index 0 --num_threads 4
+   extra_args = --gpu_index 0
    ```
 
-   (`--gpu_index 0` is the WSL2 matcher fix described below.)
+   To fix the count yourself instead, add `--num_threads 4` to `extra_args`
+   (or set `num_threads = 4`); 4 is the measured safe value on a 16 GB machine.
 
    **Leave the guest memory cap at its default, or cap it at 8 GB on a larger
    machine.** A higher cap gains this pipeline nothing, and lets WSL's file
@@ -245,16 +249,74 @@ install plus one 120-image capture measured 23 GB of `ext4.vhdx`.
 memory the camera solve needs.** `automatic_reconstructor` runs at
 `--quality high` by default. That setting turns on affine-shape estimation,
 which runs feature extraction on the CPU ("Covariant SIFT") even when a GPU is
-present. It runs one extractor per thread, and each extractor holds a decoded
-full-size photograph plus its feature structures. The default thread count is
-every CPU core. So memory grows with cores times image size, which is why a
-many-core machine with modest RAM is the worst case.
+present. It runs one extractor per thread, and each extractor holds a photograph
+plus its feature structures. COLMAP's own default thread count is every CPU
+core. So memory grows with cores, which is why a many-core machine with modest
+RAM is the worst case.
 
-`--num_threads N` in `[colmap] extra_args` sets the count. Measured 2026-11-01
-on Ubuntu 24.04 under WSL2 (24 hardware threads, RTX 4050 Laptop), COLMAP stage
-only, 120 unmasked photographs at 5184x3456, inside a hard 8 GiB memory plus
-4 GiB swap limit (`wsl-guard.py --emulate-vm 8G:4G`, the default VM on a 16 GB
-Windows machine):
+**The pipeline chooses the count for you.** `[colmap] num_threads` defaults to
+`auto`: just before the `colmap` stage, the runner takes the smallest of
+
+- Linux's available memory (`MemAvailable` in `/proc/meminfo`);
+- the room the stage's cgroup leaves: `[host] memory_high` when set, or a limit
+  on the runner's own cgroup (as under `wsl-guard.py --emulate-vm`) minus the
+  program memory already in it;
+- on WSL2 only, Windows' available RAM less 2 GiB and Windows' commit headroom
+  less 2 GiB, read through `powershell.exe` the same way `wsl-guard.py` reads
+  them (see "Windows' commit limit" below);
+
+subtracts 256 MiB and divides by the memory one thread needs, never going above
+the CPUs the process may use. Below one thread the run refuses to start, prints
+the figures and says how to override. The log shows the choice and what bound
+it, and `--dry-run` shows the same line:
+
+```text
+colmap threads    : 4 (auto: budget 5120 MiB, bound by Windows available RAM 7168 - 2048; 1100 MiB/thread for 5184x3456 capped to 2400x1600; 24 CPUs)
+```
+
+The chosen value and where it came from (`auto`, `config` or `extra_args`) are
+recorded in the run's archived config (`colmap_threads`,
+`colmap_threads_source` under `[run-record]`). The figure is a snapshot:
+Windows apps can grow after COLMAP starts, so `wsl-guard.py` remains the
+backstop during the run. If Windows' memory cannot be read on WSL2, the run
+warns and uses the Linux figures, which overstate what WSL can use. On a
+machine with plenty of memory, `auto` picks the core count, exactly as COLMAP
+would.
+
+`auto` applies only to the pipeline's own `colmap` stage. With
+`[nerfstudio] skip_colmap = false`, `ns-process-data` runs COLMAP with its own
+settings, untouched.
+
+**Choosing it yourself.** `num_threads = 4` (any positive number) is used as
+given. `num_threads = all` is COLMAP's own default, one thread per CPU, with no
+regard to memory; the run builder warns about it. An explicit `--num_threads N`
+in `[colmap] extra_args` always wins over the key, and the log says the key was
+overridden. On a 16 GB Windows machine, `--num_threads 4` is the measured safe
+manual value (below).
+
+**Why photographs over 2400 px all cost about the same.** `--quality high`
+makes COLMAP shrink a copy of each photograph so its long side is 2400 px
+before it looks for features (COLMAP 3.12.0: `ModifyForHighQuality` in
+`option_manager.cc` sets `max_image_size = 2400`; `ImageResizerThread` in
+`feature_extraction.cc` does the resizing). The positions of the features it
+finds are then scaled back to full-resolution coordinates, so the camera
+model, the poses and everything downstream are in full-size pixels. The
+photographs on disk are never changed, and training and export read the
+originals. The memory per thread is mostly the scale space built from the
+shrunken copy, so what matters is the size after shrinking, which depends on
+the aspect ratio, not on the megapixels: a 5184x3456 (18 MP, 3:2) photograph is
+extracted at 2400x1600 (3.84 MP), and a 4000x3000 (12 MP, 4:3) photograph at
+2400x1800 (4.32 MP), slightly more. (An earlier version of this guide said
+12 MP photographs need "roughly two thirds" of the 18 MP memory. That was wrong,
+and wrong in the unsafe direction.) Photographs smaller than 2400 px on the
+long side cost less, in proportion to their pixels. If `extra_args` sets a
+different `--quality`, the pipeline counts the photographs' full pixels, which
+overestimates and so errs on the safe side.
+
+**Measured cost.** Measured 2026-11-01 on Ubuntu 24.04 under WSL2 (24 hardware
+threads, RTX 4050 Laptop), COLMAP 3.12.0, COLMAP stage only, 120 unmasked
+photographs at 5184x3456, inside a hard 8 GiB memory plus 4 GiB swap limit
+(`wsl-guard.py --emulate-vm 8G:4G`, the default VM on a 16 GB Windows machine):
 
 | `--num_threads` | Program memory, peak | Swap | Result | COLMAP time |
 |---|---|---|---|---|
@@ -269,16 +331,14 @@ evicted, so it is not counted. The 8-thread run was stopped by `wsl-guard.py`
 because Windows itself ran out of RAM, not because it hit the 8 GiB limit, so
 its row is a lower bound.
 
-**The cost is close to linear: about 1 GiB per thread for 18 MP photographs,
-with almost nothing fixed.** It scales with the photograph's pixel count, so
-12 MP photographs need roughly two thirds of that. By that rate, 8 threads
-would need about 8 GiB, which leaves no room in an 8 GiB VM.
-
-**Use `--num_threads 4` on a machine with 16 GB of RAM.** It fits the worst
-capture measured with about 4 GiB to spare. Halving it to 2 saves another
-2 GiB but made the camera solve about half again as slow. On a machine with
-more memory available to Linux, allow about 1 GiB per thread for 18 MP
-photographs plus a few GiB for everything else, and stay below the core count.
+The cost is close to linear, about 950 MiB per thread at 2400x1600 with almost
+nothing fixed. `auto` allows 1100 MiB per thread at that size (16 percent
+margin) plus 256 MiB, and scales the per-thread figure by the largest
+photograph's pixel count after shrinking. A photograph whose header cannot be
+read counts as 2400x2400, the worst case. These constants were measured on
+COLMAP 3.12.0 and are kept together at the top of `pipeline/colmap_threads.py`;
+they are to be measured again after the upgrade to COLMAP 4.2.1. Halving 4
+threads to 2 saved 2 GiB but made the camera solve about half again as slow.
 
 Changing `--quality` would also move extraction to the GPU, but it changes the
 features themselves. Treat that as a separate experiment, not a memory setting.
@@ -380,8 +440,9 @@ limit. The heaviest camera solve measured so far also fits: 120 photographs at
 5184x3456 with no masks peaked at 3.7 GiB of program memory with
 `--num_threads 4`, but overflowed 8 GiB within 16 seconds at COLMAP's default
 thread count (2026-11-01, same emulation; see "COLMAP threads and memory"). On
-such a machine keep the `.wslconfig` default (or `memory=8GB`) and set
-`--num_threads` as in step 4 of "WSL2, on Windows". A `[host] memory_high` below
+such a machine keep the `.wslconfig` default (or `memory=8GB`) and leave
+`[colmap] num_threads = auto`, or set `--num_threads 4`, as in step 4 of
+"WSL2, on Windows". A `[host] memory_high` below
 the VM limit, such as `6G`, is optional and only throttles earlier. Not yet
 tested on real 16 GB hardware, and the emulation used a 6 GB GPU: on a smaller
 GPU, VRAM rather than RAM is the likelier limit.
@@ -1097,12 +1158,12 @@ command dies with `uv: command not found`. Export both directories:
 export PATH="$HOME/opt/colmap-prefix/bin:$HOME/.local/bin:$PATH"
 ```
 
-Second, on WSL2 set `[colmap] extra_args = --gpu_index 0 --num_threads 4` in
-your config. `--gpu_index 0` is explained in "COLMAP's GPU matcher on WSL2", and
-`--num_threads` in "COLMAP threads and memory" (both in "Pre-steps" above). Neither is
-specific to unattended runs, but this is where scripted runs hit them. The
-thread limit is worth setting on any machine with many cores and little RAM,
-not only under WSL2.
+Second, on WSL2 set `[colmap] extra_args = --gpu_index 0` in your config, as
+explained in "COLMAP's GPU matcher on WSL2", and leave `[colmap] num_threads` at
+its default, `auto`, which limits COLMAP's threads to what memory allows
+("COLMAP threads and memory"; both in "Pre-steps" above). Neither is specific
+to unattended runs, but this is where scripted runs hit them. The thread limit
+matters on any machine with many cores and little RAM, not only under WSL2.
 
 That runs four stages in order: COLMAP structure-from-motion, `ns-process-data`,
 `ns-train splatfacto`, and `ns-export gaussian-splat`. It exits non-zero if any

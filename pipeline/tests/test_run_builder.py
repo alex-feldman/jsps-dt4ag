@@ -394,6 +394,22 @@ class TestGeneratedConfigs(unittest.TestCase):
                                               "host": {"memory_high": "6G"}}))
         self.assertFalse(any("memory_high is empty" in w for w in capped["warnings"]))
 
+    def test_every_core_warning(self):
+        self.tree.capture("scene-01/capture-a")
+        warning = "COLMAP will use every CPU thread"
+
+        def warned(colmap):
+            p = plan(self.tree.state(capture="scene-01/capture-a", values={"colmap": colmap}))
+            return any(warning in w for w in p["warnings"])
+
+        self.assertFalse(warned({}), "the default, auto, does not warn")
+        self.assertFalse(warned({"num_threads": "4"}))
+        self.assertTrue(warned({"num_threads": "all"}))
+        self.assertTrue(warned({"num_threads": "ALL", "extra_args": "--gpu_index 0"}))
+        self.assertFalse(warned({"num_threads": "all", "extra_args": "--num_threads 4"}))
+        self.assertFalse(warned({"num_threads": "all", "extra_args": "--gpu_index 0 --num_threads=2"}))
+        self.assertTrue(warned({"num_threads": "all", "extra_args": "--num_threadsx 2"}))
+
     def test_single_capture_dry_run_succeeds(self):
         self.tree.capture("scene-01/capture-a")
         p = plan(self.tree.state(capture="scene-01/capture-a"))

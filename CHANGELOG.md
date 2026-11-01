@@ -18,6 +18,27 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- `[colmap] num_threads`, default `auto`: the runner chooses COLMAP's
+  `--num_threads` just before the colmap stage from the memory available then,
+  the smallest of Linux's `MemAvailable`, the room the stage's cgroup leaves
+  (`[host] memory_high`, or a limit on the runner's own cgroup such as
+  `wsl-guard.py --emulate-vm`) and, on WSL2, Windows' available RAM and commit
+  headroom less 2 GiB each. 256 MiB is kept back, each thread is allowed
+  1100 MiB per 3.84 MP extracted (the largest photograph after `--quality
+  high` shrinks its long side to 2400 px, read from the JPEG or PNG header),
+  and the count never exceeds the usable CPUs. Below one thread the run refuses
+  to start, with the figures and the override. A number is used as given;
+  `all` is COLMAP's own every-core default. An explicit `--num_threads` in
+  `extra_args` always wins and the log says so. The log line, `--dry-run`, and
+  the archived run record (`colmap_threads`, `colmap_threads_source`) show the
+  choice. Only the pipeline's own colmap stage is affected. The constants,
+  measured on COLMAP 3.12.0, are kept together in `pipeline/colmap_threads.py`
+  and are to be measured again after the COLMAP 4.2.1 upgrade. The run builder
+  warns when `num_threads = all` and `extra_args` sets no count. Covered by
+  `tests/test_colmap_threads.py`.
+- `pipeline/windows_host.py`: `wsl-guard.py`'s Windows memory probe and its
+  default thresholds, moved into one module that the guard and the runner both
+  use. The guard's behavior is unchanged.
 - `pipeline/copy_config.py`, a helper that copies `configs/example.ini` (or
   `--source`) to a new run config. `--destination-dir` picks the folder,
   `--name` or `--name-prefix` picks the file name, and repeated
@@ -192,6 +213,13 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Fixed
 
+- QUICKSTART, "COLMAP threads and memory", said 12 MP photographs need
+  "roughly two thirds" of the memory per COLMAP thread that 18 MP photographs
+  need. `--quality high` shrinks a copy of each photograph to 2400 px on the
+  long side before feature extraction, so a 4000x3000 photograph is extracted
+  at 2400x1800, slightly more pixels than an 18 MP 3:2 photograph's 2400x1600.
+  The section is rewritten around `num_threads = auto`, and keeps
+  `--num_threads 4` as the manual setting for a 16 GB machine.
 - A run log whose tail a crash left as NUL bytes no longer stops every later
   run at `append_run_log`: the NUL bytes are removed, the damaged file is kept
   beside it as `run-log.csv.nul-{stamp}`, and the new row's note says so.
