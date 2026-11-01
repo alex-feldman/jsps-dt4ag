@@ -172,6 +172,18 @@ Dates are the tag date, not the commit date, where they differ.
   `viewer.PALETTE` are now shared by the export and the existing code. See
   `pipeline/scripts/organ-analysis/README.md`.
 
+- Reviewed leaf-group display layer for the organ-analysis viewers. A new
+  `organ-leaf-groups` record (schema version 1) holds a human reviewer's decision
+  that several capture-local clusters are one leaf (`same_leaf`) or that two
+  leaves sit on one side branch (`side_branch_pair`). `render_viewer.py` renders
+  a fresh viewer and `viewer-record.json` from an existing output folder without
+  rerunning anything; `viewer.check_leaf_groups` refuses a record whose capture
+  or labels hash differs from the displayed data, or that names an unknown or
+  doubly grouped cluster. Same-leaf groups get colors outside the cluster
+  palette. The groups are display only: labels, cluster IDs and measurements are
+  unchanged, and without `--leaf-groups` the page is byte-identical to the
+  ungrouped viewer. See `pipeline/scripts/organ-analysis/README.md`.
+
 ### Fixed
 
 - A run log whose tail a crash left as NUL bytes no longer stops every later
