@@ -1,30 +1,142 @@
 # Running several reconstructions in sequence
 
-Status: **not a supported feature.** This document records what is missing and
-why each gap matters, so the next person to batch a set of runs knows what the
-runner does and does not do for them. Written 2026-08-17, after the first batch
-of four dates was driven by a shell loop.
+`run_pipeline.py` reconstructs **one capture per invocation**. That is its whole
+contract. `run_collection.py` sits above it: it finds every capture beneath a
+collection, derives each capture's config from one base config, and runs
+`run_pipeline.py` once per capture, one at a time, skipping captures whose
+catalog record shows they already completed. This file is the operator
+documentation for that, and the record of what is still missing. First written
+2026-08-17, after a batch of four dates was driven by a shell loop; the
+collection runner was added 2026-10-31.
 
-`run_pipeline.py` reconstructs **one dataset per invocation**. That is the whole
-contract. There is no batch mode, no queue, no scheduler, and no notion that
-several runs belong to one series. Sequencing is currently an external shell
-loop:
+## Collection runs
 
 ```bash
 export PATH="$HOME/opt/colmap-prefix/bin:$PATH"
-for d in <session-ids>; do
-  uv run python pipeline/run_pipeline.py --config pipeline/configs/<prefix>-$d.ini
-done
+uv run python pipeline/run_collection.py --config pipeline/configs/base.ini \
+    --collection {collection path} \
+    --catalog-root "$HOME/data" --catalog-root-id wsl-data --dry-run
 ```
 
-A loop is sequential by construction, which is the one property that genuinely
-matters here, so this works. Everything below is what it does not give you.
+`--collection` is relative to the base config's datasets directory (or an
+absolute path inside it). `--dry-run` lists every capture found, in the order
+it would run, with `run`, `skip` or `invalid` and the reason, and writes and
+runs nothing. Drop it to execute. `--allow-full-resolution` and
+`--catalog-hash-artifacts` are passed to every capture's `run_pipeline.py`. The
+catalog flags fall back to `PLANT_CATALOG_ROOT` and `PLANT_CATALOG_ROOT_ID`; the
+data must lie beneath the catalog root ([CATALOG-RECORDS.md](CATALOG-RECORDS.md)).
 
-## How it is actually done today
+What it does, by function in `pipeline/run_collection.py`:
 
-A driver script, one config per capture, a plain loop. This is the whole
-mechanism; there is nothing else. Recorded here because it works and because
-whoever automates this properly should start from what is already true.
+- **Discovery** (`discover_captures`): a directory containing `images/` is a
+  capture ([LAYOUT.md](LAYOUT.md#the-discovery-rule)), ordered by path.
+  Hidden directories are not searched. Symbolic links are never followed and
+  each one passed is listed as ignored. A capture inside another capture,
+  including a directory named `images` inside a capture's `images/`, refuses
+  the whole collection, since which one is the capture would be a guess.
+- **One base config** (`derive_config_text`): each capture's config is the base
+  with `[dataset] images_subpath` set to `{capture path}/images` and
+  `[paths] data_root` made absolute. Nothing else changes. It is written to
+  `derived/collection-configs/{collection path}/{capture}/{hash}.ini`, named by
+  its content hash, so an existing file is never rewritten
+  (`write_derived_config`). Edit the base config, not these files.
+- **Validation before anything runs** (`prepare`): every derived config is
+  loaded with `dt4ag_config.load_config`. A capture is `invalid`, and is not
+  run, when its config does not load, `[run] run_count` is pinned, `[train]
+  quit_on_train_completion` is false, it has no photographs, its data is not
+  beneath the catalog root, or its catalog capture ID already names a
+  different capture. Invalid
+  captures do not stop the valid ones.
+- **Sequential execution** (`execute`, `run_child`): each capture runs
+  `run_pipeline.py` in a fresh process with catalog emission on, under the
+  capture ID from `capture_id_for`. A failing capture does not stop the rest.
+  Ctrl-C or SIGTERM stops the batch: the running capture finalizes its own job
+  record and the remaining captures are reported as not started.
+- **Summary** (`record_outcome`, `print_summary`): every capture ends as
+  `completed`, `skipped`, `failed`, `invalid`, `interrupted` or `not started`,
+  with elapsed time, job ID and, for a failure, the exit code, failure cause,
+  stage, furthest milestone and first line of the error, all read from the job
+  record. Exit 0 counts as `completed` only when that record verifies. The
+  catalog job's evidence log holds each capture's tool output.
+
+Exit codes: `0` every capture completed or was skipped, `1` at least one
+failed or was invalid (also `--dry-run` with an invalid capture), `2` the
+collection itself could not start (an unreadable base config or collection, no
+capture found, an ambiguous nested capture, two captures mapping to one capture
+ID, a missing catalog flag),
+`130` or `143` the batch was interrupted or terminated.
+
+### When a capture counts as completed
+
+A capture is skipped only when a catalog job record for its capture ID passes
+every check in `why_incomplete`: status `completed` with exit 0, a progress
+`verified` milestone, every export artifact (`EXPORT_ROLES`) still present,
+at least `run_pipeline.MIN_EXPORT_BYTES`, the size its record states and a
+nonzero vertex count, the same derived config sections (`config.ini`) and the
+same photograph list (`selected_images`), and no input image modified after the
+job started. Any newer or older job passing those checks is enough; otherwise
+the capture runs again and the plan says why, citing the newest job. Nothing is
+deleted or overwritten: a rerun gets a new run ID beside the earlier outputs,
+and the earlier job records stay.
+
+### Decisions (Alex, 2026-11-01)
+
+Each choice below was the conservative default, implemented and tested, and
+was accepted as implemented on 2026-11-01. Each is cheap to reverse.
+
+- **Changed settings rerun.** Any difference in the derived config sections
+  since the completed job (including `[host]`, labels and log settings, not
+  only reconstruction parameters) makes the capture run again. There is no
+  flag to skip anyway. Comments and whitespace do not count.
+- **Changed inputs rerun.** An added, removed or renamed photograph, or any
+  image under `images/` (and the selected mask set, with `use_masks`) modified
+  after the job started, makes the capture run again. Content changes that
+  keep the old modification time (`cp -p`, `rsync -a` of new content) are not
+  detected; photographs are not hashed.
+- **Old records do not prove completion.** A job without progress milestones
+  (progress schema 0) or without recorded `config.ini` is treated as not
+  completed. Progress schema 1 records are accepted; their export size is not
+  compared because schema 1 did not record it.
+- **Capture IDs come from the path.** `capture_id_for` lowercases the capture's
+  path under `datasets/` and joins it with hyphens; the collection runner is
+  the caller that supplies the ID ([CATALOG-RECORDS.md](CATALOG-RECORDS.md)).
+  An explicit ID per capture, for example a key in `capture.ini`, was
+  considered and not chosen. Consequences: moving or renaming a capture makes it a
+  new capture that runs again, and a single-capture run made by hand under
+  another ID is not recognized. Two captures mapping to one ID refuse the
+  collection; an ID whose existing capture record points elsewhere makes that
+  capture invalid.
+- **A pinned `[run] run_count` is refused.** With it, a rerun would reuse the
+  earlier run's COLMAP workspace, output directory and export filename, and
+  could overwrite them. Leave it empty in a base config; `[run] date` may
+  stay pinned.
+- **Invalid captures are skipped, not fatal.** A capture whose derived config
+  fails validation is reported and the others run. The alternative is to
+  refuse the whole collection until every capture validates.
+- **A job still marked running is not completed.** It may be live in another
+  invocation or left by a hard kill; either way the capture runs again. There
+  is no lock (see "Concurrency policy").
+- **Symbolic links are never followed.** A capture whose `images` is a symlink
+  is listed as ignored rather than run.
+- **Interrupt stops the batch.** Ctrl-C, SIGTERM, or a child exiting 130 or 143
+  stops the remaining captures. A child that does not exit within
+  `CHILD_GRACE_SECONDS` of Ctrl-C is sent SIGTERM.
+
+### Not covered
+
+- No real reconstruction has been run through `run_collection.py`; tests use
+  fake children and `run_pipeline.main` with mocked tools.
+- Children are not routed through `wsl-guard`, so on WSL2 the per-run cache
+  release described below does not happen between captures.
+- No batch provenance (section 3), no rebuildable index, and no optional stop
+  after camera solves for review; those are later release-plan steps.
+
+## The shell loop it replaces
+
+Before `run_collection.py`, a batch was a driver script, one config per
+capture, and a plain loop. It still works, and it is still the way to run each
+capture under `wsl-guard`. Recorded here because its deliberate properties are
+the ones the collection runner keeps.
 
 ```bash
 #!/usr/bin/env bash
@@ -80,7 +192,7 @@ not removed (see `MASKING.md`).
 **The cost of this shape** is one config file per capture that differs from its
 siblings in about four lines, and no resume: re-running the loop re-runs
 everything, deriving new run ids, because nothing knows what already completed.
-Both are addressed in the gaps below.
+`run_collection.py` removes both.
 
 ## 1. Concurrency policy (decided 2026-10-20)
 
@@ -97,7 +209,12 @@ failure logs before treating an OOM as a capture or configuration defect.
 Optional coordination per GPU may be considered later. It is not a v0.3.0 gate.
 The batch itself must still remain sequential and preserve failure evidence.
 
-## 2. There is no resume, and re-running silently duplicates work
+## 2. Resume: closed for collection runs
+
+`run_collection.py` skips a capture only when its catalog record proves
+completion ("When a capture counts as completed" above). The rest of this
+section is why that was needed, and it still describes the shell loop and any
+hand-run `run_pipeline.py` invocation.
 
 Run ids auto-increment when `[run] date` and `run_count` are blank. So if a
 batch fails on its third dataset and the loop is simply re-run, the first two
@@ -109,9 +226,9 @@ The existing escape is manual: pass `--run-id <existing>` with `--from-stage` to
 resume one dataset. That does not compose with a loop, because the id is derived
 per dataset and the operator would have to know each one.
 
-Fix, in increasing order of effort: have the loop record each dataset's resolved
-run id as it goes; or teach the runner a `--skip-if-complete` that treats a
-dataset with a valid export as done.
+The collection runner does not resume a failed capture from its last good
+stage: a capture that did not complete runs again from the first stage under a
+new run ID, beside the failed attempt's outputs.
 
 ## 3. A batch has no provenance as a batch
 
@@ -128,7 +245,8 @@ comparing datasets in the series.
 
 Fix: a `series` or `batch_id` column, and a documented way to start a fresh log
 when the columns change (rename the old file; the runner creates a new one with
-current columns).
+current columns). `run_collection.py` does not add one: its captures' jobs are
+linked by capture ID only, and catalog batch provenance is release-plan step 6.
 
 ## 4. The training resolution is recorded in the artefact, not in the run log
 
@@ -157,7 +275,8 @@ design (`QUICKSTART.md`). Omitting the export is what caused the 2026-08-17
 failure: `ns-process-data` ran with no `ffmpeg`, built no image pyramid, and
 training silently fell back to native resolution and died mid-run. The
 prerequisite check added the same day now catches it before COLMAP starts, but
-the batch driver still has to remember the line.
+the batch driver still has to remember the line. `run_collection.py` passes its
+own environment to every capture, so export it before starting a collection.
 
 Fix: none needed in the runner. A driver script should export it itself and log
 which binaries resolved, so the log answers the question later.

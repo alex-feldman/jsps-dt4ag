@@ -140,10 +140,11 @@ viewer alive after training ends and never exits, which deadlocks an unattended
 run forever. The runner refuses to start the train stage otherwise, and
 `--allow-viewer-hang` is the deliberate override for interactive work.
 
-**What is not automated yet:** discovering multiple captures and running them as
-a batch, and refusing a second concurrent run that would contend for the GPU.
-Both are recorded in `SEQUENTIAL-RUNS.md`. Until then a batch is a shell loop
-over configs, which is sequential by construction but has no resume.
+**Several captures:** `run_collection.py` discovers the captures beneath a
+collection and runs this runner once per capture, sequentially, skipping
+captures whose catalog record proves completion (`SEQUENTIAL-RUNS.md`). A
+second concurrent invocation is not refused; there is no global GPU lock
+(`SEQUENTIAL-RUNS.md`, "Concurrency policy").
 
 ## Known reporting gap
 

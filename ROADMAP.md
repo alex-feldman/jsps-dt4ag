@@ -113,8 +113,11 @@ See [the ordered path to v0.3.0](docs/v0.3.0-release-plan.md).
 
 Two halves of one story: driving many captures without a hand-written
 loop, and being able to answer afterwards what each run did and how far it got.
-Today a batch is a shell loop over one config per capture, with no resume and no
-record of outcome (`pipeline/SEQUENTIAL-RUNS.md`).
+`pipeline/run_collection.py` now discovers and runs every capture beneath a
+collection from one base config and skips captures whose catalog record
+proves completion, and each run's catalog job record says how far it got
+(`pipeline/SEQUENTIAL-RUNS.md`, `pipeline/CATALOG-RECORDS.md`). No real GPU
+collection run has confirmed this yet.
 
 **Batching**
 

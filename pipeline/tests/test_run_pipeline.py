@@ -677,8 +677,10 @@ class TestObjectAgnostic(unittest.TestCase):
     def test_committed_files_name_no_object(self):
         for relative in (
             "run_pipeline.py",
+            "run_collection.py",
             "README.md",
             "tests/test_run_pipeline.py",
+            "tests/test_run_collection.py",
         ):
             path = PIPELINE_DIR / relative
             text = self._scannable(path)

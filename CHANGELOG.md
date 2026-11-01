@@ -28,6 +28,17 @@ Dates are the tag date, not the commit date, where they differ.
   capture settings and for checking a camera solve before training. QUICKSTART
   links to it from the capture-quality section.
 
+- `pipeline/run_collection.py` runs every capture beneath a collection, one at
+  a time, from one base config. Captures are discovered by the `images/` rule;
+  each capture's config is the base with `images_subpath` replaced, validated
+  before anything runs; one failing capture does not stop the rest, and the
+  summary names each failure from its catalog job record. A rerun skips a
+  capture only when a catalog job shows it verified with the same settings and
+  photographs and its export still intact; anything else runs again under a
+  new run ID, and nothing is deleted or overwritten. `--dry-run` lists the
+  plan. Its decided behaviors are listed in `pipeline/SEQUENTIAL-RUNS.md`
+  under "Decisions".
+
 - Add a programmatic camera-path generator that sorts solved video-frame poses
   chronologically, smooths and resamples the route, adds a small end reveal, and
   records source-hash provenance; document terminal rendering from the generated

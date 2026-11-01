@@ -44,6 +44,7 @@ data_root/
   derived/                       pipeline-owned, disposable, rebuildable
     masked/<collection path…>/<capture>/<camera>/*.png
     masked/<variant>/<collection path…>/<capture>/<camera>/*.png
+    collection-configs/{collection path}/{capture}/{hash}.ini   written by run_collection.py
 
   colmap/<collection path…>/<capture>/<run-id>/
   outputs/<collection path…>/<capture>/<run-id>/
@@ -145,9 +146,9 @@ transformation, not a reason to store it as JSON now.
 **A directory containing an `images/` subdirectory is a capture.**
 
 That single rule is what lets the pipeline be pointed at any level of a
-collection and process every capture beneath it, which is the batch capability
-`SEQUENTIAL-RUNS.md` records as missing. It is self-describing: no manifest, no
-config, no naming convention to remember.
+collection and process every capture beneath it: `run_collection.py` applies it
+in `discover_captures` (operator documentation in `SEQUENTIAL-RUNS.md`). It is
+self-describing: no manifest, no config, no naming convention to remember.
 
 It has to be strict to be useful. "A directory containing image files, possibly
 nested" would make every ancestor of a capture also look like a capture, and

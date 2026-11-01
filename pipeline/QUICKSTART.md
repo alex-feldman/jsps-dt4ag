@@ -928,6 +928,9 @@ Useful flags:
 --run-id val_260808-01-3120
 ```
 
+To run every capture beneath a collection from one config, use
+`pipeline/run_collection.py` ([SEQUENTIAL-RUNS.md](SEQUENTIAL-RUNS.md#collection-runs)).
+
 ### Where the output goes
 
 Each run gets an auto-generated id like `val_260808-01-3120`

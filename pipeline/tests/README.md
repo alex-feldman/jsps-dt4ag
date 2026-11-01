@@ -124,6 +124,17 @@ not part of this stdlib-only suite.
   the scope of this suite. `test_run_pipeline.py` asserts on the argument
   vectors the runner would execute, and executes none of them.
 
+`test_run_collection.py` covers `run_collection.py`: discovery (a parent of
+captures, nested and hidden directories, symlinks, an empty `images/`, path
+order), one base config derived per capture, validation before anything runs,
+sequential execution where one failure does not stop the rest, interruption,
+unchanged input photographs, and completion: a verified capture is skipped
+without a duplicate job, while failed, running, unverified, missing, empty,
+zero-vertex or replaced exports, changed settings, a changed image set, a
+photograph modified after the run and old record shapes all run again. The
+per-capture child is a fake that writes the catalog job a run would, or
+`run_pipeline.main` with every external command mocked. Nothing reconstructs.
+
 Catalog job progress, failure-path, SIGTERM, probe and old-record fixtures are
 in `test_plant_catalog.py`; see [CATALOG-RECORDS.md](../CATALOG-RECORDS.md) for
 the producer contract and what the fixtures cover.
