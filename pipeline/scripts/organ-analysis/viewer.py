@@ -5,6 +5,11 @@ import numpy as np
 PALETTE = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7']
 
 
+def palette_js():
+    """The palette as the page has always written it, so an existing page stays byte-identical."""
+    return '[' + ','.join("'%s'" % c for c in PALETTE) + ']'
+
+
 def write_viewer(out, bundle, candidates=None, plant_asset=None, labels_path=None):
     """Write out/viewer.html. ``plant_asset`` embeds per-leaf export records for selection/export."""
     with np.load(labels_path or out/'leaf_ids2.npz') as arrays:
@@ -175,4 +180,4 @@ for(const id of['points','edges','highlightCandidates','hideCandidates','hideCon
 addEventListener('resize',fit);fit();
 </script></html>'''
     with (out/'viewer.html').open('x') as f:
-        f.write(page.replace('__DATA__',payload).replace('__PALETTE__',json.dumps(PALETTE)))
+        f.write(page.replace('__DATA__',payload).replace('__PALETTE__',palette_js()))
