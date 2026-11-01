@@ -126,6 +126,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-mib", type=int, default=1024,
                         help="Stop the run below this much Windows available RAM, in "
                              "MiB (default 1024).")
+    parser.add_argument("--start-commit-mib", type=int, default=8192,
+                        help="Refuse to start below this much Windows commit headroom (the "
+                             "commit limit minus what is committed), in MiB (default 8192). "
+                             "Windows stops the whole WSL VM when commit runs out, even with "
+                             "RAM still available.")
+    parser.add_argument("--stop-commit-mib", type=int, default=2048,
+                        help="Stop the run below this much Windows commit headroom, in MiB "
+                             "(default 2048).")
     parser.add_argument("--drive", default=None,
                         help="Also watch free space on this Windows drive letter, for "
                              "example D (the drive that holds the WSL disk or the data).")
@@ -191,6 +199,10 @@ def validate_args(args: argparse.Namespace) -> List[str]:
     if not args.stop_mib < args.start_mib:
         problems.append("--stop-mib must be below --start-mib, or every start would "
                         "be stopped at once")
+    if min(args.start_commit_mib, args.stop_commit_mib) < 0:
+        problems.append("commit thresholds cannot be negative")
+    if not args.stop_commit_mib < args.start_commit_mib:
+        problems.append("--stop-commit-mib must be below --start-commit-mib")
     if args.relief_mib < args.stop_mib:
         problems.append("--relief-mib must not be below --stop-mib, or the cache is "
                         "only released after the run was stopped")
@@ -275,15 +287,22 @@ def config_memory_high(passthrough: Sequence[str]) -> str:
 # --------------------------------------------------------------------------
 
 def probe_script(drive: Optional[str]) -> str:
-    """The PowerShell that reports Windows available RAM and, optionally, free disk.
+    """The PowerShell that reports Windows available RAM, commit headroom and, optionally, free disk.
 
     ``FreePhysicalMemory`` is what Task Manager calls "Available": it includes
     standby (cache Windows can reclaim at once), which is the right figure for
     "will Windows run out". Without standby it would look alarming on any
     healthy machine.
+
+    ``FreeVirtualMemory`` is the commit headroom: the commit limit (RAM plus page
+    file) minus what is committed. When it runs out Windows stops the WSL VM
+    outright, even with RAM available (PX13, 2026-11-01: two runs died within
+    seconds of starting COLMAP with about 5 GiB of RAM available and about 7 GiB
+    of commit headroom).
     """
     script = ("$o=Get-CimInstance Win32_OperatingSystem;"
-              "$r=[ordered]@{ram_mib=[math]::Floor($o.FreePhysicalMemory/1024)};")
+              "$r=[ordered]@{ram_mib=[math]::Floor($o.FreePhysicalMemory/1024);"
+              "commit_mib=[math]::Floor($o.FreeVirtualMemory/1024)};")
     if drive:
         script += f"$r['drive_gib']=[math]::Round((Get-PSDrive {drive}).Free/1GB,1);"
     return script + "$r|ConvertTo-Json -Compress"
@@ -301,6 +320,8 @@ def parse_probe(text: str, drive: Optional[str]) -> dict:
             continue
         try:
             sample = {"ram_mib": int(raw["ram_mib"])}
+            if raw.get("commit_mib") is not None:
+                sample["commit_mib"] = int(raw["commit_mib"])
             if drive:
                 sample["drive_gib"] = float(raw["drive_gib"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -366,6 +387,10 @@ def start_problems(sample: dict, args: argparse.Namespace) -> List[str]:
     if sample["ram_mib"] < args.start_mib:
         problems.append(f"Windows has {sample['ram_mib']} MiB RAM available "
                         f"(need {args.start_mib})")
+    if sample.get("commit_mib") is not None and sample["commit_mib"] < args.start_commit_mib:
+        problems.append(f"Windows has {sample['commit_mib']} MiB commit headroom "
+                        f"(need {args.start_commit_mib}); close programs or enlarge the "
+                        f"page file")
     if args.drive and sample.get("drive_gib") is not None \
             and sample["drive_gib"] < args.start_drive_gib:
         problems.append(f"{args.drive}: has {sample['drive_gib']} GiB free "
@@ -377,6 +402,8 @@ def poll_action(sample: dict, args: argparse.Namespace, now: float,
                 last_release: Optional[float]) -> Optional[str]:
     """``"stop"``, ``"release"`` or None for one in-run sample. Stop wins."""
     if sample["ram_mib"] < args.stop_mib:
+        return "stop"
+    if sample.get("commit_mib") is not None and sample["commit_mib"] < args.stop_commit_mib:
         return "stop"
     if args.drive and sample.get("drive_gib") is not None \
             and sample["drive_gib"] < args.stop_drive_gib:
@@ -633,7 +660,8 @@ def run(args: argparse.Namespace, host: Host) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     command = child_command(args)
     thresholds = {k: getattr(args, k) for k in (
-        "start_mib", "relief_mib", "stop_mib", "drive", "start_drive_gib",
+        "start_mib", "relief_mib", "stop_mib", "start_commit_mib", "stop_commit_mib",
+        "drive", "start_drive_gib",
         "stop_drive_gib", "interval", "relief_every", "kill_grace", "no_cache_release")}
     state = {
         "command": command, "cwd": os.getcwd(), "started": _now_iso(),

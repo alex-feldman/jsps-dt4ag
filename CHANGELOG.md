@@ -144,6 +144,10 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Fixed
 
+- A run log whose tail a crash left as NUL bytes no longer stops every later
+  run at `append_run_log`: the NUL bytes are removed, the damaged file is kept
+  beside it as `run-log.csv.nul-{stamp}`, and the new row's note says so.
+
 - `wsl-guard.py` refuses to start a run that trains or exports when the
   interpreter it would use cannot find torch, and names that interpreter. The
   COLMAP prefix ships its own `python`, so after `export
@@ -202,6 +206,14 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Reconcile the alpha release history and adopt release-time versioning. Define
   the v0.3.0 alpha, beta and release gates, with an ordered release plan.
+
+- `wsl-guard` also checks Windows commit headroom (`FreeVirtualMemory`): it
+  refuses to start below `--start-commit-mib` (8192) and stops the run below
+  `--stop-commit-mib` (2048). Running out of commit makes Windows stop the whole
+  WSL VM even with RAM available, which `--start-mib` could not see.
+- The run builder can print a single capture's real run through `wsl-guard`
+  (a checkbox, defaulted by the `[run-builder] wsl_guard` setting) and warns
+  when `[host] memory_high` is empty.
 
 ### Removed
 

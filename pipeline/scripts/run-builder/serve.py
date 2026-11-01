@@ -73,6 +73,7 @@ SETTINGS_KEYS = (
     ("run-builder", "catalog_root", "RUN_BUILDER_CATALOG_ROOT"),
     ("run-builder", "catalog_root_id", "RUN_BUILDER_CATALOG_ROOT_ID"),
     ("run-builder", "shell_setup", "RUN_BUILDER_SHELL_SETUP"),
+    ("run-builder", "wsl_guard", "RUN_BUILDER_WSL_GUARD"),
     ("samask", "directory", "RUN_BUILDER_SAMASK_DIR"),
     ("samask", "command", "RUN_BUILDER_SAMASK_COMMAND"),
     ("samask", "mask_extension", "RUN_BUILDER_SAMASK_MASK_EXTENSION"),
@@ -98,6 +99,7 @@ class Settings:
     catalog_root: Path
     catalog_root_id: str = ""
     shell_setup: str = ""
+    wsl_guard: str = ""
     samask_directory: str = ""
     samask_command: str = ""
     samask_mask_extension: str = ""
@@ -156,6 +158,7 @@ def load_settings(path: Optional[Path] = None, environ: Optional[Dict[str, str]]
         catalog_root=under_root("run-builder.catalog_root", data_root),
         catalog_root_id=values.get("run-builder.catalog_root_id", ""),
         shell_setup=values.get("run-builder.shell_setup", ""),
+        wsl_guard=values.get("run-builder.wsl_guard", ""),
         samask_directory=values.get("samask.directory", ""),
         samask_command=values.get("samask.command", ""),
         samask_mask_extension=values.get("samask.mask_extension", ""),

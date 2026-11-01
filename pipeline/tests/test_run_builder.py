@@ -372,6 +372,28 @@ class TestGeneratedConfigs(unittest.TestCase):
         [run] = [s for s in one["steps"] if s["kind"] == "run"]
         self.assertNotIn("separate reconstructions", run["what"])
 
+    def test_wsl_guard_wraps_the_real_run_only(self):
+        self.tree.capture("scene-01/capture-a")
+        p = plan(self.tree.state(capture="scene-01/capture-a", wslGuard=True))
+        [run] = [s for s in p["steps"] if s["kind"] == "run"]
+        [dry] = [s for s in p["steps"] if s["kind"] == "dry-run"]
+        self.assertIn("pipeline/scripts/wsl-guard/wsl-guard.py", run["command"])
+        self.assertNotIn("wsl-guard", dry["command"])
+        argv = run["argv"]
+        passthrough = argv[argv.index("--") + 1:]
+        run_pipeline.build_parser().parse_args(passthrough)
+        self.assertIn("wsl-guard", run["what"])
+
+    def test_memory_high_warning(self):
+        self.tree.capture("scene-01/capture-a")
+        empty = plan(self.tree.state(capture="scene-01/capture-a"))
+        self.assertTrue(any("memory_high is empty" in w for w in empty["warnings"]))
+        capped = plan(self.tree.state(capture="scene-01/capture-a",
+                                      values={"train": {"quit_on_train_completion": "true"},
+                                              "run": {"colmap_version": "312"},
+                                              "host": {"memory_high": "6G"}}))
+        self.assertFalse(any("memory_high is empty" in w for w in capped["warnings"]))
+
     def test_single_capture_dry_run_succeeds(self):
         self.tree.capture("scene-01/capture-a")
         p = plan(self.tree.state(capture="scene-01/capture-a"))
