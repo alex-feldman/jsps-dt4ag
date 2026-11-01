@@ -1603,8 +1603,10 @@ class TestPublicSurface(unittest.TestCase):
             sorted(dt4ag_config.__all__),
             [
                 "CAPTURE_METADATA_FILENAME",
+                "CONFIG_SCHEMA",
                 "ConfigError",
                 "Dt4agConfig",
+                "config_schema",
                 "detect_colmap_version",
                 "load_config",
                 "read_capture_metadata",

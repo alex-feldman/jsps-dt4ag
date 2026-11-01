@@ -18,6 +18,24 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- `pipeline/scripts/run-builder/`, a run builder: a local page that asks for
+  the data root, one capture or a collection (or a video, through the existing
+  `video-frames` commands), masks (none, an existing set, or new sets from samask
+  prompts, one `masks_{variant}/` per prompt, never merged) and the run settings,
+  then writes the config (or one per mask variant, to compare them) and the
+  commands in order: samask, dry run, real run. It works opened as a file; an
+  optional standard-library server bound to 127.0.0.1 browses folders, counts
+  photographs, discovers captures with `run_collection.discover_captures`,
+  validates with `load_config` and the real dry run, and saves configs without
+  overwriting, refusing any path outside the data root. It runs no stage and no
+  samask; samask's location and command template come from a gitignored settings
+  file or environment variables. `dt4ag_config.CONFIG_SCHEMA` and
+  `config_schema()` (`python pipeline/dt4ag_config.py --schema`) export every
+  key the loader reads with its default, allowed values and help from
+  `configs/README.md`; tests fail when the schema, the loader and the page's
+  embedded copy disagree. `configs/README.md` gains the `downscale_factor` row it
+  was missing.
+
 - A test fails when any tracked `.ipynb` has stored cell outputs or a
   non-null execution count, naming the file and cell and pointing to
   `nbstripout`. The notebook was already committed clean; this keeps it so.

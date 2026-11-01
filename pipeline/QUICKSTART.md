@@ -718,6 +718,10 @@ Everything the pipeline needs lives in one INI file. Nothing is hardcoded.
 cp pipeline/configs/example.ini pipeline/configs/my-run.ini
 ```
 
+Or let a page write it: `pipeline/scripts/run-builder/` asks for the capture,
+the masks and the settings, and prints the config with the dry-run and run
+commands (see its README). The keys below are what it fills in.
+
 ### The keys a first run must set
 
 These five are the complete set for a fresh machine. Every other key in
