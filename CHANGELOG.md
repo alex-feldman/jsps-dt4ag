@@ -16,6 +16,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+## [0.3.0-alpha.15] - 2026-11-02
+
 ### Added
 
 - `[colmap] num_threads`, default `auto`: the runner chooses COLMAP's
