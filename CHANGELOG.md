@@ -36,8 +36,8 @@ Dates are the tag date, not the commit date, where they differ.
   capture only when a catalog job shows it verified with the same settings and
   photographs and its export still intact; anything else runs again under a
   new run ID, and nothing is deleted or overwritten. `--dry-run` lists the
-  plan. The conservative choices still open are listed in
-  `pipeline/SEQUENTIAL-RUNS.md` under "DECISION NEEDED".
+  plan. Its decided behaviors are listed in `pipeline/SEQUENTIAL-RUNS.md`
+  under "Decisions".
 
 - Add a programmatic camera-path generator that sorts solved video-frame poses
   chronologically, smooths and resamples the route, adds a small end reveal, and

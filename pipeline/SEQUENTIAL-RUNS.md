@@ -79,10 +79,10 @@ the capture runs again and the plan says why, citing the newest job. Nothing is
 deleted or overwritten: a rerun gets a new run ID beside the earlier outputs,
 and the earlier job records stay.
 
-### DECISION NEEDED
+### Decisions (Alex, 2026-11-01)
 
-Each choice below is the conservative default, implemented and tested. Each
-is cheap to reverse.
+Each choice below was the conservative default, implemented and tested, and
+was accepted as implemented on 2026-11-01. Each is cheap to reverse.
 
 - **Changed settings rerun.** Any difference in the derived config sections
   since the completed job (including `[host]`, labels and log settings, not
@@ -98,10 +98,10 @@ is cheap to reverse.
   completed. Progress schema 1 records are accepted; their export size is not
   compared because schema 1 did not record it.
 - **Capture IDs come from the path.** `capture_id_for` lowercases the capture's
-  path under `datasets/` and joins it with hyphens. This departs from
-  CATALOG-RECORDS.md ("the capture ID is supplied by the caller, never invented
-  from a path"); the alternative is an explicit ID per capture, for example a
-  key in `capture.ini`. Consequences: moving or renaming a capture makes it a
+  path under `datasets/` and joins it with hyphens; the collection runner is
+  the caller that supplies the ID ([CATALOG-RECORDS.md](CATALOG-RECORDS.md)).
+  An explicit ID per capture, for example a key in `capture.ini`, was
+  considered and not chosen. Consequences: moving or renaming a capture makes it a
   new capture that runs again, and a single-capture run made by hand under
   another ID is not recognized. Two captures mapping to one ID refuse the
   collection; an ID whose existing capture record points elsewhere makes that

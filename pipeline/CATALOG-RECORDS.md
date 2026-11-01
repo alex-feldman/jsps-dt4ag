@@ -9,7 +9,10 @@ Enable catalog emission with all three arguments (or their matching
 The root must contain the capture and linked outputs. An explicit root is now
 required instead of defaulting to the loaded configuration's data root: the
 record must be created before config loading so invalid configs can be recorded.
-The capture ID is supplied by the caller, never invented from a path. Without
+`run_pipeline.py` never invents a capture ID: the caller supplies it.
+`run_collection.py` is such a caller and derives each capture's ID from its
+path under `datasets/` (`run_collection.capture_id_for`; decided 2026-11-01,
+[SEQUENTIAL-RUNS.md](SEQUENTIAL-RUNS.md#decisions-alex-2026-11-01)). Without
 these prerequisites, catalog setup refuses and cannot promise a durable record.
 Dry runs write no catalog. Ordinary runs without catalog enablement are unchanged.
 
@@ -151,14 +154,15 @@ progress field for any job record; a field the record's schema did not have is
 null, and a job without `progress` reads as `schema_version` 0. Callers use the
 version to tell "not recorded" from "probed and unknown".
 
-**DECISION NEEDED (Alex).**
+**Decided (Alex, 2026-11-01): each choice below stands as implemented.** The
+Mission Control consumer check above passed against schema 2 fixtures the
+same day.
 
 - Artifact sizes live in the job's `progress.artifacts`, not as a new
-  artifact-record field, because the Mission Control artifact validator could
-  not be run here. Promoting `size_bytes` into artifact records is a later,
-  consumer-checked change.
+  artifact-record field. Promoting `size_bytes` into artifact records is a
+  later, consumer-checked change.
 - SIGTERM maps to the existing `cancelled` status rather than a new
   `execution_status` value, so no consumer enum changes.
 - Emission is still opt-in. "Failed runs get records too" holds only for
-  catalog-enabled invocations until automatic enablement (with a capture-ID
-  rule) is decided.
+  catalog-enabled invocations. `run_collection.py` enables it for every
+  capture it runs; automatic enablement for single runs is later work.
