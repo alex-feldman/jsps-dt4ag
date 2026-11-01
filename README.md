@@ -43,6 +43,12 @@ installation and general pipeline use. For a movie capture, follow
 [`pipeline/VIDEO-WORKFLOW.md`](pipeline/VIDEO-WORKFLOW.md). An AI agent
 working from this checkout should read [`AGENTS.md`](AGENTS.md) first.
 
+To fill in a run in a form instead of editing an INI file, use the **run
+builder**: `uv run python pipeline/scripts/run-builder/serve.py`, then open
+`http://127.0.0.1:8765/`. It writes the config and prints the commands to run;
+it runs nothing itself. Setup and a first run:
+[`pipeline/scripts/run-builder/README.md`](pipeline/scripts/run-builder/README.md).
+
 `scripts/install.sh` handles the system packages, `uv`, the COLMAP 3.12.0 CUDA
 prefix and the locked Python environment, then verifies the result. It was run
 on a bare `ubuntu:24.04` holding no compiler, `curl`, `git` or Python and
@@ -108,6 +114,7 @@ coming from this project's own runs.
 | [`pipeline/QUICKSTART.md`](pipeline/QUICKSTART.md) | **Start here to run it.** Install and use, from nothing. |
 | [`pipeline/README.md`](pipeline/README.md) | What is in the pipeline directory, and the runner's options. |
 | [`pipeline/configs/README.md`](pipeline/configs/README.md) | Every configuration key. |
+| [`pipeline/scripts/run-builder/README.md`](pipeline/scripts/run-builder/README.md) | The run builder: a local page that writes a config and the commands to run it. |
 | [`scripts/install.sh`](scripts/install.sh) | The automated install. `--dry-run` prints every command it would run. |
 | [Project wiki](https://github.com/alex-feldman/jsps-dt4ag/wiki) | Background and context. It carries no install steps by design. |
 | [Demo page](https://alex-feldman.github.io/jsps-dt4ag/) | Published from `docs/` on this branch. |

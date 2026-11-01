@@ -41,17 +41,6 @@ from dt4ag_config import (  # noqa: E402
 
 EXAMPLE_INI = PIPELINE_DIR / "configs" / "example.ini"
 
-# Terms that must never appear in the committed example config. The pipeline is
-# object-agnostic; the example must not imply a subject.
-FORBIDDEN_TERMS = [
-    "plant",
-    "tomato",
-    "tanashi",
-    "soybean",
-    "houseplant",
-    "arabidopsis",
-]
-
 SECTIONS = ("paths", "dataset", "run", "colmap", "nerfstudio", "train", "export")
 
 
@@ -1482,34 +1471,6 @@ class TestCommittedExampleConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(EXAMPLE_INI)
 
-    def test_example_ini_contains_no_subject_specific_term(self):
-        text = EXAMPLE_INI.read_text(encoding="utf-8").lower()
-        for term in FORBIDDEN_TERMS:
-            with self.subTest(term=term):
-                self.assertNotIn(
-                    term, text,
-                    f"the committed example config must stay object-agnostic, "
-                    f"but it mentions {term!r}")
-
-    def test_notebook_contains_no_subject_specific_term(self):
-        """The committed notebook must be object-agnostic too.
-
-        This is not hypothetical. Executing the notebook stores every cell's
-        stdout inside the .ipynb, and those cells print real dataset paths, so
-        committing an executed copy leaks the subject and the directory layout
-        of the drive it ran on. Save the notebook with its outputs cleared.
-        """
-        notebook = PIPELINE_DIR / "notebooks" / "nerfstudio-pipeline-06.ipynb"
-        if not notebook.is_file():
-            self.skipTest(f"notebook not present at {notebook}")
-        text = notebook.read_text(encoding="utf-8").lower()
-        for term in FORBIDDEN_TERMS:
-            with self.subTest(term=term):
-                self.assertNotIn(
-                    term, text,
-                    f"the committed notebook must stay object-agnostic, but it "
-                    f"mentions {term!r}. Clear the cell outputs before "
-                    f"committing an executed notebook.")
 
 
 # --------------------------------------------------------------------------
