@@ -33,7 +33,22 @@ Install both inside the same Linux or WSL2 environment as the pipeline:
 **The model and the pipeline share one GPU.** On a small GPU, a model loaded in
 VRAM can leave too little for COLMAP's matcher or for training. Use the agent to
 prepare and dry-run, and have nothing else on the GPU while a stage that needs
-it runs. `ollama ps` shows what is loaded, and `ollama stop {model}` unloads it.
+it runs. Before you start such a stage:
+
+1. **Finish with the agent first.** OpenCode calls the model again between its
+   steps, and each call reloads it into VRAM. Do not unload the model and then
+   go back to the agent before the stage finishes.
+2. **Unload the model.** `ollama ps` shows what is loaded, and
+   `ollama stop {model}` unloads it. Stop only the model you started; if
+   `ollama ps` lists another one, find out who is using it before going on.
+3. **Check that the memory came back.** Run `nvidia-smi` (give it up to 60
+   seconds; on WSL2 it can be slow) and compare the used memory with what it
+   showed while the model was loaded. Unloading can take a little while: check
+   again every few seconds, for up to two minutes. If `ollama ps` is empty but
+   the model-sized allocation is still there, stop and find out why rather than
+   starting the stage anyway.
+4. **Check nothing else is on the GPU**, for example another reconstruction or
+   a training run. Do not stop a process you did not start.
 
 ## 2. Choose and prepare a model
 
