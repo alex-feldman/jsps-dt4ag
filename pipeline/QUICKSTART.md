@@ -1732,3 +1732,7 @@ python -m unittest discover -s pipeline/tests -v
 They cover config loading and the runner's own logic. They deliberately do not
 need a GPU, COLMAP, or any real data, so they prove nothing about a real
 reconstruction.
+
+### Selecting an experimental COLMAP executable
+
+Set `[colmap] executable` to the executable name or path for a run; its default is `colmap` on PATH. The pipeline passes this selection to nerfstudio and records the actual path and detected version independently of a pinned run ID. The auto thread model is measured for 3.12.0 only; for an unmeasured version, choose an explicit thread count after assessing memory. COLMAP 4.2.1 support remains experimental pending reconstruction and memory comparison. See `configs/README.md` for the settings.

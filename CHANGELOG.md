@@ -16,6 +16,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+- Experimental per-config COLMAP executable selection, actual executable provenance, and refusal of auto threads for unmeasured versions.
+
 ## [0.3.0-alpha.15] - 2026-11-02
 
 ### Added

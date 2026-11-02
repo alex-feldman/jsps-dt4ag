@@ -524,11 +524,26 @@ class TestConfigKey(TempCase):
 # --------------------------------------------------------------------------
 
 class TestRunner(TempCase):
-    def run_pipeline(self, cfg, *argv, figures=None):
+    def test_unmeasured_version_refuses_auto_even_when_run_id_is_pinned(self):
+        cfg = load_config(write_config(self.root, "executable = /opt/other/bin/colmap"))
+        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value="421") as detect:
+            decision = run_pipeline.decide_colmap_threads(cfg, [])
+        self.assertIsNotNone(decision.refusal)
+        detect.assert_called_once_with("/opt/other/bin/colmap")
+        self.assertEqual(run_pipeline.colmap_command(cfg, self.root)[0], "/opt/other/bin/colmap")
+        self.assertIn("/opt/other/bin/colmap", run_pipeline.process_command(cfg, self.root))
+
+    def test_explicit_threads_allow_unmeasured_binary(self):
+        cfg = load_config(write_config(self.root, "num_threads = 2"))
+        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value="421"):
+            self.assertEqual(run_pipeline.decide_colmap_threads(cfg, []).threads, 2)
+
+    def run_pipeline(self, cfg, *argv, figures=None, version="3120"):
         args = run_pipeline.parse_args(["--config", str(cfg.source), *argv])
         out = io.StringIO()
         figures = figures or host(linux=7300, ram=7168, commit=10240)
-        with mock.patch.object(ct, "read_host_memory", return_value=figures) as read, \
+        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value=version), \
+                mock.patch.object(ct, "read_host_memory", return_value=figures) as read, \
                 redirect_stdout(out):
             try:
                 code = run_pipeline.run_pipeline(cfg, args)
@@ -571,7 +586,7 @@ class TestRunner(TempCase):
         [command] = [line for line in out.splitlines() if line.strip().startswith("$ colmap")]
         self.assertEqual(command.count("--num_threads"), 1)
 
-    def _real(self, cfg, figures):
+    def _real(self, cfg, figures, version="3120"):
         """A real (not dry) colmap stage whose external command is a fake."""
         commands = []
 
@@ -584,8 +599,21 @@ class TestRunner(TempCase):
         with mock.patch.object(run_pipeline, "check_prerequisites"), \
                 mock.patch.object(run_pipeline, "run_command", side_effect=fake_run), \
                 mock.patch.object(run_pipeline, "detect_nerfstudio_version", return_value="x"):
-            code, out, _ = self.run_pipeline(cfg, "--stage", "colmap", figures=figures)
+            code, out, _ = self.run_pipeline(cfg, "--stage", "colmap", figures=figures, version=version)
         return code, out, commands
+
+    def test_run_records_actual_version_separately_from_pinned_id(self):
+        cfg = load_config(write_config(self.root, "num_threads = 2\nexecutable = /opt/candidate/bin/colmap"))
+        with mock.patch.object(run_pipeline.shutil, "which", return_value="/opt/candidate/bin/colmap"):
+            code, out, commands = self._real(cfg, host(linux=7300), version="421")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(commands[0][0], "/opt/candidate/bin/colmap")
+        [archive] = list(cfg.config_archive_dir.iterdir())
+        record = configparser.ConfigParser(interpolation=None)
+        record.read(archive, encoding="utf-8")
+        self.assertEqual(record["run-record"]["colmap_version"], "3120")
+        self.assertEqual(record["run-record"]["colmap_version_actual"], "421")
+        self.assertEqual(record["run-record"]["colmap_executable_actual"], "/opt/candidate/bin/colmap")
 
     def test_real_run_refuses_below_one_thread_and_records_nothing(self):
         cfg = load_config(write_config(self.root))
