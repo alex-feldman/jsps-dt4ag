@@ -329,7 +329,7 @@ class TestCommands(TempTreeTestCase):
         command = process_command(cfg, self.root / "ws")
         self.assertEqual(command[:2], ["ns-process-data", "images"])
         self.assertIn("--skip-colmap", command)
-        self.assertEqual(command[-2:], ["--colmap-model-path", "sparse/0"])
+        self.assertEqual(command[-4:], ["--colmap-model-path", "sparse/0", "--colmap-cmd", "colmap"])
 
     def test_process_command_omits_skip_colmap_when_disabled(self):
         cfg = make_config(self.root, skip_colmap="false")

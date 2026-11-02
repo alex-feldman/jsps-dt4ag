@@ -692,22 +692,22 @@ class TestRunIdentity(TempDirTestCase):
         even after COLMAP has been upgraded underneath them.
         """
         cfg = self._cfg(date="260807", run_count="01", colmap_version="999")
-        self.patch_module("detect_colmap_version", lambda: "312")
+        self.patch_module("detect_colmap_version", lambda *args: "312")
         self.assertEqual(cfg.resolve_colmap_version(), "999")
 
     def test_resolve_colmap_version_detects_when_config_is_blank(self):
         cfg = self._cfg(date="260807", run_count="01")
-        self.patch_module("detect_colmap_version", lambda: "312")
+        self.patch_module("detect_colmap_version", lambda *args: "312")
         self.assertEqual(cfg.resolve_colmap_version(), "312")
 
     def test_resolve_colmap_version_falls_back_to_config(self):
         cfg = self._cfg(date="260807", run_count="01", colmap_version="311")
-        self.patch_module("detect_colmap_version", lambda: None)
+        self.patch_module("detect_colmap_version", lambda *args: None)
         self.assertEqual(cfg.resolve_colmap_version(), "311")
 
     def test_resolve_colmap_version_raises_rather_than_inventing_a_version(self):
         cfg = self._cfg(date="260807", run_count="01")
-        self.patch_module("detect_colmap_version", lambda: None)
+        self.patch_module("detect_colmap_version", lambda *args: None)
         with self.assertRaises(ConfigError) as caught:
             cfg.resolve_colmap_version()
         message = str(caught.exception)
@@ -716,7 +716,7 @@ class TestRunIdentity(TempDirTestCase):
 
     def test_make_run_id_propagates_the_undetectable_version_error(self):
         cfg = self._cfg(date="260807", run_count="01")
-        self.patch_module("detect_colmap_version", lambda: None)
+        self.patch_module("detect_colmap_version", lambda *args: None)
         with self.assertRaises(ConfigError):
             cfg.make_run_id()
 
