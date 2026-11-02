@@ -145,10 +145,11 @@ the classic WSL mistake:
    the drive is full (see "The backstop: the guard" below). If WSL will not
    start, check that drive first.
 
-4. **COLMAP's threads are limited for you; you do not need to raise WSL's
-   memory cap.** **WSL2 gives the guest 50 percent of host RAM by
-   default**: 8 GB on a 16 GB machine. The whole pipeline fits in that, but only
-   if COLMAP runs on a few threads. By default COLMAP extracts features on one
+4. **COLMAP's threads are limited for you.** **WSL2 gives the guest 50
+   percent of host RAM by default**: 8 GB on a 16 GB machine. Whether a run
+   fits also depends on Windows headroom, the capture, other stages and the GPU.
+   The measurements below are examples, not a guaranteed minimum. By default
+   COLMAP extracts features on one
    thread per CPU core, and every thread needs about 1 GiB. On 120
    images at 18 MP, 24 threads filled 8 GB within 16 seconds, and 4 threads
    peaked at 3.8 GB (see "COLMAP threads and memory" below). Running out is nasty
@@ -165,13 +166,13 @@ the classic WSL mistake:
    extra_args = --gpu_index 0
    ```
 
-   To fix the count yourself instead, add `--num_threads 4` to `extra_args`
-   (or set `num_threads = 4`); 4 is the measured safe value on a 16 GB machine.
+   A fixed count overrides the automatic budget; four threads completed one
+   measured COLMAP-only emulation, but are not universally safe. Keep the guard
+   active and assess the available headroom before overriding `auto`.
 
-   **Leave the guest memory cap at its default, or cap it at 8 GB on a larger
-   machine.** A higher cap gains this pipeline nothing, and lets WSL's file
-   cache take RAM that Windows needs (see "Memory: WSL can empty Windows' RAM"
-   below). To set it, create `%USERPROFILE%\.wslconfig`:
+   **Consider the default guest memory cap, or an 8 GB cap on a larger
+   machine.** A higher cap lets WSL's file cache take more RAM that Windows
+   needs (see "Memory: WSL can empty Windows' RAM" below). To set it, create `%USERPROFILE%\.wslconfig`:
 
    ```ini
    [wsl2]
@@ -291,8 +292,8 @@ settings, untouched.
 given. `num_threads = all` is COLMAP's own default, one thread per CPU, with no
 regard to memory; the run builder warns about it. An explicit `--num_threads N`
 in `[colmap] extra_args` always wins over the key, and the log says the key was
-overridden. On a 16 GB Windows machine, `--num_threads 4` is the measured safe
-manual value (below).
+overridden. Four threads completed the specific COLMAP-only emulation below;
+that result does not guarantee enough Windows headroom on another run.
 
 **Why photographs over 2400 px all cost about the same.** `--quality high`
 makes COLMAP shrink a copy of each photograph so its long side is 2400 px
@@ -428,24 +429,39 @@ another WSL terminal shows `buff/cache` levelling off near the cap instead of
 climbing, and Windows' available RAM (Task Manager, or the guard's host-sample
 JSONL) stays roughly flat through `ns-process-data`, where it used to collapse.
 
-**Windows machines with 16 GB of RAM.** WSL's default VM limit is half of
-Windows' RAM, so on a 16 GB machine the VM gets 8 GB and Windows keeps the
-rest. The whole pipeline fits in that. Measured 2026-10-20 by emulation on the
-laptop above: colmap, process, train and export on the 55-frame 3840x2880
-capture (`downscale_factor` 4, `[host] process_cpus = 0,1`), run inside a hard
-`MemoryMax=8G` with `MemorySwapMax=4G`, finished in 27 minutes with no
-out-of-memory kills and no swap used. The programs' own memory peaked at
-2.4 GiB; the rest of the 8 GiB was file cache, which the kernel evicted at the
-limit. The heaviest camera solve measured so far also fits: 120 photographs at
-5184x3456 with no masks peaked at 3.7 GiB of program memory with
-`--num_threads 4`, but overflowed 8 GiB within 16 seconds at COLMAP's default
-thread count (2026-11-01, same emulation; see "COLMAP threads and memory"). On
-such a machine keep the `.wslconfig` default (or `memory=8GB`) and leave
-`[colmap] num_threads = auto`, or set `--num_threads 4`, as in step 4 of
-"WSL2, on Windows". A `[host] memory_high` below
-the VM limit, such as `6G`, is optional and only throttles earlier. Not yet
-tested on real 16 GB hardware, and the emulation used a 6 GB GPU: on a smaller
-GPU, VRAM rather than RAM is the likelier limit.
+**Evidence relevant to 16 GB Windows machines.** WSL's default VM limit is
+half of Windows' RAM, normally 8 GB on a 16 GB machine. This is not a proven
+minimum or a guarantee that a particular capture and desktop workload will fit.
+
+On 2026-10-20, an emulation on the laptop above ran colmap, process, train and
+export on a 55-frame 3840x2880 capture (`downscale_factor=4`,
+`[host] process_cpus=0,1`) inside a hard `MemoryMax=8G` and
+`MemorySwapMax=4G`. It finished in 27 minutes with no scope OOM kills or swap
+used; program memory peaked at 2.4 GiB, and the remaining memory was file cache.
+A 120-photo 5184x3456 COLMAP-only emulation peaked at 3.7 GiB program memory
+with four threads, while the default thread count exceeded 8 GiB within 16
+seconds (2026-11-01; see "COLMAP threads and memory"). These emulations limited
+the Linux scope, not Windows itself.
+
+On 2026-11-02, the PX13 had 32 GB physically installed, with Windows limited to
+16384 MB and reporting 14.66 GB total; WSL was configured with 8 GB RAM and
+4 GB swap. With a fixed one COLMAP thread and `[host] memory_high=4G` (a soft
+reclaim/throttling threshold, not a hard memory limit), the 120-photo capture
+and the 55-frame cactus capture each completed COLMAP and processing, but the
+Windows RAM guard stopped each single invocation during training initialization.
+After reclaim, separate train/export invocations completed 30,000 steps and
+three exports for each capture. This is stage-by-stage completion across restarts,
+not an uninterrupted full-pipeline pass. Both used an RTX 4050 with 6 GB VRAM;
+neither ran `ns-eval`. At the two guard stops, Windows available RAM was 914 MiB
+for the 120-photo capture and 854 MiB for cactus. On the successful restarts,
+the lowest sampled available RAM was 2,109 MiB and 1,761 MiB respectively.
+Guard host samples were about five seconds apart. The highest observed one-second
+device-wide GPU memory sample was 1,713 MiB on the 120-photo restart and 1,485 MiB
+on the cactus restart. These are sampled values, not guaranteed peaks or per-process
+measurements; other GPU clients may contribute. The desktop application load for
+the completed runs was not recorded. These results do not prove a physical 16 GB machine will
+behave identically, establish a true RAM or GPU minimum, or establish that a
+smaller GPU will work. Check your own host headroom and keep the guard active.
 
 *Check your machine.* On any machine with systemd in WSL you can test the 8 GB
 case before you rely on it, whatever your real RAM. Run one full invocation
@@ -495,9 +511,9 @@ so wait before judging whether it worked.
 
 **Whole-VM fallback.** A lower `memory=` in `%USERPROFILE%\.wslconfig` caps the
 entire VM, cache included, and needs `wsl --shutdown` to take effect. It also caps
-COLMAP and training: `8GB` is measured to be enough with COLMAP's threads limited
-(step 4 of "WSL2, on Windows"), and lower values are untested. The per-stage cap
-is the finer tool.
+COLMAP and training: an 8 GB guest limit has been exercised under the specific
+conditions above, but does not guarantee the whole pipeline will finish. The
+per-stage cap is the finer tool.
 
 ### Windows' commit limit: the other way WSL dies
 
