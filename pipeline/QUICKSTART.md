@@ -452,7 +452,14 @@ Windows RAM guard stopped each single invocation during training initialization.
 After reclaim, separate train/export invocations completed 30,000 steps and
 three exports for each capture. This is stage-by-stage completion across restarts,
 not an uninterrupted full-pipeline pass. Both used an RTX 4050 with 6 GB VRAM;
-neither ran `ns-eval`. These results do not prove a physical 16 GB machine will
+neither ran `ns-eval`. At the two guard stops, Windows available RAM was 914 MiB
+for the 120-photo capture and 854 MiB for cactus. On the successful restarts,
+the lowest sampled available RAM was 2,109 MiB and 1,761 MiB respectively.
+Guard host samples were about five seconds apart. The highest observed one-second
+device-wide GPU memory sample was 1,713 MiB on the 120-photo restart and 1,485 MiB
+on the cactus restart. These are sampled values, not guaranteed peaks or per-process
+measurements; other GPU clients may contribute. The desktop application load for
+the completed runs was not recorded. These results do not prove a physical 16 GB machine will
 behave identically, establish a true RAM or GPU minimum, or establish that a
 smaller GPU will work. Check your own host headroom and keep the guard active.
 
