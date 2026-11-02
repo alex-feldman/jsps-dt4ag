@@ -16,6 +16,11 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Changed
+
+- Clarified WSL memory and COLMAP thread evidence, including the limits of
+  the capped-Windows runs and earlier emulation.
+
 ## [0.3.0-alpha.15] - 2026-11-02
 
 ### Added
