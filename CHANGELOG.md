@@ -24,6 +24,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
 
+- Add a camera-motion comparison companion for two saved COLMAP solves, with folder-local relative rotations, normalized baselines and explicit missing-frame refusals.
+
 ### Changed
 
 - Rescoped the roadmap (2026-11-12). v0.3.0 is now "runs you can trust and account for": it adds a

@@ -92,3 +92,33 @@ The workflow context is `pipeline/VIDEO-WORKFLOW.md`, step 6.
 Tests: `pipeline/tests/test_camera_review.py` covers the helpers that need no
 COLMAP data (frame times, missing and unexpected frames, model folders, the
 arguments). The plot itself is checked only by a real run.
+
+## Compare relative camera motion between two solves
+
+`compare-camera-motion.py` compares two saved COLMAP workspaces without training,
+reconstruction, image changes or ground truth. It needs only Python 3's standard
+library and writes to a fresh output directory:
+
+```bash
+python pipeline/scripts/camera-review/compare-camera-motion.py \
+  --capture {data_root}/datasets/{capture} \
+  --workspace-a {data_root}/colmap/{capture}/{run-a} \
+  --workspace-b {data_root}/colmap/{capture}/{run-b} \
+  --out {data_root}/evals/{capture}/camera-motion-comparison
+```
+
+Both workspaces default to `sparse/0`; use `--model-a` and `--model-b` to select
+other sparse model folders. Expected images come from the capture `images/` tree.
+The tool joins full relative stems, allowing different image extensions, and
+refuses ambiguous stems. It orders expected images lexically within each folder,
+which assumes lexical order reflects acquisition. Folder boundaries and missing
+registrations break edges; unexpected registered images are excluded and listed.
+
+`edges.csv` ranks each folder's eligible edges by the angle between the models'
+relative rotations and reports each baseline and its ratio to that model's folder
+median. `refusals.csv` records missing-registration edges and zero baselines or
+zero folder medians; normalization is blank where refused. `metadata.json` lists
+inputs, missing and unexpected stems, and interpretation limits. Camera baselines
+have arbitrary independent model scales. A disagreement is not evidence of which
+solve is correct, and this tool does not choose acceptance thresholds. Tests are
+in `pipeline/tests/test_compare_camera_motion.py`.
