@@ -97,6 +97,22 @@ class TestComparison(unittest.TestCase):
             cr.reconcile_frame_names({"a.jpg": 0.0, "a.png": 1.0}, ["a.png"])
 
 
+class TestSegments(unittest.TestCase):
+
+    def test_folder_boundaries_and_missing_frames(self):
+        expected = ["a/01.jpg", "a/02.jpg", "a/03.jpg", "b/01.jpg", "b/02.jpg"]
+        registered = ["a/01.png", "a/03.png", "b/01.png", "b/02.png"]
+        self.assertEqual(cr.adjacent_expected_pairs(expected, registered),
+                         [("b/01.png", "b/02.png")])
+
+    def test_single_video_sequence_and_filtered_statistics(self):
+        names = ["01.png", "02.png", "03.png"]
+        self.assertEqual(cr.adjacent_expected_pairs(names, names), list(zip(names, names[1:])))
+        summary = cr.summarize_camera_steps(names, [0, 1, 2], [1, 100], "frame order", [0])
+        self.assertEqual(summary["largest_step_between_adjacent_registered_cameras"], 1)
+        self.assertEqual(summary["largest_step_to"], "02.png")
+
+
 class TestCameraStepReview(unittest.TestCase):
 
     def test_flags_a_disproportionate_jump_and_names_its_transition(self):

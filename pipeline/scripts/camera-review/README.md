@@ -30,6 +30,15 @@ time, using `source_seconds_approx` or else `output_grid_seconds`. Otherwise the
 expected frames are the images under `images/`, in sorted-name order, and the
 plot is colored by that order. The JSON says which in `time_axis`. For image captures, relative paths are kept so camera folders remain distinct. The review matches capture files and COLMAP names by relative stem, allowing JPEG originals to correspond to PNG mask composites; duplicate stems are refused rather than guessed.
 
+Ordering is lexical by relative image name within each folder, an assumption that
+may not match capture chronology. Only pairs consecutive in the expected list
+and registered in the same folder contribute to steps or connecting lines.
+Missing frames and folder boundaries break the path. Unexpected registered
+frames are shown as points and excluded from steps. An unexpected name between
+two expected registered names in lexical order also breaks their plotted link.
+For a single video folder with every frame registered, this preserves the
+original sequence.
+
 ## What it writes
 
 `camera-checks.json`:
@@ -42,6 +51,7 @@ plot is colored by that order. The JSON says which in `time_axis`. For image cap
 - `reviewed_model`, `points`, `mean_reprojection_error_px`, `mean_track_length`.
 - `cameras`: model, size and parameters of each camera.
 - `time_axis` and `registered_span`.
+- `ordering_assumption`, `step_policy` and `adjacent_step_count` describe the ordering and included pairs. Existing step fields retain their names but now summarize only eligible pairs; they are null when no pair is eligible.
 - `median_step_between_adjacent_registered_cameras`,
   `largest_step_between_adjacent_registered_cameras`, its frame pair and
   time interval, and the largest/median ratio.
@@ -50,8 +60,7 @@ plot is colored by that order. The JSON says which in `time_axis`. For image cap
 - `limits`: the reminder below.
 
 `camera-review.png`: three views (X-Y, X-Z, Y-Z) of the sparse points with the
-camera path over them, colored by time or order, plus the step between adjacent
-cameras along that axis. A flagged step is marked with a red X and a dashed
+camera path over them, colored by time or order, plus the eligible steps along that axis. A flagged step is marked with a red X and a dashed
 reference line at the threshold defined by `CAMERA_STEP_WARNING_RATIO` in
 `camera-review.py`.
 

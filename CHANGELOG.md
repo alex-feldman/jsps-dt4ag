@@ -16,6 +16,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+- Camera review separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
+
 - Fix camera review for nested camera folders and JPEG originals composited to PNG, refusing ambiguous frame stems.
 
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
