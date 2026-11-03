@@ -42,7 +42,7 @@ def setUpModule():
     patcher = patch.object(colmap_threads, "read_host_memory", return_value=figures)
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
-    version = patch.object(runner, "detect_colmap_version", return_value="3120")
+    version = patch.object(runner, "detect_colmap_version_parts", return_value=(3, 12, 0))
     version.start()
     unittest.addModuleCleanup(version.stop)
 

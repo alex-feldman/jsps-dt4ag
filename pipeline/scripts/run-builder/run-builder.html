@@ -496,7 +496,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow."
+     "help": "Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow. Its nerfstudio COLMAP invocation is restricted to detected 3.12.0."
     },
     {
      "key": "skip_colmap",
@@ -505,7 +505,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM."
+     "help": "Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM. The alternate nerfstudio COLMAP invocation is currently permitted only with detected COLMAP 3.12.0; 4.x and unknown versions are refused because their options differ."
     },
     {
      "key": "colmap_model_path",

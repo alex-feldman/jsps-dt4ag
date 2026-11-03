@@ -257,8 +257,8 @@ Feeds `ns-process-data`.
 | Key | Required | Default | Controls |
 |---|---|---|---|
 | `scene_type` | no | `images` | `images` or `video`. |
-| `video_path` | conditional | empty | Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow. |
-| `skip_colmap` | no | `true` | Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM. |
+| `video_path` | conditional | empty | Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow. Its nerfstudio COLMAP invocation is restricted to detected 3.12.0. |
+| `skip_colmap` | no | `true` | Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM. The alternate nerfstudio COLMAP invocation is currently permitted only with detected COLMAP 3.12.0; 4.x and unknown versions are refused because their options differ. |
 | `colmap_model_path` | no | `sparse/0` | `--colmap-model-path`. |
 
 ### `[train]`

@@ -526,23 +526,37 @@ class TestConfigKey(TempCase):
 class TestRunner(TempCase):
     def test_unmeasured_version_refuses_auto_even_when_run_id_is_pinned(self):
         cfg = load_config(write_config(self.root, "executable = /opt/other/bin/colmap"))
-        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value="421") as detect:
+        with mock.patch.object(run_pipeline, "detect_colmap_version_parts", return_value=(4, 2, 1)) as detect:
             decision = run_pipeline.decide_colmap_threads(cfg, [])
         self.assertIsNotNone(decision.refusal)
         detect.assert_called_once_with("/opt/other/bin/colmap")
         self.assertEqual(run_pipeline.colmap_command(cfg, self.root)[0], "/opt/other/bin/colmap")
         self.assertIn("/opt/other/bin/colmap", run_pipeline.process_command(cfg, self.root))
 
+    def test_auto_gate_distinguishes_compact_collisions_and_unknown_patch(self):
+        cfg = load_config(write_config(self.root))
+        for version in ((3, 1, 20), (3, 12, None), (4, 2, 1), None):
+            with self.subTest(version=version), mock.patch.object(
+                    run_pipeline, "detect_colmap_version_parts", return_value=version):
+                self.assertIsNotNone(run_pipeline.decide_colmap_threads(cfg, []).refusal)
+
+    def test_fake_executable_banners_are_unambiguous(self):
+        for banner, expected in (("3.1.20", (3, 1, 20)), ("3.12.0", (3, 12, 0))):
+            fake = self.root / ("colmap-" + banner)
+            fake.write_text("#!/bin/sh\nprintf 'COLMAP " + banner + "\n'\n")
+            fake.chmod(0o755)
+            self.assertEqual(run_pipeline.detect_colmap_version_parts(str(fake)), expected)
+
     def test_explicit_threads_allow_unmeasured_binary(self):
         cfg = load_config(write_config(self.root, "num_threads = 2"))
-        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value="421"):
+        with mock.patch.object(run_pipeline, "detect_colmap_version_parts", return_value=(4, 2, 1)):
             self.assertEqual(run_pipeline.decide_colmap_threads(cfg, []).threads, 2)
 
-    def run_pipeline(self, cfg, *argv, figures=None, version="3120"):
+    def run_pipeline(self, cfg, *argv, figures=None, version=(3, 12, 0)):
         args = run_pipeline.parse_args(["--config", str(cfg.source), *argv])
         out = io.StringIO()
         figures = figures or host(linux=7300, ram=7168, commit=10240)
-        with mock.patch.object(run_pipeline, "detect_colmap_version", return_value=version), \
+        with mock.patch.object(run_pipeline, "detect_colmap_version_parts", return_value=version), \
                 mock.patch.object(ct, "read_host_memory", return_value=figures) as read, \
                 redirect_stdout(out):
             try:
@@ -586,7 +600,7 @@ class TestRunner(TempCase):
         [command] = [line for line in out.splitlines() if line.strip().startswith("$ colmap")]
         self.assertEqual(command.count("--num_threads"), 1)
 
-    def _real(self, cfg, figures, version="3120"):
+    def _real(self, cfg, figures, version=(3, 12, 0)):
         """A real (not dry) colmap stage whose external command is a fake."""
         commands = []
 
@@ -605,14 +619,14 @@ class TestRunner(TempCase):
     def test_run_records_actual_version_separately_from_pinned_id(self):
         cfg = load_config(write_config(self.root, "num_threads = 2\nexecutable = /opt/candidate/bin/colmap"))
         with mock.patch.object(run_pipeline.shutil, "which", return_value="/opt/candidate/bin/colmap"):
-            code, out, commands = self._real(cfg, host(linux=7300), version="421")
+            code, out, commands = self._real(cfg, host(linux=7300), version=(3, 1, 20))
         self.assertEqual(code, 0, out)
         self.assertEqual(commands[0][0], "/opt/candidate/bin/colmap")
         [archive] = list(cfg.config_archive_dir.iterdir())
         record = configparser.ConfigParser(interpolation=None)
         record.read(archive, encoding="utf-8")
         self.assertEqual(record["run-record"]["colmap_version"], "3120")
-        self.assertEqual(record["run-record"]["colmap_version_actual"], "421")
+        self.assertEqual(record["run-record"]["colmap_version_actual"], "3.1.20")
         self.assertEqual(record["run-record"]["colmap_executable_actual"], "/opt/candidate/bin/colmap")
 
     def test_real_run_refuses_below_one_thread_and_records_nothing(self):

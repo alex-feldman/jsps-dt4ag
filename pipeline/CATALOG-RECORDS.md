@@ -34,7 +34,7 @@ are unchanged. New jobs add `progress`, with its own `schema_version`
   runtime run ID, paths, stage selection, evaluation mode and effective downscale
   as those become known. Values are not guessed before resolution.
 - `dependencies`: Python and installed distribution versions plus bounded
-  `plant_catalog.colmap_version` and `ffmpeg_version` probes; unavailable
+  `plant_catalog.colmap_version` and `ffmpeg_version` probes; COLMAP is unknown until configuration loads, then probed using its selected executable; unavailable
   versions remain null.
 - `failure`, `gpu` and `artifacts`: schema 2 additions, defined in the
   [design note](#progress-schema-2-design-note-o13t5-o13t6) below.
