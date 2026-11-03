@@ -48,18 +48,35 @@ class EpipolarTests(unittest.TestCase):
     c.execute('insert into images values (?,?,1)',(i,name));c.execute('insert into keypoints values (?,1,2,?)',(i,struct.pack('<ff',*pt)))
    c.execute('insert into two_view_geometries values (?,?,?,?,?,?)',(2147483649,1,2,struct.pack('<II',0,0),3,bytes(72)));c.commit();c.close()
    ws=[]
-   for label in ('a','b'):
+   cam_b=(1200.,510.,390.,-.05)
+   b_pose=((math.cos(.1),math.sin(.1),0.,0.),(-.7,.1,.05),cam_b)
+   variants=[(self.cam,self.a,self.b),(cam_b,(self.a[0],self.a[1],cam_b),b_pose)]
+   for label,(cam,pose_a,pose_b) in zip(('a','b'),variants):
     w=root/label;folder=w/'sparse'/'0';folder.mkdir(parents=True);ws.append(w)
-    with (folder/'cameras.bin').open('wb') as f:f.write(struct.pack('<QiiQQdddd',1,1,2,1000,800,*self.cam))
+    with (folder/'cameras.bin').open('wb') as f:f.write(struct.pack('<QiiQQdddd',1,1,2,1000,800,*cam))
     with (folder/'images.bin').open('wb') as f:
      f.write(struct.pack('<Q',2))
-     for i,(name,pose) in enumerate((('006/a.png',self.a),('006/b.png',self.b)),1):
+     for i,(name,pose) in enumerate((('006/a.png',pose_a),('006/b.png',pose_b)),1):
       f.write(struct.pack('<i7di',i,*pose[0],*pose[1],1));f.write(name.encode()+b'\0');f.write(struct.pack('<Q',0))
    out=root/'out'
    cmd=[sys.executable,str(path),'--database',str(db),'--workspace-a',str(ws[0]),'--workspace-b',str(ws[1]),'--pair','006/b.png','006/a.png','--cross','--out',str(out)]
    subprocess.run(cmd,check=True,capture_output=True,text=True)
    with (out/'epipolar.csv').open(newline='') as f:rows=list(csv.DictReader(f))
-   self.assertEqual(len(rows),4);self.assertTrue(all(r['joint_used']=='1' for r in rows));self.assertTrue(all(float(r['median_px'])<.001 for r in rows))
+   self.assertEqual(len(rows),4)
+   self.assertTrue(all(r['joint_used']=='1' and r['joint_refused']=='0' for r in rows))
+   # Independently select the source poses and intrinsics for each labeled row.
+   # The DB stores float32, so compare using its exact round-tripped coordinates.
+   p1=struct.unpack('<ff',struct.pack('<ff',*self.p1))
+   p2=struct.unpack('<ff',struct.pack('<ff',*self.p2))
+   expected={}
+   for pose_label,(_,pa,pb) in zip(('A','B'),variants):
+    for intr_label,(cam,_,_) in zip(('A','B'),variants):
+     a=pa[:2]+(cam,); b=pb[:2]+(cam,)
+     expected[(pose_label,intr_label)]=e.residual(p2,p1,b,a,e.essential(b,a))
+   for row in rows:
+    self.assertAlmostEqual(float(row['median_px']),expected[(row['poses'],row['intrinsics'])],places=7)
+   # Distinct results ensure a source-selection swap cannot pass vacuously.
+   self.assertEqual(len({round(x,3) for x in expected.values()}),4)
    self.assertIn('not exact',json.loads((out/'metadata.json').read_text())['metric'])
    self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
 
