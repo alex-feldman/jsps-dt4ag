@@ -128,6 +128,18 @@ class TestSegments(unittest.TestCase):
 
 class TestCameraStepReview(unittest.TestCase):
 
+    def test_folder_alert_survives_pooled_distribution(self):
+        names = ["a/1", "a/2", "a/3", "a/4", "b/1", "b/2", "b/3", "b/4"]
+        edges = [(0, 1), (1, 2), (2, 3), (4, 5), (5, 6), (6, 7)]
+        steps = [1, 1, 12, 10, 10, 10]
+        pooled = cr.summarize_camera_steps(names, list(range(8)), steps, "frame order", edge_indices=edges)
+        local = cr.summarize_camera_steps(names, list(range(8)), steps, "frame order", [0, 1, 2], edge_indices=edges)
+        self.assertEqual(pooled["camera_path_warnings"], [])
+        warnings, flags = cr.collect_camera_alerts(pooled, {"a": local})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Folder a:", warnings[0])
+        self.assertEqual(flags, {("a/3", "a/4"): ["folder a"]})
+
     def test_flags_a_disproportionate_jump_and_names_its_transition(self):
         result = cr.summarize_camera_steps(
             ["frame_000055.png", "frame_000056.png", "frame_000057.png", "frame_000058.png"],

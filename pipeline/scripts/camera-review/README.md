@@ -55,13 +55,11 @@ original sequence.
   `largest_step_between_adjacent_registered_cameras`, its frame pair and
   time interval, and the largest/median ratio.
 - `camera_path_warnings`: advisory flags produced by `summarize_camera_steps()`
-  using `CAMERA_STEP_WARNING_RATIO` in `camera-review.py`.
+  using `CAMERA_STEP_WARNING_RATIO` in `camera-review.py`. This includes pooled and folder-specific alerts. `flagged_camera_steps` names each flagged peak and its scopes.
 - `limits`: the reminder below.
 
 `camera-review.png`: three views (X-Y, X-Z, Y-Z) of the sparse points with the
-camera path over them, colored by time or order, plus the eligible steps along that axis. A flagged step is marked with a red X and a dashed
-reference line at the threshold defined by `CAMERA_STEP_WARNING_RATIO` in
-`camera-review.py`.
+camera path over them, colored by time or order, plus the eligible steps along that axis. Each flagged pooled or folder peak is marked with a red X. A dashed reference line appears for a pooled alert only, at its pooled threshold; folder thresholds differ and are described in the JSON.
 
 The same numbers are printed to the terminal, without the long `missing`,
 `unexpected` and `cameras` fields apart from a one-line `missing:` list.
