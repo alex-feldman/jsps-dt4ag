@@ -55,7 +55,7 @@ from dt4ag_config import (  # noqa: E402
     Dt4agConfig,
     eval_token,
     detect_nerfstudio_version,
-    detect_colmap_version,
+    detect_colmap_version_parts,
     find_config,
     held_out_count,
     load_config,
@@ -371,10 +371,10 @@ def decide_colmap_threads(cfg: Dt4agConfig, photographs: Sequence[Path]) -> "col
     With ``auto`` this reads the machine's memory now (Linux, the cgroup, and
     Windows on WSL) and the photographs' headers; see ``colmap_threads.py``.
     """
-    actual_version = detect_colmap_version(cfg.colmap_executable)
+    actual_version = detect_colmap_version_parts(cfg.colmap_executable)
     if (cfg.colmap_num_threads == "auto"
             and colmap_threads.extra_args_option(cfg.colmap_extra_args, "num_threads") is None
-            and actual_version != "3120"):
+            and actual_version != (3, 12, 0)):
         reason = ("COLMAP auto threads have only been measured for 3.12.0; "
                   f"detected {actual_version or 'unknown'}. Set an explicit thread count "
                   "after assessing memory, or use a measured executable.")
@@ -383,6 +383,18 @@ def decide_colmap_threads(cfg: Dt4agConfig, photographs: Sequence[Path]) -> "col
     return colmap_threads.decide_threads(
         cfg.colmap_num_threads, cfg.colmap_extra_args, photographs,
         memory_high=cfg.memory_high, source_file=cfg.source)
+
+
+def check_process_colmap_compatibility(cfg: Dt4agConfig, stages: Sequence[str]) -> None:
+    """The installed nerfstudio converter uses COLMAP 3.x option names."""
+    if "process" not in stages or (cfg.scene_type != "video" and cfg.skip_colmap):
+        return
+    version = detect_colmap_version_parts(cfg.colmap_executable)
+    if version != (3, 12, 0):
+        raise StageError("nerfstudio COLMAP reconstruction (video or [nerfstudio] skip_colmap = false) is only verified "
+                         "with COLMAP 3.12.0; the selected version is "
+                         f"{version or 'unknown'}. Run the pipeline COLMAP stage and set "
+                         "skip_colmap = true for images, or select the verified executable.")
 
 
 def process_command(cfg: Dt4agConfig, workspace: Path) -> List[str]:
@@ -1577,6 +1589,7 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
         if job:
             job.milestone("prereqs_ok")
 
+    check_process_colmap_compatibility(cfg, stages)
     run_id = args.run_id or cfg.make_run_id()
     workspace = cfg.colmap_workspace(run_id)
     method_dir = cfg.output_dir(run_id) / cfg.train_method
@@ -1656,9 +1669,10 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
     log_extra = {}
     if {"colmap", "process"} & set(stages):
         actual = shutil.which(cfg.colmap_executable)
-        actual_version = detect_colmap_version(cfg.colmap_executable)
+        actual_version = detect_colmap_version_parts(cfg.colmap_executable)
+        dotted = ".".join(str(part) for part in actual_version if part is not None) if actual_version else "unknown"
         log_extra.update({"colmap_executable_actual": str(Path(actual).resolve()) if actual else "unknown",
-                          "colmap_version_actual": actual_version or "unknown"})
+                          "colmap_version_actual": dotted})
         log(f"colmap actual     : {log_extra['colmap_executable_actual']} (version {log_extra['colmap_version_actual']})")
         if job:
             job.resolved(**log_extra)
@@ -1994,6 +2008,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         config_path = find_config(args.config)
         cfg = load_config(config_path)
         if catalog:
+            catalog.colmap_dependency(cfg.colmap_executable)
             catalog.record["config"]["ini"] = ini_sections(cfg.source)
             catalog.record["selected_images"] = selected_images(cfg)
             catalog.capture(source=cfg.images_path, image_count=len(catalog.record["selected_images"]))

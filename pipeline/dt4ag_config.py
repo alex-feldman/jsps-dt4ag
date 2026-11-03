@@ -325,11 +325,11 @@ def held_out_count(mode: str, photographs: int, fraction: float = 0.9, interval:
 # COLMAP version detection
 # --------------------------------------------------------------------------
 
-_VERSION_RE = re.compile(r"COLMAP\s+(\d+)\.(\d+)(?:\.(\d+))?", re.IGNORECASE)
+_VERSION_RE = re.compile(r"COLMAP\s+(\d+)\.(\d+)(?:\.(\d+))?(?![0-9A-Za-z.+_-])", re.IGNORECASE)
 
 
-def detect_colmap_version(executable: str = "colmap") -> Optional[str]:
-    """Return the installed COLMAP version as a compact string, e.g. ``312``.
+def detect_colmap_version_parts(executable: str = "colmap") -> Optional[Tuple[int, int, Optional[int]]]:
+    """Return the detected major, minor, and optional patch as separate integers.
 
     Tries ``colmap --version`` first, then the bare ``colmap`` banner, which is
     where COLMAP 3.x prints its version when given no subcommand. Returns
@@ -349,11 +349,21 @@ def detect_colmap_version(executable: str = "colmap") -> Optional[str]:
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        match = _VERSION_RE.search((proc.stdout or "") + "\n" + (proc.stderr or ""))
+        stdout = proc.stdout if isinstance(proc.stdout, str) else ""
+        stderr = proc.stderr if isinstance(proc.stderr, str) else ""
+        match = _VERSION_RE.search(stdout + "\n" + stderr)
         if match:
-            major, minor, patch = match.group(1), match.group(2), match.group(3)
-            return f"{major}{minor}{patch or ''}"
+            major, minor, patch = match.groups()
+            return (int(major), int(minor), int(patch) if patch is not None else None)
     return None
+
+
+def detect_colmap_version(executable: str = "colmap") -> Optional[str]:
+    """Legacy compact run-ID token; never use it to compare versions."""
+    parts = detect_colmap_version_parts(executable)
+    if parts is None:
+        return None
+    return "".join(str(part) for part in parts if part is not None)
 
 
 def detect_nerfstudio_version() -> str:

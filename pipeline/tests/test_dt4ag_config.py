@@ -727,6 +727,17 @@ class TestRunIdentity(TempDirTestCase):
 
 class TestDetectColmapVersion(TempDirTestCase):
 
+    def test_distinguishes_colliding_versions_and_missing_patch(self):
+        self.patch_which("/chosen/colmap")
+        for banner, expected in (("COLMAP 3.1.20", (3, 1, 20)),
+                                 ("COLMAP 3.12.0", (3, 12, 0)),
+                                 ("COLMAP 3.12", (3, 12, None)),
+                                 ("COLMAP 4.2.1", (4, 2, 1))):
+            with self.subTest(banner=banner):
+                self._install_fake_run({("colmap", "--version"): FakeCompleted(stdout=banner)})
+                self.assertEqual(dt4ag_config.detect_colmap_version_parts(), expected)
+
+
     def test_returns_none_when_colmap_is_not_on_path(self):
         self.patch_which(None)
 
@@ -751,6 +762,19 @@ class TestDetectColmapVersion(TempDirTestCase):
             "run": staticmethod(fake_run),
             "SubprocessError": subprocess.SubprocessError,
         }))
+
+    def test_prerelease_does_not_masquerade_as_measured_release(self):
+        self.patch_which("/usr/local/bin/colmap")
+        self._install_fake_run({
+            ("colmap", "--version"): FakeCompleted(stdout="COLMAP 3.12.0-dev"),
+            ("colmap",): FakeCompleted(stdout="COLMAP 3.12.0-dev"),
+        })
+        self.assertIsNone(dt4ag_config.detect_colmap_version_parts())
+
+    def test_mock_subprocess_output_is_treated_as_unknown(self):
+        with patch.object(dt4ag_config.shutil, "which", return_value="/bin/colmap"), \
+                patch.object(dt4ag_config.subprocess, "run"):
+            self.assertIsNone(dt4ag_config.detect_colmap_version_parts())
 
     def test_version_flag_supported(self):
         """The easy shape: `colmap --version` prints the banner."""

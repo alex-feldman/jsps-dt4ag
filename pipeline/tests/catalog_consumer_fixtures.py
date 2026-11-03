@@ -27,7 +27,7 @@ def invoke(config, capture):
         return runner.main(['--config', str(config), '--catalog-root', str(root),
             '--catalog-root-id', 'test-root', '--catalog-capture-id', capture, '--stage', 'colmap'])
 
-with patch.object(runner, 'detect_colmap_version', return_value='3120'), patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=solve):
+with patch.object(runner, 'detect_colmap_version_parts', return_value=(3, 12, 0)), patch.object(runner, 'check_prerequisites'), patch.object(runner, 'run_command', side_effect=solve):
     assert invoke(cfg.source, 'capture-a') == 0
 jobs = root / 'catalog/jobs'
 current = json.loads(next(jobs.glob('*.json')).read_text())

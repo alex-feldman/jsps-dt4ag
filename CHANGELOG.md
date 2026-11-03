@@ -18,7 +18,7 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
-- Experimental per-config COLMAP executable selection, actual executable provenance, and refusal of auto threads for unmeasured versions.
+- Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
 
 ### Changed
 

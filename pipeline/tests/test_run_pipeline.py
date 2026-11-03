@@ -335,6 +335,16 @@ class TestCommands(TempTreeTestCase):
         cfg = make_config(self.root, skip_colmap="false")
         self.assertNotIn("--skip-colmap", process_command(cfg, self.root / "ws"))
 
+    def test_process_refuses_unverified_nerfstudio_colmap(self):
+        cfg = make_config(self.root, skip_colmap="false")
+        for version in ((4, 2, 1), (3, 1, 20), None):
+            with self.subTest(version=version), mock.patch.object(
+                    run_pipeline, "detect_colmap_version_parts", return_value=version):
+                with self.assertRaisesRegex(run_pipeline.StageError, "skip_colmap = false"):
+                    run_pipeline.check_process_colmap_compatibility(cfg, ["process"])
+        with mock.patch.object(run_pipeline, "detect_colmap_version_parts", return_value=(3, 12, 0)):
+            run_pipeline.check_process_colmap_compatibility(cfg, ["process"])
+
     def test_train_command(self):
         cfg = make_config(self.root)
         workspace = self.root / "ws"
@@ -573,7 +583,8 @@ class TestHostLimits(TempTreeTestCase):
         # The colmap stage's thread choice reads the machine's memory (and
         # Windows', on WSL); fixed figures keep this hermetic.
         figures = colmap_threads.HostMemory(linux_available_mib=65536, usable_cpus=8)
-        with mock.patch.object(run_pipeline.subprocess, "run") as never, \
+        with mock.patch.object(run_pipeline, "detect_colmap_version_parts", return_value=(3, 12, 0)), \
+                mock.patch.object(run_pipeline.subprocess, "run") as never, \
                 mock.patch.object(colmap_threads, "read_host_memory", return_value=figures), \
                 redirect_stdout(out):
             self.assertEqual(run_pipeline.run_pipeline(cfg, args), 0)

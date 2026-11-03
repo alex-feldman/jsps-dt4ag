@@ -53,9 +53,9 @@ def _probe(argv):
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
-def colmap_version():
+def colmap_version(executable="colmap"):
     """COLMAP banner version; 3.12 rejects --version and prints it bare."""
-    for argv in (["colmap", "--version"], ["colmap"]):
+    for argv in ([executable, "--version"], [executable]):
         probed = _probe(argv)
         match = _COLMAP_VERSION.search(probed[1]) if probed else None
         if match:
@@ -188,12 +188,22 @@ class CatalogJob:
                 versions[package] = importlib.metadata.version(package)
             except Exception:  # missing or broken metadata is an unknown version
                 versions[package] = None
-        for name, probe in (("colmap", colmap_version), ("ffmpeg", ffmpeg_version)):
+        versions["colmap"] = None  # Config may not have loaded yet.
+        for name, probe in (("ffmpeg", ffmpeg_version),):
             try:
                 versions[name] = probe()
             except Exception:
                 versions[name] = None
         self.record["progress"]["dependencies"] = versions
+        self.save()
+
+    def colmap_dependency(self, executable):
+        """Replace the initial unknown only after config selects an executable."""
+        try:
+            version = colmap_version(executable)
+        except Exception:
+            version = None
+        self.record["progress"]["dependencies"]["colmap"] = version
         self.save()
 
     def gpu(self):
