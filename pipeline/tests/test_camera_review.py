@@ -11,6 +11,8 @@ import importlib.util
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
+import json
 from contextlib import redirect_stderr
 from pathlib import Path
 
@@ -189,6 +191,58 @@ class TestSparseModels(unittest.TestCase):
                     (folder / "images.bin").write_bytes(b"")
             (workspace / "sparse" / "stray.txt").write_text("x")
             self.assertEqual(cr.sparse_models(workspace), ["0", "1"])
+
+
+
+class TestImageTrackSupport(unittest.TestCase):
+
+    def image(self, name, camera_id, ids, xys):
+        return SimpleNamespace(name=name, camera_id=camera_id, point3D_ids=ids, xys=xys)
+
+    def test_only_retained_ids_count_and_bounds_do_not_clamp(self):
+        image = self.image('a.png', 1, [-1, 99, 1, 2, 3, 4, 5, 6, 7, 1],
+                           [(0, 0), (0, 0), (0, 0), (25, 20), (99.9, 79.9),
+                            (-1, 2), (100, 2), (2, 80), (float('nan'), 0), (1, 1)])
+        row = cr.image_track_support({1: image}, {1: SimpleNamespace(width=100, height=80)},
+                                     dict.fromkeys(range(1, 8)))['a.png']
+        self.assertEqual(row['retained_3d_observation_count'], 8)
+        self.assertEqual(row['in_bounds_retained_3d_observation_count'], 4)
+        self.assertEqual(row['occupied_cell_count'], 3)
+        self.assertEqual(row['occupied_cell_fraction'], 3 / 16)
+        self.assertEqual(row['grid_observation_counts'][0][0], 2)
+        self.assertEqual(row['grid_observation_counts'][1][1], 1)
+        self.assertEqual(row['grid_observation_counts'][3][3], 1)
+        json.dumps(row, allow_nan=False)
+
+    def test_each_image_uses_its_own_camera_dimensions(self):
+        images = {1: self.image('wide.png', 1, [1], [(50, 25)]),
+                  2: self.image('small.png', 2, [1], [(50, 25)])}
+        cameras = {1: SimpleNamespace(width=200, height=100),
+                   2: SimpleNamespace(width=100, height=50)}
+        rows = cr.image_track_support(images, cameras, {1: None})
+        self.assertEqual(rows['wide.png']['grid_observation_counts'][1][1], 1)
+        self.assertEqual(rows['small.png']['grid_observation_counts'][2][2], 1)
+
+    def test_zero_valid_observations_has_zero_coverage(self):
+        image = self.image('empty.png', 1, [-1, 999], [(0, 0), (1, 1)])
+        row = cr.image_track_support({1: image}, {1: SimpleNamespace(width=10, height=20)}, {})['empty.png']
+        self.assertEqual(row['retained_3d_observation_count'], 0)
+        self.assertEqual(row['occupied_cell_count'], 0)
+        self.assertEqual(row['occupied_cell_fraction'], 0)
+
+    def test_invalid_and_missing_dimensions_keep_count_without_coverage(self):
+        for camera in (None, SimpleNamespace(width=0, height=20),
+                       SimpleNamespace(width=-1, height=20),
+                       SimpleNamespace(width=10, height=float('inf'))):
+            with self.subTest(camera=camera):
+                image = self.image('a.png', 1, [1], [(1, 1)])
+                cameras = {} if camera is None else {1: camera}
+                row = cr.image_track_support({1: image}, cameras, {1: None})['a.png']
+                self.assertFalse(row['dimensions_valid'])
+                self.assertEqual(row['retained_3d_observation_count'], 1)
+                self.assertEqual(row['occupied_cell_count'], 0)
+                self.assertIsNone(row['occupied_cell_fraction'])
+                json.dumps(row, allow_nan=False)
 
 
 class TestArguments(unittest.TestCase):
