@@ -98,11 +98,28 @@ def finite_span(values: Sequence[float]) -> List[float]:
     return [min(finite), max(finite)] if finite else []
 
 
+def adjacent_expected_pairs(expected: Sequence[str], registered: Sequence[str]) -> List[Tuple[str, str]]:
+    """Consecutive expected names within each folder when both registered.
+
+    Lexical relative-name order is an assumption, not verified chronology.
+    """
+    def stem(name):
+        return Path(name).with_suffix('').as_posix()
+    registered_stems = {stem(name): name for name in registered}
+    groups = {}
+    for name in sorted(expected):
+        groups.setdefault(Path(name).parent.as_posix(), []).append(name)
+    return [(registered_stems[stem(a)], registered_stems[stem(b)])
+            for group in groups.values() for a, b in zip(group, group[1:])
+            if stem(a) in registered_stems and stem(b) in registered_stems]
+
+
 def summarize_camera_steps(
     names: Sequence[str],
     times: Sequence[float],
     steps: Sequence[float],
     axis_label: str,
+    valid_indices: Optional[Sequence[int]] = None,
 ) -> Dict[str, object]:
     """Summarize camera-center steps and flag a single extreme discontinuity.
 
@@ -112,7 +129,10 @@ def summarize_camera_steps(
     values = [float(step) for step in steps]
     if len(values) != max(0, len(names) - 1) or len(times) != len(names):
         raise ValueError("camera names, times and adjacent steps must have matching lengths")
-    if not values:
+    indices = list(range(len(values))) if valid_indices is None else list(valid_indices)
+    if any(i < 0 or i >= len(values) for i in indices):
+        raise ValueError("invalid adjacent step index")
+    if not indices:
         return {
             "median_step_between_adjacent_registered_cameras": None,
             "largest_step_between_adjacent_registered_cameras": None,
@@ -123,8 +143,8 @@ def summarize_camera_steps(
             "camera_path_warnings": [],
         }
 
-    median_step = float(statistics.median(values))
-    peak_index = max(range(len(values)), key=values.__getitem__)
+    median_step = float(statistics.median(values[i] for i in indices))
+    peak_index = max(indices, key=values.__getitem__)
     largest_step = values[peak_index]
     ratio = largest_step / median_step if median_step > 0 else None
     extreme = (
@@ -207,7 +227,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     errors = np.array([pt.error for pt in points.values()])
     tracks = np.array([len(pt.image_ids) for pt in points.values()])
     components = sparse_models(args.workspace)
-    step_summary = summarize_camera_steps(names, t.tolist(), step.tolist(), axis_label)
+    pairs = set(adjacent_expected_pairs(list(seconds), names))
+    valid_indices = [i for i in range(len(names) - 1) if (names[i], names[i + 1]) in pairs]
+    step_summary = summarize_camera_steps(names, t.tolist(), step.tolist(), axis_label, valid_indices)
 
     report = {
         'label': args.label, 'registered': len(images), 'expected': len(seconds),
@@ -217,6 +239,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         'cameras': {str(k): dict(model=c.model, width=c.width, height=c.height, params=[float(x) for x in c.params])
                     for k, c in cameras.items()},
         'time_axis': axis_label,
+        'ordering_assumption': 'Lexical relative-name order within each folder; not verified capture chronology.',
+        'adjacent_step_count': len(valid_indices),
+        'step_policy': 'Only consecutive expected frames within the same folder when both registered; unexpected frames excluded.',
         'registered_span': finite_span(t.tolist()),
         'median_step_between_adjacent_registered_cameras':
             step_summary['median_step_between_adjacent_registered_cameras'],
@@ -241,21 +266,22 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     sample = np.linspace(0, len(cloud) - 1, min(20000, len(cloud)), dtype=int)
     for ax, (a, b) in zip(axes.flat[:3], ((0, 1), (0, 2), (1, 2))):
         ax.scatter(cloud[sample, a], cloud[sample, b], s=.5, c=rgb[sample], alpha=.25)
-        ax.plot(centers[:, a], centers[:, b], lw=.7, color='gray')
+        for i in valid_indices:
+            ax.plot(centers[i:i + 2, a], centers[i:i + 2, b], lw=.7, color='gray')
         sc = ax.scatter(centers[:, a], centers[:, b], c=colors, cmap='viridis', s=14)
         ax.annotate('first', centers[0, [a, b]])
         ax.annotate('last', centers[-1, [a, b]])
         ax.set(xlabel='XYZ'[a] + ' (scene units)', ylabel='XYZ'[b] + ' (scene units)')
         ax.set_aspect('equal', adjustable='datalim')
         fig.colorbar(sc, ax=ax, label=axis_label)
-    axes[1, 1].plot(colors[1:], step, marker='o', ms=3)
+    axes[1, 1].scatter(colors[np.array(valid_indices, dtype=int) + 1], step[valid_indices], s=12)
     axes[1, 1].set(xlabel=axis_label, ylabel='distance between adjacent registered cameras (scene units)')
     title = (f'{args.label or args.workspace.name}: {len(images)}/{len(seconds)} registered, '
                  f'{len(components)} sparse model(s), {len(points)} points, '
                  f'mean reprojection {errors.mean():.2f} px\n'
                  'Camera path over the sparse points. Review the geometry; this is not measured accuracy.')
     if step_summary['camera_path_warnings']:
-        peak_index = int(np.argmax(step))
+        peak_index = max(valid_indices, key=lambda i: step[i])
         axes[1, 1].scatter(
             [colors[peak_index + 1]], [step[peak_index]], marker='x',
             s=65, color='red', zorder=5)
