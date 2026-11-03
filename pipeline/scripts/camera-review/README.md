@@ -64,8 +64,11 @@ camera path over them, colored by time or order, plus the eligible steps along t
 
 Image-cell occupancy describes where retained sparse observations fall on an image plane. It does not measure subject coverage or establish pose accuracy, and supplies no quality threshold or accept/reject decision.
 
-The same numbers are printed to the terminal, without the long `missing`,
-`unexpected` and `cameras` fields apart from a one-line `missing:` list.
+The terminal prints a compact summary through `terminal_summary()`, omitting
+the long `missing`, `unexpected`, `cameras` and `per_image_track_support` fields.
+The complete per-image support grids remain in `camera-checks.json`;
+`track_support_grid` semantics remain in the terminal summary. A separate one-line
+`missing:` list is printed as before.
 
 ## How to read it
 

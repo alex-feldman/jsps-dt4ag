@@ -245,6 +245,24 @@ class TestImageTrackSupport(unittest.TestCase):
                 json.dumps(row, allow_nan=False)
 
 
+
+class TestTerminalSummary(unittest.TestCase):
+
+    def test_omits_per_image_details_without_mutating_full_report(self):
+        report = {'registered': 120, 'points': 4000,
+                  'track_support_grid': {'rows': 4, 'columns': 4},
+                  'camera_path_warnings': ['Review transition'],
+                  'per_image_track_support': {'folder/frame.png': {'grid_observation_counts': [[1]]}},
+                  'missing': ['missing.png'], 'unexpected': ['extra.png'], 'cameras': {'1': {}}}
+        original = json.dumps(report, sort_keys=True)
+        summary = cr.terminal_summary(report)
+        self.assertEqual(set(summary), {'registered', 'points', 'track_support_grid', 'camera_path_warnings'})
+        self.assertEqual(summary['registered'], 120)
+        self.assertEqual(summary['track_support_grid'], {'rows': 4, 'columns': 4})
+        self.assertEqual(summary['camera_path_warnings'], ['Review transition'])
+        self.assertEqual(json.dumps(report, sort_keys=True), original)
+
+
 class TestArguments(unittest.TestCase):
 
     def test_required_and_default_options(self):

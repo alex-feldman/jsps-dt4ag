@@ -253,6 +253,13 @@ def image_track_support(images, cameras, points):
     return result
 
 
+
+def terminal_summary(report):
+    """Keep per-image detail in the JSON file, with compact fields on stdout."""
+    detail_fields = {'missing', 'cameras', 'unexpected', 'per_image_track_support'}
+    return {key: value for key, value in report.items() if key not in detail_fields}
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--capture', type=Path, required=True,
@@ -391,7 +398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(args.out / 'camera-review.png', dpi=130)
-    print(json.dumps({k: v for k, v in report.items() if k not in ('missing', 'cameras', 'unexpected')}, indent=2))
+    print(json.dumps(terminal_summary(report), indent=2))
     print('missing:', report['missing'])
     print(args.out / 'camera-review.png')
 

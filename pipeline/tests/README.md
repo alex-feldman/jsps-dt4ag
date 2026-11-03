@@ -55,7 +55,7 @@ the refusal with `[host] memory_high` and `--print-command`. No scope is created
 
 `test_camera_review.py` covers the helpers of `scripts/camera-review/camera-review.py`
 that need no COLMAP data: frame times from `frames.csv` or image order, missing
-and unexpected frames, model folders, retained observation membership, image-cell boundaries, per-camera dimensions, zero support, invalid dimensions and the arguments. Stdlib only.
+and unexpected frames, model folders, retained observation membership, image-cell boundaries, per-camera dimensions, zero support, invalid dimensions, compact terminal filtering without changing the full report, and the arguments. Stdlib only.
 
 `test_ply_check.py` covers `scripts/ply-check/ply-check.py` with small synthetic
 PLYs written by the test (3DGS property names, binary little-endian): the header
