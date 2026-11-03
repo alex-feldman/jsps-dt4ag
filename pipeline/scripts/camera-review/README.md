@@ -28,7 +28,7 @@ If the capture has `provenance/frames.csv` (written by `video-frames.py
 extract`), the expected frame list comes from it and the plot is colored by clip
 time, using `source_seconds_approx` or else `output_grid_seconds`. Otherwise the
 expected frames are the images under `images/`, in sorted-name order, and the
-plot is colored by that order. The JSON says which in `time_axis`.
+plot is colored by that order. The JSON says which in `time_axis`. For image captures, relative paths are kept so camera folders remain distinct. The review matches capture files and COLMAP names by relative stem, allowing JPEG originals to correspond to PNG mask composites; duplicate stems are refused rather than guessed.
 
 ## What it writes
 

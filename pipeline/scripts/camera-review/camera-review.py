@@ -47,7 +47,8 @@ def frame_times(capture: Path) -> Tuple[Dict[str, float], str]:
         for column in TIME_COLUMNS:
             if rows and column in rows[0]:
                 return {r['filename']: float(r[column]) for r in rows}, 'clip seconds (approx)'
-    names = sorted(p.name for p in (capture / 'images').rglob('*') if p.suffix.lower() in IMAGE_SUFFIXES)
+    root = capture / 'images'
+    names = sorted(p.relative_to(root).as_posix() for p in root.rglob('*') if p.suffix.lower() in IMAGE_SUFFIXES)
     return {n: float(i) for i, n in enumerate(names)}, 'frame order'
 
 
@@ -56,6 +57,31 @@ def compare_frames(expected: Sequence[str], registered: Sequence[str]) -> Dict[s
     expected_set, registered_set = set(expected), set(registered)
     return {'missing': sorted(expected_set - registered_set),
             'unexpected': sorted(registered_set - expected_set)}
+
+
+def reconcile_frame_names(expected: Dict[str, float], registered: Sequence[str]) -> Tuple[Dict[str, float], Dict[str, List[str]]]:
+    """Match capture images to COLMAP paths by relative stem; refuse ambiguous mappings.
+
+    Mask compositing changes JPEGs to PNGs but preserves their relative paths.
+    """
+    def index(names):
+        result = {}
+        for name in names:
+            key = Path(name).with_suffix('').as_posix()
+            if key in result:
+                raise ValueError(f'ambiguous frame stem: {key}')
+            result[key] = name
+        return result
+
+    expected_by_stem = index(expected)
+    registered_by_stem = index(registered)
+    common = expected_by_stem.keys() & registered_by_stem.keys()
+    times = {registered_by_stem[key]: expected[expected_by_stem[key]] for key in common}
+    frames = {
+        'missing': sorted(expected_by_stem[key] for key in expected_by_stem.keys() - common),
+        'unexpected': sorted(registered_by_stem[key] for key in registered_by_stem.keys() - common),
+    }
+    return times, frames
 
 
 def sparse_models(workspace: Path) -> List[str]:
@@ -173,14 +199,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ordered = sorted(images.values(), key=lambda i: i.name)
     names = [i.name for i in ordered]
     centers = np.stack([-i.qvec2rotmat().T @ i.tvec for i in ordered])
-    t = np.array([seconds.get(i.name, np.nan) for i in ordered])
+    aligned_seconds, frames = reconcile_frame_names(seconds, names)
+    t = np.array([aligned_seconds.get(i.name, np.nan) for i in ordered])
     step = np.linalg.norm(np.diff(centers, axis=0), axis=1)
     cloud = np.stack([pt.xyz for pt in points.values()])
     rgb = np.stack([pt.rgb for pt in points.values()]) / 255.
     errors = np.array([pt.error for pt in points.values()])
     tracks = np.array([len(pt.image_ids) for pt in points.values()])
     components = sparse_models(args.workspace)
-    frames = compare_frames(list(seconds), names)
     step_summary = summarize_camera_steps(names, t.tolist(), step.tolist(), axis_label)
 
     report = {

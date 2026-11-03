@@ -16,6 +16,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+- Fix camera review for nested camera folders and JPEG originals composited to PNG, refusing ambiguous frame stems.
+
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
 
 ## [0.3.0-alpha.15] - 2026-11-02
