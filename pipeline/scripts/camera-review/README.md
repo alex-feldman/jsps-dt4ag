@@ -49,6 +49,7 @@ original sequence.
   split the solve into disconnected pieces.
 - `reviewed_model`, `points`, `mean_reprojection_error_px`, `mean_track_length`.
 - `cameras`: model, size and parameters of each camera.
+- `per_image_track_support`: retained 3D observation counts and image-cell occupancy for every registered image, including unexpected images, keyed by full COLMAP image name. Each image uses its own camera dimensions. `image_track_support()` owns the count and boundary rules; `track_support_grid` records the grid shape and semantics in the JSON. The grid is 4 by 4, with counts stored as top-to-bottom rows and left-to-right columns. Only nonnegative point IDs present in the reviewed sparse model count. Nonfinite or outside-image coordinates contribute to the retained count but occupy no cell. Zero retained observations give zero occupancy; invalid or missing dimensions give zero cell counts and a null coverage fraction. These are observation entries, not unique point IDs.
 - `time_axis` and `registered_span`.
 - `ordering_assumption`, `step_policy` and `adjacent_step_count` describe the ordering and included pairs. `folder_step_summaries` gives each expected folder its own count, median, maximum, maximum/median ratio and warning using the same eligible edges. Existing step fields retain their names but now summarize only eligible pairs; they are null when no pair is eligible.
 - `median_step_between_adjacent_registered_cameras`,
@@ -60,6 +61,8 @@ original sequence.
 
 `camera-review.png`: three views (X-Y, X-Z, Y-Z) of the sparse points with the
 camera path over them, colored by time or order, plus the eligible steps along that axis. Each flagged pooled or folder peak is marked with a red X. A dashed reference line appears for a pooled alert only, at its pooled threshold; folder thresholds differ and are described in the JSON.
+
+Image-cell occupancy describes where retained sparse observations fall on an image plane. It does not measure subject coverage or establish pose accuracy, and supplies no quality threshold or accept/reject decision.
 
 The same numbers are printed to the terminal, without the long `missing`,
 `unexpected` and `cameras` fields apart from a one-line `missing:` list.

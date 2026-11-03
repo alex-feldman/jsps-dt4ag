@@ -18,6 +18,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Camera review adds per-image retained sparse 3D observation counts and descriptive 4-by-4 image-cell occupancy, with camera-specific dimensions and explicit boundary semantics.
+
 - Camera review surfaces folder-specific warnings and marks flagged peaks in the plot. It reports per-folder step summaries and retains valid expected pairs when unexpected names interleave. It separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
 
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.

@@ -201,6 +201,58 @@ def collect_camera_alerts(global_summary, folder_summaries):
     return warnings, flagged
 
 
+
+SUPPORT_GRID_ROWS = 4
+SUPPORT_GRID_COLUMNS = 4
+
+
+def image_track_support(images, cameras, points):
+    """Describe retained observations and their image-plane distribution.
+
+    Count observation entries, not unique point IDs. Only IDs present in the
+    reviewed sparse model count. Grid cells use finite pixels in the half-open
+    image rectangle, with row zero at the top and column zero at the left.
+    Invalid coordinates still count as retained observations but occupy no cell.
+    """
+    result = {}
+    for image in sorted(images.values(), key=lambda image: image.name):
+        camera = cameras.get(image.camera_id)
+        width = float(camera.width) if camera is not None else 0.0
+        height = float(camera.height) if camera is not None else 0.0
+        dimensions_valid = (math.isfinite(width) and math.isfinite(height)
+                            and width > 0 and height > 0)
+        counts = [[0] * SUPPORT_GRID_COLUMNS for _ in range(SUPPORT_GRID_ROWS)]
+        retained = in_bounds = 0
+        for index, point_id in enumerate(image.point3D_ids):
+            if point_id < 0 or point_id not in points:
+                continue
+            retained += 1
+            if not dimensions_valid or index >= len(image.xys):
+                continue
+            x, y = image.xys[index]
+            if not (math.isfinite(x) and math.isfinite(y)
+                    and 0 <= x < width and 0 <= y < height):
+                continue
+            row = min(SUPPORT_GRID_ROWS - 1, int(y / height * SUPPORT_GRID_ROWS))
+            column = min(SUPPORT_GRID_COLUMNS - 1, int(x / width * SUPPORT_GRID_COLUMNS))
+            counts[row][column] += 1
+            in_bounds += 1
+        occupied = sum(count > 0 for row in counts for count in row)
+        result[image.name] = {
+            'camera_id': int(image.camera_id),
+            'image_width': width if math.isfinite(width) else None,
+            'image_height': height if math.isfinite(height) else None,
+            'dimensions_valid': dimensions_valid,
+            'retained_3d_observation_count': retained,
+            'in_bounds_retained_3d_observation_count': in_bounds,
+            'grid_observation_counts': counts,
+            'occupied_cell_count': occupied,
+            'occupied_cell_fraction': (occupied / (SUPPORT_GRID_ROWS * SUPPORT_GRID_COLUMNS)
+                                       if dimensions_valid else None),
+        }
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--capture', type=Path, required=True,
@@ -266,6 +318,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         'mean_reprojection_error_px': float(errors.mean()), 'mean_track_length': float(tracks.mean()),
         'cameras': {str(k): dict(model=c.model, width=c.width, height=c.height, params=[float(x) for x in c.params])
                     for k, c in cameras.items()},
+        'per_image_track_support': image_track_support(images, cameras, points),
+        'track_support_grid': {
+            'rows': SUPPORT_GRID_ROWS, 'columns': SUPPORT_GRID_COLUMNS,
+            'semantics': 'Observation entries whose nonnegative point3D ID exists in the reviewed sparse model. '
+                         'Cells partition [0,width) x [0,height), top-to-bottom rows and left-to-right columns. '
+                         'Nonfinite or outside-image coordinates occupy no cell but remain in the retained count. '
+                         'Invalid or missing camera dimensions yield zero cell counts and null coverage fraction. '
+                         'Image-plane occupancy is descriptive, not subject coverage or a pose-quality decision.',
+        },
         'time_axis': axis_label,
         'ordering_assumption': 'Lexical relative-name order within each folder; not verified capture chronology.',
         'adjacent_step_count': len(edges),
