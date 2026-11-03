@@ -28,6 +28,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Add a shared-match epipolar comparison companion for saved SIMPLE_RADIAL camera models.
+
 - Add a camera-motion comparison companion for two saved COLMAP solves, with folder-local relative rotations, normalized baselines and explicit missing-frame refusals.
 
 - `[colmap] num_threads`, default `auto`: the runner chooses COLMAP's

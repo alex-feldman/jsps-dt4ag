@@ -122,3 +122,34 @@ inputs, missing and unexpected stems, and interpretation limits. Camera baseline
 have arbitrary independent model scales. A disagreement is not evidence of which
 solve is correct, and this tool does not choose acceptance thresholds. Tests are
 in `pipeline/tests/test_compare_camera_motion.py`.
+
+## Compare shared epipolar correspondences
+
+`compare-epipolar.py` evaluates the same verified 2D matches against two saved
+camera models. It uses only Python's standard library and reads the COLMAP
+match database in read-only mode. Supply database image names exactly, including
+relative folders and extensions. Repeat `--pair` for each pair, and use a fresh
+output directory:
+
+```bash
+python pipeline/scripts/camera-review/compare-epipolar.py \
+  --database {run}/database.db --workspace-a {run-a} --workspace-b {run-b} \
+  --pair folder/image1.png folder/image2.png --cross --out {fresh-output}
+```
+
+`--model-a` and `--model-b` select a sparse model (default `0`). `--cross`
+adds both combinations of one model's poses and the other's intrinsics. The
+current tool supports SIMPLE_RADIAL camera models and verified COLMAP
+UNCALIBRATED fundamental-matrix matches only; other geometry and camera types
+are refused. It checks database/model image dimensions and camera sharing,
+requires exact image names, and refuses degenerate baselines. Matching names and
+dimensions do not prove identical image pixels or preprocessing; verify that
+the database and both models refer to the same image domain. Matched keypoint
+indices follow COLMAP's pair-ID ordering. Observations that fail numerical
+projection checks are excluded jointly from every requested combination.
+
+`epipolar.csv` reports verified and jointly used counts and median/P90 pixel-domain
+first-order Sampson residuals. `metadata.json` records inputs and limits. These
+are approximations, especially for large errors; verified matches may include
+outliers and are not independent ground truth. The tool does not set acceptance
+thresholds. Tests: `pipeline/tests/test_compare_epipolar.py`.
