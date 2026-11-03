@@ -68,7 +68,7 @@ class TestFrameTimes(CaptureCase):
     def test_images_in_subfolders_are_found(self):
         (self.capture / "images" / "sub").mkdir()
         (self.capture / "images" / "sub" / "c.jpg").write_bytes(b"x")
-        self.assertEqual(list(cr.frame_times(self.capture)[0]), ["c.jpg"])
+        self.assertEqual(list(cr.frame_times(self.capture)[0]), ["sub/c.jpg"])
 
 
 class TestComparison(unittest.TestCase):
@@ -86,6 +86,15 @@ class TestComparison(unittest.TestCase):
         self.assertEqual(cr.finite_span([nan, 2.0, 5.0, float("inf"), 1.0]), [1.0, 5.0])
         self.assertEqual(cr.finite_span([nan, nan]), [])
         self.assertEqual(cr.finite_span([]), [])
+
+    def test_masked_pngs_match_nested_original_jpegs(self):
+        times, result = cr.reconcile_frame_names({"a/frame.jpg": 0.0, "b/frame.jpg": 1.0}, ["a/frame.png", "b/frame.png"])
+        self.assertEqual(times, {"a/frame.png": 0.0, "b/frame.png": 1.0})
+        self.assertEqual(result, {"missing": [], "unexpected": []})
+
+    def test_ambiguous_stems_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "ambiguous frame stem"):
+            cr.reconcile_frame_names({"a.jpg": 0.0, "a.png": 1.0}, ["a.png"])
 
 
 class TestCameraStepReview(unittest.TestCase):

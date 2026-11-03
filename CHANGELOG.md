@@ -30,6 +30,10 @@ Dates are the tag date, not the commit date, where they differ.
   and selections, v0.6.0 an outside install (Linux or WSL2). Native Windows moves to future work, and
   direct video-file ingestion becomes a non-goal. `docs/v0.3.0-release-plan.md` follows.
 
+### Fixed
+
+- Fix camera review for nested camera folders and JPEG originals composited to PNG, refusing ambiguous frame stems.
+
 ## [0.3.0-alpha.16] - 2026-11-12
 
 ### Added
