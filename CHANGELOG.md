@@ -28,6 +28,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
+- Add a camera-motion comparison companion for two saved COLMAP solves, with folder-local relative rotations, normalized baselines and explicit missing-frame refusals.
+
 - `[colmap] num_threads`, default `auto`: the runner chooses COLMAP's
   `--num_threads` just before the colmap stage from the memory available then,
   the smallest of Linux's `MemAvailable`, the room the stage's cgroup leaves
