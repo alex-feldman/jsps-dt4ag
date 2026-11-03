@@ -185,6 +185,22 @@ def summarize_camera_steps(
     }
 
 
+def collect_camera_alerts(global_summary, folder_summaries):
+    """Return all warning messages and unique flagged transitions with their scopes."""
+    warnings = list(global_summary["camera_path_warnings"])
+    flagged = {}
+    def add(scope, summary):
+        if summary["camera_path_warnings"]:
+            edge = (summary["largest_step_from"], summary["largest_step_to"])
+            flagged.setdefault(edge, []).append(scope)
+    add("global", global_summary)
+    for folder, summary in folder_summaries.items():
+        for warning in summary["camera_path_warnings"]:
+            warnings.append(f"Folder {folder}: {warning}")
+        add(f"folder {folder}", summary)
+    return warnings, flagged
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--capture', type=Path, required=True,
@@ -241,6 +257,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                                          selected, edge_indices=edges)
         folder_summaries[folder] = {"adjacent_step_count": len(selected), **summary}
 
+    warnings, flagged = collect_camera_alerts(step_summary, folder_summaries)
+
     report = {
         'label': args.label, 'registered': len(images), 'expected': len(seconds),
         'missing': frames['missing'], 'unexpected': frames['unexpected'],
@@ -263,7 +281,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         'largest_step_time_interval': step_summary['largest_step_time_interval'],
         'largest_step_ratio_to_median': step_summary['largest_step_ratio_to_median'],
         'camera_step_warning_ratio': CAMERA_STEP_WARNING_RATIO,
-        'camera_path_warnings': step_summary['camera_path_warnings'],
+        'camera_path_warnings': warnings,
+        'flagged_camera_steps': [dict(from_frame=a, to_frame=b, scopes=scopes)
+                                 for (a, b), scopes in flagged.items()],
         'limits': 'Geometry is scale-free. A plausible path and a high registration count do not prove '
                   'correct poses or coverage of the whole subject; judge the plot, not the counts.',
     }
@@ -291,19 +311,22 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                  f'{len(components)} sparse model(s), {len(points)} points, '
                  f'mean reprojection {errors.mean():.2f} px\n'
                  'Camera path over the sparse points. Review the geometry; this is not measured accuracy.')
-    if step_summary['camera_path_warnings']:
-        peak_index = int(np.argmax(step))
-        axes[1, 1].scatter(
-            [colors[edges[peak_index][1]]], [step[peak_index]], marker='x',
-            s=65, color='red', zorder=5)
+    if flagged:
+        edge_names = [(names[a], names[b]) for a, b in edges]
+        for pair in flagged:
+            index = edge_names.index(pair)
+            axes[1, 1].scatter([colors[edges[index][1]]], [step[index]],
+                               marker='x', s=65, color='red', zorder=5)
+        axes[1, 1].scatter([], [], marker='x', color='red',
+                           label='global or folder peak review alert')
         median_step = step_summary['median_step_between_adjacent_registered_cameras']
-        if median_step and median_step > 0:
+        if median_step and median_step > 0 and step_summary['camera_path_warnings']:
             axes[1, 1].axhline(
                 median_step * CAMERA_STEP_WARNING_RATIO, color='red',
                 linestyle='--', linewidth=.8,
-                label=f'{CAMERA_STEP_WARNING_RATIO:g}x median review alert')
-            axes[1, 1].legend()
-        title += f"\nREVIEW WARNING: {step_summary['camera_path_warnings'][0]}"
+                label=f'{CAMERA_STEP_WARNING_RATIO:g}x pooled median')
+        axes[1, 1].legend()
+        title += f"\nREVIEW: {len(flagged)} flagged transition(s); see JSON for scopes and details."
     fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(args.out / 'camera-review.png', dpi=130)

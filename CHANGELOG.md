@@ -16,7 +16,7 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
-- Camera review reports per-folder step summaries and retains valid expected pairs when unexpected names interleave. It separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
+- Camera review surfaces folder-specific warnings and marks flagged peaks in the plot. It reports per-folder step summaries and retains valid expected pairs when unexpected names interleave. It separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
 
 - Fix camera review for nested camera folders and JPEG originals composited to PNG, refusing ambiguous frame stems.
 
