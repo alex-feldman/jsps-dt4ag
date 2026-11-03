@@ -24,6 +24,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
 
+- Add a shared-match epipolar comparison companion for saved SIMPLE_RADIAL camera models.
+
 - Add a camera-motion comparison companion for two saved COLMAP solves, with folder-local relative rotations, normalized baselines and explicit missing-frame refusals.
 
 ### Changed
