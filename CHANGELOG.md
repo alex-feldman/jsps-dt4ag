@@ -18,7 +18,7 @@ Dates are the tag date, not the commit date, where they differ.
 
 ### Added
 
-- Camera review separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
+- Camera review reports per-folder step summaries and retains valid expected pairs when unexpected names interleave. It separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
 
 - Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
 

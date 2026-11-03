@@ -105,6 +105,19 @@ class TestSegments(unittest.TestCase):
         self.assertEqual(cr.adjacent_expected_pairs(expected, registered),
                          [("b/01.png", "b/02.png")])
 
+    def test_unexpected_interleaving_does_not_hide_expected_edge(self):
+        expected = ["a/01.jpg", "a/03.jpg", "a/04.jpg", "a/05.jpg"]
+        names = ["a/01.png", "a/02-unexpected.png", "a/03.png", "a/05.png"]
+        pairs = cr.adjacent_expected_pairs(expected, names)
+        self.assertEqual(pairs, [("a/01.png", "a/03.png")])
+        index = {name: i for i, name in enumerate(names)}
+        edges = [(index[a], index[b]) for a, b in pairs]
+        summary = cr.summarize_camera_steps(names, [0, float("nan"), 1, 3],
+                                            [2.0], "frame order", edge_indices=edges)
+        self.assertEqual(summary["largest_step_from"], "a/01.png")
+        self.assertEqual(summary["largest_step_to"], "a/03.png")
+        self.assertEqual(summary["largest_step_between_adjacent_registered_cameras"], 2.0)
+
     def test_single_video_sequence_and_filtered_statistics(self):
         names = ["01.png", "02.png", "03.png"]
         self.assertEqual(cr.adjacent_expected_pairs(names, names), list(zip(names, names[1:])))
