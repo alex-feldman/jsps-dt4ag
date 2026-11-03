@@ -34,8 +34,7 @@ Ordering is lexical by relative image name within each folder, an assumption tha
 may not match capture chronology. Only pairs consecutive in the expected list
 and registered in the same folder contribute to steps or connecting lines.
 Missing frames and folder boundaries break the path. Unexpected registered
-frames are shown as points and excluded from steps. An unexpected name between
-two expected registered names in lexical order also breaks their plotted link.
+frames are shown as points and excluded from steps. Unexpected names between two expected registered names do not break their link.
 For a single video folder with every frame registered, this preserves the
 original sequence.
 
@@ -51,7 +50,7 @@ original sequence.
 - `reviewed_model`, `points`, `mean_reprojection_error_px`, `mean_track_length`.
 - `cameras`: model, size and parameters of each camera.
 - `time_axis` and `registered_span`.
-- `ordering_assumption`, `step_policy` and `adjacent_step_count` describe the ordering and included pairs. Existing step fields retain their names but now summarize only eligible pairs; they are null when no pair is eligible.
+- `ordering_assumption`, `step_policy` and `adjacent_step_count` describe the ordering and included pairs. `folder_step_summaries` gives each expected folder its own count, median, maximum, maximum/median ratio and warning using the same eligible edges. Existing step fields retain their names but now summarize only eligible pairs; they are null when no pair is eligible.
 - `median_step_between_adjacent_registered_cameras`,
   `largest_step_between_adjacent_registered_cameras`, its frame pair and
   time interval, and the largest/median ratio.
