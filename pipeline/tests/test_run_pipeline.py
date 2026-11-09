@@ -349,7 +349,7 @@ class TestCommands(TempTreeTestCase):
                 "--viewer.quit-on-train-completion", "True",
                 "--max-num-iterations", "500",
                 "--logging.local-writer.max-log-size", "0",
-                "--steps-per-save", "2500",
+                "--steps-per-save", "5000",
                 "--save-only-latest-checkpoint", "False",
                 "nerfstudio-data",
                 "--eval-mode", "fraction",
@@ -389,10 +389,10 @@ class TestCommands(TempTreeTestCase):
                 self.assertEqual(command.count("--vis"), 1)
                 self.assertIn("--viewer.quit-on-train-completion", command)
 
-    def test_train_command_keeps_a_checkpoint_every_2500_steps_by_default(self):
+    def test_train_command_keeps_a_checkpoint_every_5000_steps_by_default(self):
         """nerfstudio's own default deletes all but the newest; that is the trap."""
         command = train_command(make_config(self.root), self.root / "ws")
-        self.assertEqual(command[command.index("--steps-per-save") + 1], "2500")
+        self.assertEqual(command[command.index("--steps-per-save") + 1], "5000")
         self.assertEqual(
             command[command.index("--save-only-latest-checkpoint") + 1], "False")
 

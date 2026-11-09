@@ -20,6 +20,13 @@ Dates are the tag date, not the commit date, where they differ.
 
 - Clarified WSL memory and COLMAP thread evidence, including the limits of
   the capped-Windows runs and earlier emulation.
+- `[train] steps_per_save` now defaults to `5000` (it was `2500`), named `DEFAULT_STEPS_PER_SAVE` in
+  `pipeline/dt4ag_config.py`. A 30,000-step run keeps six checkpoints instead of twelve, about half the disk,
+  and the default `[export] checkpoint_interval` of `15000` still lands on a saved checkpoint. A config that
+  does not set `steps_per_save` but sets `checkpoint_interval` to a multiple of 2500 that is not a multiple of
+  5000 (2500, 7500, 12500, ...) now fails validation with the existing "not a multiple of steps_per_save"
+  message; set `steps_per_save = 2500` to keep the old cadence. Configs that set `steps_per_save` explicitly
+  are unaffected. `example.ini`, `configs/README.md`, QUICKSTART and the run builder's embedded schema follow.
 
 ## [0.3.0-alpha.15] - 2026-11-02
 

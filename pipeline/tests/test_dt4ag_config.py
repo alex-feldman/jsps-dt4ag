@@ -179,7 +179,7 @@ class TestHappyPath(TempDirTestCase):
         # [train]
         self.assertEqual(cfg.train_method, "splatfacto")
         self.assertEqual(cfg.max_num_iterations, 30000)
-        self.assertEqual(cfg.steps_per_save, 2500)
+        self.assertEqual(cfg.steps_per_save, 5000)
         self.assertFalse(cfg.save_only_latest_checkpoint)
         self.assertTrue(cfg.use_scale_regularization)
         self.assertEqual(cfg.background_color, "random")
@@ -452,10 +452,17 @@ class TestFailureModes(TempDirTestCase):
             fixture.path, "checkpoint_interval", "export", fixture.path)
         self.assertIn("multiple", message)
 
+    def test_the_default_steps_per_save_is_5000_so_a_2500_interval_needs_it_set_explicitly(self):
+        fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "2500"}})
+        message = self.assertConfigError(
+            fixture.path, "checkpoint_interval", "export", fixture.path)
+        self.assertIn("multiple", message)
+        self.assertIn("steps_per_save = 5000", message)
+
     def test_checkpoint_interval_needs_every_checkpoint_kept(self):
         fixture = ConfigFixture(self.tmp, extra={
             "train": {"save_only_latest_checkpoint": "true"},
-            "export": {"checkpoint_interval": "2500"}})
+            "export": {"checkpoint_interval": "5000"}})
         message = self.assertConfigError(
             fixture.path, "checkpoint_interval", "export", fixture.path)
         self.assertIn("save_only_latest_checkpoint", message)
@@ -1304,7 +1311,7 @@ class TestArchiveRunConfig(TempDirTestCase):
         parser.read_string(written.read_text(encoding="utf-8"))
         record = parser["run-record"]
         self.assertEqual(record["eval_mode"], "evalfrac90")
-        self.assertEqual(record["steps_per_save"], "2500")
+        self.assertEqual(record["steps_per_save"], "5000")
         self.assertEqual(record["checkpoint_interval"], "15000")
         self.assertEqual(record["stages"], "train,export")
 

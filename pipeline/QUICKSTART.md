@@ -1272,7 +1272,7 @@ largest count and export the checkpoints on the way. Do not train once per
 count, and do not try to resume.**
 
 The pipeline keeps a checkpoint every `[train] steps_per_save` steps (default
-2500) and keeps all of them (`save_only_latest_checkpoint = false`), plus one at
+5000, six checkpoints in a 30,000-step run; it was 2500 before the next release) and keeps all of them (`save_only_latest_checkpoint = false`), plus one at
 the final step. nerfstudio's own defaults are every 2000 and newest only, which
 deletes the earlier ones and leaves nothing to export an earlier step from.
 
@@ -1285,7 +1285,8 @@ differ slightly. The cause was not isolated; non-deterministic GPU kernels are t
 likely one. To size that noise, repeat one configuration and compare, rather than
 assuming zero.)
 
-**Have the pipeline export them: set `[export] checkpoint_interval = 2500`.** The
+**Have the pipeline export them: set `[export] checkpoint_interval = 5000`** (or set
+`[train] steps_per_save = 2500` first, for every 2500 steps). The
 export stage then writes one PLY for every checkpoint whose step is a multiple of
 that number, plus the final one, each named `{x}steps_from{y}run` and carrying the
 eval-mode token. The default is `15000` (`DEFAULT_CHECKPOINT_INTERVAL` in
@@ -1299,9 +1300,9 @@ To export a single earlier step by hand instead, point a copy of the run's
 
 ```bash
 RUN=<data_root>/outputs/<dataset>/<run-id>/splatfacto/<timestamp>
-ls $RUN/nerfstudio_models                      # step-000002500.ckpt, ...
-sed 's/^load_step: .*/load_step: 12500/' $RUN/config.yml > $RUN/config-step-12500.yml
-ns-export gaussian-splat --load-config $RUN/config-step-12500.yml \
+ls $RUN/nerfstudio_models                      # step-000005000.ckpt, ...
+sed 's/^load_step: .*/load_step: 15000/' $RUN/config.yml > $RUN/config-step-15000.yml
+ns-export gaussian-splat --load-config $RUN/config-step-15000.yml \
     --output-dir <data_root>/exports --output-filename <name>
 ```
 
@@ -1309,7 +1310,7 @@ When exporting by hand, name the file with the pipeline's own pattern
 (`configs/README.md`, "Export filenames"):
 `..._<x>steps_from<y>run_<eval token>_...`, where `x` is the checkpoint's step and
 `y` the run's `max_num_iterations`, for example
-`..._12500steps_from30000run_evalall_ds4_individual.ply`. Checkpoint files are
+`..._15000steps_from30000run_evalall_ds4_individual.ply`. Checkpoint files are
 named by the zero-based step they were saved at, so a run's final checkpoint is one
 below its maximum (`step-000029999` for a 30,000-step run); count it as `x = y`.
 

@@ -250,6 +250,11 @@ VIS_MODES = ("viewer", "viewer+tensorboard", "tensorboard")
 #: A value of zero remains available for final-only export.
 DEFAULT_CHECKPOINT_INTERVAL = 15000
 
+#: Default checkpoint cadence. 5000 keeps six checkpoints in a 30,000-step run (the
+#: earlier 2500 kept twelve, about twice the disk) and still saves the step that
+#: DEFAULT_CHECKPOINT_INTERVAL exports. It must divide any explicit checkpoint_interval.
+DEFAULT_STEPS_PER_SAVE = 5000
+
 #: ``[colmap] data_type`` values. ``auto`` is the legacy directory-name heuristic
 #: (``Dt4agConfig.resolve_colmap_data_type``).
 COLMAP_DATA_TYPES = ("auto", "individual", "video")
@@ -1408,7 +1413,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     # so training once to the largest step count of interest and exporting the
     # checkpoints along the way is how several step counts are compared without
     # retraining. nerfstudio's own default (2000, newest only) throws that away.
-    steps_per_save = _get_int(parser, "train", "steps_per_save", source, 2500)
+    steps_per_save = _get_int(parser, "train", "steps_per_save", source, DEFAULT_STEPS_PER_SAVE)
     if steps_per_save <= 0:
         raise ConfigError(
             f"key 'steps_per_save' in section [train] of config file {source} "
@@ -1663,7 +1668,7 @@ CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
     _k("nerfstudio", "colmap_model_path", default="sparse/0"),
     _k("train", "method", default="splatfacto"),
     _k("train", "max_num_iterations", "int", "30000"),
-    _k("train", "steps_per_save", "int", "2500"),
+    _k("train", "steps_per_save", "int", str(DEFAULT_STEPS_PER_SAVE)),
     _k("train", "save_only_latest_checkpoint", "bool", "false"),
     _k("train", "eval_mode", "choice", "fraction", choices=EVAL_MODES),
     _k("train", "train_split_fraction", "float", "0.9"),
