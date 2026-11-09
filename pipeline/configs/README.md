@@ -268,7 +268,7 @@ Feeds `ns-train`.
 |---|---|---|---|
 | `method` | no | `splatfacto` | The nerfstudio method name. |
 | `max_num_iterations` | no | `30000` | `--max-num-iterations`. Must be positive. |
-| `steps_per_save` | no | `2500` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. nerfstudio's own default is 2000. |
+| `steps_per_save` | no | `5000` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run and still holds the 15,000-step checkpoint that the default `checkpoint_interval` exports. nerfstudio's own default is 2000. |
 | `save_only_latest_checkpoint` | no | `false` | `--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest. |
 | `eval_mode` | no | `fraction` | Which photographs train: `fraction` holds a share out for `ns-eval`, `interval` holds out every n-th, `all` trains on every photograph (and `ns-eval` then scores fit on photographs it trained on, not generalization). Passed as `nerfstudio-data --eval-mode`, always, so the training set is stated and not inherited. `filename` mode is not offered. |
 | `train_split_fraction` | no | `0.9` | Share of photographs that train, when `eval_mode = fraction`. Must be above 0 and below 1: 1.0 holds nothing out and makes `ns-eval` crash, so use `eval_mode = all` for that. The run also refuses to start if the fraction would hold out 0 of the registered photographs. |

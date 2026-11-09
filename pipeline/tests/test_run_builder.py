@@ -224,7 +224,7 @@ class TestGeneratedConfigs(unittest.TestCase):
         self.tree.capture("scene-01/capture-a")
         p = plan(self.tree.state(capture="scene-01/capture-a"))
         cfg = load_config(self.tree.write(p["configs"][0]))
-        self.assertEqual(cfg.steps_per_save, 2500)
+        self.assertEqual(cfg.steps_per_save, 5000)
         self.assertEqual(cfg.platform_label, sys.platform)
         self.assertEqual(cfg.memory_high, "")
 

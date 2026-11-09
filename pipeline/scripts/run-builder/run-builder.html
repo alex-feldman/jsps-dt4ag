@@ -534,11 +534,11 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
     {
      "key": "steps_per_save",
      "kind": "int",
-     "default": "2500",
+     "default": "5000",
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "`--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. nerfstudio's own default is 2000."
+     "help": "`--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run and still holds the 15,000-step checkpoint that the default `checkpoint_interval` exports. nerfstudio's own default is 2000."
     },
     {
      "key": "save_only_latest_checkpoint",
