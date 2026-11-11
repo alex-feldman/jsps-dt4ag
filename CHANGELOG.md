@@ -16,6 +16,19 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- `camera-review` now lists every flagged camera step (not only the largest) with the turn between the two
+  cameras, the turn between every adjacent pair of cameras (`large_turns`, `median_turn_degrees`), cameras
+  that jump away and straight back (`out_and_back`), frames that see under a tenth of the median 3D points
+  (`low_point_frames`), and, when `database.db` is in the workspace, the share of verified image pairs that
+  join distant frames (`distant_pairs`). Steps are divided by the time or frame count between their cameras.
+  Every flagged step is marked on the plot. New constants `CAMERA_TURN_WARNING_DEGREES`, `LOW_POINT_FRACTION`
+  and `DISTANT_PAIR_GAP`. Existing `camera-checks.json` keys are unchanged.
+- "Signs of a bad solve" in `pipeline/scripts/camera-review/README.md`, with measured values from one good and
+  one bad walking solve, and a note on what does not separate them (reprojection error, registered count,
+  track length, distant-pair share). `pipeline/VIDEO-WORKFLOW.md` step 6 points to it.
+
 ### Changed
 
 - Clarified WSL memory and COLMAP thread evidence, including the limits of

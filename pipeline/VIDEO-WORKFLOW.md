@@ -156,6 +156,9 @@ Open `camera-review.png`. You want one continuous camera path around the subject
 disconnected clusters, and sparse points that form the subject and its surroundings. The numbers (frames
 registered of frames given, which are missing, reprojection error) are in `camera-checks.json`. A high
 registration count does not prove the poses are right; inspect both the camera path and the points.
+Mean reprojection error does not prove it either: a solve that folded onto itself scored better than a good
+one. Read every flagged step, turn and out-and-back frame the review lists (not only the largest), using
+"Signs of a bad solve" in `pipeline/scripts/camera-review/README.md`.
 The review uses `summarize_camera_steps()` and the `CAMERA_STEP_WARNING_RATIO` constant in
 `pipeline/scripts/camera-review/camera-review.py` to flag and mark a disproportionate step. This is a
 heuristic: inspect the named frame transition and surrounding images to decide whether the movement is

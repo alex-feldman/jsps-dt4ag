@@ -20,6 +20,7 @@ import csv
 import json
 import math
 from pathlib import Path
+import sqlite3
 import statistics
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -32,6 +33,17 @@ TIME_COLUMNS = ('source_seconds_approx', 'output_grid_seconds')
 # measurements are about 2.8x median; the teaching-greenhouse bad solve was
 # about 19x median and had a visibly displaced camera center.
 CAMERA_STEP_WARNING_RATIO = 10.0
+
+# Review alert on the turn between two adjacent registered cameras, in degrees. A person walking turns a
+# few degrees in half a second (the median in a real walking solve is single digits); a camera put
+# facing backward is near 180. It scales with sampling interval, so read it as an alert, not a verdict.
+CAMERA_TURN_WARNING_DEGREES = 90.0
+
+# A registered frame that sees fewer than this fraction of the median 3D points per frame is flagged.
+LOW_POINT_FRACTION = 0.1
+
+# Verified pairs joining frames further apart than this many frames in order count as "distant".
+DISTANT_PAIR_GAP = 3
 
 
 def frame_times(capture: Path) -> Tuple[Dict[str, float], str]:
@@ -136,6 +148,136 @@ def summarize_camera_steps(
     }
 
 
+def rotation_steps(qvecs: Sequence[Sequence[float]]) -> List[float]:
+    """Degrees of rotation between each adjacent pair of COLMAP quaternions (w, x, y, z).
+
+    Uses the absolute dot product, so q and -q (the same rotation) give 0 degrees.
+    """
+    angles = []
+    for a, b in zip(qvecs[:-1], qvecs[1:]):
+        dot = abs(sum(float(x) * float(y) for x, y in zip(a, b)))
+        norm = math.sqrt(sum(float(x) ** 2 for x in a)) * math.sqrt(sum(float(y) ** 2 for y in b))
+        cosine = min(1.0, dot / norm) if norm > 0 else 1.0
+        angles.append(math.degrees(2.0 * math.acos(cosine)))
+    return angles
+
+
+def points_per_image(point3d_ids: Sequence[Sequence[int]]) -> List[int]:
+    """How many 3D points each image sees (COLMAP marks a 2D feature with no 3D point as -1)."""
+    return [sum(1 for p in ids if int(p) >= 0) for ids in point3d_ids]
+
+
+def flag_camera_steps(
+    names: Sequence[str],
+    times: Sequence[float],
+    steps: Sequence[float],
+    turns: Sequence[float],
+    spans: Sequence[float],
+    ratio_limit: float = CAMERA_STEP_WARNING_RATIO,
+    turn_limit: float = CAMERA_TURN_WARNING_DEGREES,
+) -> Dict[str, object]:
+    """Every adjacent-camera step and turn that looks wrong, not only the largest.
+
+    ``steps[i]`` and ``turns[i]`` join camera i and i+1. ``spans[j - 1]`` is the distance from camera j-1
+    to camera j+1 for the interior camera j (so ``len(spans) == len(names) - 2``). A step is divided by
+    the time (or frame count) between its two cameras, so a gap left by an unregistered stretch is not
+    mistaken for a jump, and is then compared with the median of those rates. Clip boundaries are not
+    known here and show up as flagged steps; judge them against where the clips join.
+
+    ``out_and_back`` lists cameras where the path jumps away and returns (two adjacent flagged steps whose
+    ends are close together): one frame was placed in the wrong spot.
+    """
+    n = len(names)
+    if len(steps) != max(0, n - 1) or len(turns) != len(steps) or len(times) != n:
+        raise ValueError("names, times, steps and turns must have matching lengths")
+    if len(spans) != max(0, n - 2):
+        raise ValueError("spans must have one value per interior camera")
+    rates = []
+    for i, step in enumerate(steps):
+        dt = float(times[i + 1]) - float(times[i])
+        rates.append(float(step) / dt if math.isfinite(dt) and dt > 0 else float(step))
+    median_rate = float(statistics.median(rates)) if rates else 0.0
+    flagged_index = []
+    flagged_steps = []
+    for i, rate in enumerate(rates):
+        ratio = rate / median_rate if median_rate > 0 else None
+        if (ratio is not None and ratio >= ratio_limit) or (ratio is None and rate > 0):
+            flagged_index.append(i)
+            flagged_steps.append({
+                "from": names[i], "to": names[i + 1], "step": float(steps[i]),
+                "ratio_to_median_rate": ratio, "turn_degrees": float(turns[i]),
+                "also_large_turn": float(turns[i]) >= turn_limit,
+            })
+    large_turns = [
+        {"from": names[i], "to": names[i + 1], "turn_degrees": float(turn)}
+        for i, turn in enumerate(turns) if float(turn) >= turn_limit
+    ]
+    flagged_set = set(flagged_index)
+    out_and_back = []
+    for j in range(1, n - 1):
+        if (j - 1) in flagged_set and j in flagged_set and \
+                float(spans[j - 1]) < 0.5 * min(float(steps[j - 1]), float(steps[j])):
+            out_and_back.append(names[j])
+    warnings = []
+    if flagged_steps or large_turns:
+        warnings.append(
+            f"{len(flagged_steps)} adjacent camera step(s) are at least {ratio_limit:g}x the median rate and "
+            f"{len(large_turns)} turn(s) between adjacent cameras are at least {turn_limit:g} degrees"
+            + (f"; {len(out_and_back)} camera(s) jump away and straight back ({', '.join(out_and_back)})"
+               if out_and_back else "")
+            + ". A step with a large turn, or an out-and-back, is the clearest sign of a wrong pose. "
+              "Inspect each before training.")
+    return {
+        "median_step_rate": median_rate,
+        "flagged_steps": flagged_steps,
+        "flagged_step_count": len(flagged_steps),
+        "large_turns": large_turns,
+        "large_turn_count": len(large_turns),
+        "out_and_back": out_and_back,
+        "warnings": warnings,
+    }
+
+
+def low_point_frames(names: Sequence[str], counts: Sequence[int]) -> Dict[str, object]:
+    """The median 3D points per frame, and the frames seeing under LOW_POINT_FRACTION of it."""
+    if len(names) != len(counts):
+        raise ValueError("names and counts must have the same length")
+    if not counts:
+        return {"median_points_per_image": None, "low_point_frames": []}
+    median = float(statistics.median(counts))
+    low = [{"frame": n, "points": int(c)} for n, c in zip(names, counts) if c < LOW_POINT_FRACTION * median]
+    return {"median_points_per_image": median, "low_point_frames": low}
+
+
+def distant_pair_summary(database: Path, order: Dict[str, float], gap: int = DISTANT_PAIR_GAP) -> Dict[str, object]:
+    """How many verified image pairs in COLMAP's database join frames more than ``gap`` apart in order.
+
+    In a one-way walk most verified pairs should join near neighbors. A large share of distant pairs
+    means matching joined look-alike places (racks, trays, lights), which is how a solve folds onto
+    itself. Where the path really revisits a spot, some distant pairs are real. Read-only.
+    """
+    uri = f"file:{database.as_posix()}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        names = dict(connection.execute("SELECT image_id, name FROM images"))
+        pair_ids = [r[0] for r in connection.execute("SELECT pair_id FROM two_view_geometries WHERE rows > 0")]
+    finally:
+        connection.close()
+    position = {n: i for i, n in enumerate(sorted(order, key=lambda k: (order[k], k)))}
+    verified = distant = 0
+    for pair_id in pair_ids:
+        second = pair_id % 2147483647
+        first = (pair_id - second) // 2147483647
+        a, b = position.get(names.get(first)), position.get(names.get(second))
+        if a is None or b is None:
+            continue
+        verified += 1
+        if abs(a - b) > gap:
+            distant += 1
+    return {"verified_pairs": verified, "distant_pairs": distant, "distance_gap_frames": gap,
+            "distant_pair_fraction": (distant / verified) if verified else None}
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--capture', type=Path, required=True,
@@ -182,6 +324,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     components = sparse_models(args.workspace)
     frames = compare_frames(list(seconds), names)
     step_summary = summarize_camera_steps(names, t.tolist(), step.tolist(), axis_label)
+    turns = rotation_steps([i.qvec for i in ordered])
+    spans = np.linalg.norm(centers[2:] - centers[:-2], axis=1) if len(ordered) > 2 else np.array([])
+    flags = flag_camera_steps(names, t.tolist(), step.tolist(), turns, spans.tolist())
+    point_counts = points_per_image([i.point3D_ids for i in ordered])
+    low_points = low_point_frames(names, point_counts)
+    database = args.workspace / 'database.db'
+    distant = distant_pair_summary(database, seconds) if database.is_file() else None
 
     report = {
         'label': args.label, 'registered': len(images), 'expected': len(seconds),
@@ -201,7 +350,18 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         'largest_step_time_interval': step_summary['largest_step_time_interval'],
         'largest_step_ratio_to_median': step_summary['largest_step_ratio_to_median'],
         'camera_step_warning_ratio': CAMERA_STEP_WARNING_RATIO,
-        'camera_path_warnings': step_summary['camera_path_warnings'],
+        'camera_path_warnings': step_summary['camera_path_warnings'] + flags['warnings'],
+        'camera_turn_warning_degrees': CAMERA_TURN_WARNING_DEGREES,
+        'median_step_rate': flags['median_step_rate'],
+        'flagged_step_count': flags['flagged_step_count'],
+        'flagged_steps': flags['flagged_steps'],
+        'large_turn_count': flags['large_turn_count'],
+        'large_turns': flags['large_turns'],
+        'median_turn_degrees': float(statistics.median(turns)) if turns else None,
+        'out_and_back': flags['out_and_back'],
+        'median_points_per_image': low_points['median_points_per_image'],
+        'low_point_frames': low_points['low_point_frames'],
+        'distant_pairs': distant,
         'limits': 'Geometry is scale-free. A plausible path and a high registration count do not prove '
                   'correct poses or coverage of the whole subject; judge the plot, not the counts.',
     }
@@ -228,10 +388,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                  f'{len(components)} sparse model(s), {len(points)} points, '
                  f'mean reprojection {errors.mean():.2f} px\n'
                  'Camera path over the sparse points. Review the geometry; this is not measured accuracy.')
-    if step_summary['camera_path_warnings']:
-        peak_index = int(np.argmax(step))
+    if report['camera_path_warnings']:
+        marked = sorted({int(np.argmax(step))} | {names.index(f['to']) - 1 for f in flags['flagged_steps']})
         axes[1, 1].scatter(
-            [colors[peak_index + 1]], [step[peak_index]], marker='x',
+            [colors[i + 1] for i in marked], [step[i] for i in marked], marker='x',
             s=65, color='red', zorder=5)
         median_step = step_summary['median_step_between_adjacent_registered_cameras']
         if median_step and median_step > 0:
@@ -240,7 +400,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 linestyle='--', linewidth=.8,
                 label=f'{CAMERA_STEP_WARNING_RATIO:g}x median review alert')
             axes[1, 1].legend()
-        title += f"\nREVIEW WARNING: {step_summary['camera_path_warnings'][0]}"
+        title += f"\nREVIEW WARNING: {report['camera_path_warnings'][0]}"
     fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(args.out / 'camera-review.png', dpi=130)

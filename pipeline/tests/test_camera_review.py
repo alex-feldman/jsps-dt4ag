@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import math
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -124,6 +126,136 @@ class TestCameraStepReview(unittest.TestCase):
     def test_rejects_mismatched_inputs(self):
         with self.assertRaises(ValueError):
             cr.summarize_camera_steps(["a", "b"], [0.0], [1.0], "frame order")
+
+
+class TestRotationSteps(unittest.TestCase):
+
+    def test_identical_and_sign_flipped_quaternions_are_zero_degrees(self):
+        angles = cr.rotation_steps([(1, 0, 0, 0), (-1, 0, 0, 0)])
+        self.assertAlmostEqual(angles[0], 0.0, places=6)
+
+    def test_a_half_turn_is_180_degrees(self):
+        angles = cr.rotation_steps([(1, 0, 0, 0), (0, 0, 1, 0)])
+        self.assertAlmostEqual(angles[0], 180.0, places=6)
+
+    def test_a_ten_degree_turn(self):
+        half = math.radians(10) / 2
+        angles = cr.rotation_steps([(1, 0, 0, 0), (math.cos(half), 0, math.sin(half), 0)])
+        self.assertAlmostEqual(angles[0], 10.0, places=6)
+
+    def test_one_camera_has_no_steps(self):
+        self.assertEqual(cr.rotation_steps([(1, 0, 0, 0)]), [])
+
+
+class TestPointsPerImage(unittest.TestCase):
+
+    def test_counts_only_features_with_a_3d_point(self):
+        self.assertEqual(cr.points_per_image([[-1, 4, 7], [-1, -1], []]), [2, 0, 0])
+
+    def test_low_point_frames_are_under_a_tenth_of_the_median(self):
+        result = cr.low_point_frames(["a", "b", "c", "d"], [1000, 1100, 90, 1200])
+        self.assertEqual(result["median_points_per_image"], 1050.0)
+        self.assertEqual(result["low_point_frames"], [{"frame": "c", "points": 90}])
+
+    def test_no_frames_has_no_median(self):
+        self.assertEqual(cr.low_point_frames([], []),
+                         {"median_points_per_image": None, "low_point_frames": []})
+
+    def test_mismatched_lengths_are_rejected(self):
+        with self.assertRaises(ValueError):
+            cr.low_point_frames(["a"], [1, 2])
+
+
+class TestFlagCameraSteps(unittest.TestCase):
+
+    def names(self, n):
+        return [f"f{i}" for i in range(n)]
+
+    def test_lists_every_flagged_step_with_its_turn_not_only_the_largest(self):
+        names = self.names(8)
+        steps = [0.3, 0.3, 9.0, 0.3, 0.3, 12.0, 0.3]
+        turns = [5, 5, 170, 5, 5, 20, 5]
+        result = cr.flag_camera_steps(names, [float(i) for i in range(8)], steps, turns, [1.0] * 6)
+        self.assertEqual(result["flagged_step_count"], 2)
+        self.assertEqual([s["to"] for s in result["flagged_steps"]], ["f3", "f6"])
+        self.assertTrue(result["flagged_steps"][0]["also_large_turn"])
+        self.assertFalse(result["flagged_steps"][1]["also_large_turn"])
+        self.assertEqual(result["large_turn_count"], 1)
+        self.assertEqual(len(result["warnings"]), 1)
+
+    def test_a_gap_in_registration_is_not_mistaken_for_a_jump(self):
+        names = ["a", "b", "c", "d", "e"]
+        times = [0.0, 1.0, 2.0, 13.0, 14.0]
+        steps = [0.3, 0.3, 3.3, 0.3]
+        result = cr.flag_camera_steps(names, times, steps, [5] * 4, [0.6] * 3)
+        self.assertEqual(result["flagged_step_count"], 0)
+        self.assertEqual(result["warnings"], [])
+
+    def test_a_jump_away_and_straight_back_names_the_misplaced_camera(self):
+        names = self.names(6)
+        steps = [0.3, 8.0, 8.0, 0.3, 0.3]
+        spans = [8.2, 0.3, 8.2, 0.6]
+        result = cr.flag_camera_steps(names, [float(i) for i in range(6)], steps,
+                                      [5, 170, 170, 5, 5], spans)
+        self.assertEqual(result["out_and_back"], ["f2"])
+        self.assertIn("f2", result["warnings"][0])
+
+    def test_a_clean_walk_has_nothing_to_report(self):
+        names = self.names(5)
+        result = cr.flag_camera_steps(names, [0.0, 1.0, 2.0, 3.0, 4.0],
+                                      [0.3, 0.35, 0.3, 0.4], [4, 6, 7, 5], [0.6, 0.6, 0.7])
+        self.assertEqual(result["flagged_steps"], [])
+        self.assertEqual(result["large_turns"], [])
+        self.assertEqual(result["out_and_back"], [])
+        self.assertEqual(result["warnings"], [])
+
+    def test_a_large_turn_alone_is_reported(self):
+        names = self.names(4)
+        result = cr.flag_camera_steps(names, [0.0, 1.0, 2.0, 3.0], [0.3, 0.3, 0.3],
+                                      [4, 150, 4], [0.6, 0.6])
+        self.assertEqual(result["flagged_steps"], [])
+        self.assertEqual(result["large_turn_count"], 1)
+        self.assertEqual(len(result["warnings"]), 1)
+
+    def test_rejects_mismatched_inputs(self):
+        with self.assertRaises(ValueError):
+            cr.flag_camera_steps(["a", "b", "c"], [0.0, 1.0, 2.0], [1.0, 1.0], [1.0], [1.0])
+        with self.assertRaises(ValueError):
+            cr.flag_camera_steps(["a", "b", "c"], [0.0, 1.0, 2.0], [1.0, 1.0], [1.0, 1.0], [])
+
+
+class TestDistantPairs(unittest.TestCase):
+
+    def make_database(self, directory, names, pairs):
+        path = Path(directory) / "database.db"
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT)")
+        connection.execute("CREATE TABLE two_view_geometries (pair_id INTEGER PRIMARY KEY, rows INTEGER)")
+        for image_id, name in enumerate(names, start=1):
+            connection.execute("INSERT INTO images VALUES (?, ?)", (image_id, name))
+        for first, second, rows in pairs:
+            connection.execute("INSERT INTO two_view_geometries VALUES (?, ?)",
+                               (first * 2147483647 + second, rows))
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_counts_verified_pairs_that_join_distant_frames(self):
+        names = [f"f{i}.png" for i in range(10)]
+        order = {n: float(i) for i, n in enumerate(names)}
+        with tempfile.TemporaryDirectory() as tmp:
+            database = self.make_database(tmp, names, [(1, 2, 50), (2, 3, 40), (1, 9, 30), (3, 10, 20), (4, 5, 0)])
+            result = cr.distant_pair_summary(database, order)
+        self.assertEqual(result["verified_pairs"], 4)
+        self.assertEqual(result["distant_pairs"], 2)
+        self.assertAlmostEqual(result["distant_pair_fraction"], 0.5)
+
+    def test_a_database_with_no_verified_pairs_has_no_fraction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = self.make_database(tmp, ["a.png", "b.png"], [(1, 2, 0)])
+            result = cr.distant_pair_summary(database, {"a.png": 0.0, "b.png": 1.0})
+        self.assertEqual(result["verified_pairs"], 0)
+        self.assertIsNone(result["distant_pair_fraction"])
 
 
 class TestSparseModels(unittest.TestCase):
