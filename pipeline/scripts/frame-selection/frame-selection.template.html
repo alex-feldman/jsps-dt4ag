@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame selection</title>
+<style>
+  :root { --bg: #f6f5f1; --panel: #fff; --ink: #1d1d1b; --muted: #5d5b55; --line: #d9d6cc; --accent: #1f6f4a;
+          --accent-ink: #fff; --chip: rgba(0,0,0,.68); --code: #efede6; --bad: #b42318; --warn: #a15c07;
+          --prior: #6941c6; --pending: #1d4ed8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151614; --panel: #1f201d; --ink: #ecebe5; --muted: #a7a59b; --line: #3a3b36; --accent: #5fb98a;
+            --accent-ink: #0d1a12; --chip: rgba(0,0,0,.75); --code: #2a2b27; --bad: #f97066; --warn: #fdb022;
+            --prior: #b692f6; --pending: #84adff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1400px; margin: 0 auto; padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .bar h1 { font-size: 17px; margin: 0; flex: 1 1 260px; }
+  main { max-width: 1400px; margin: 0 auto; padding: 16px 16px 80px; }
+  h2 { font-size: 17px; margin: 28px 0 6px; }
+  h3 { font-size: 15px; margin: 14px 0 4px; }
+  .muted, .note { color: var(--muted); }
+  .note { font-size: 13px; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-top: 10px; }
+  .prior { border-left: 4px solid var(--prior); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+  .card { background: var(--panel); border: 2px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #000; cursor: zoom-in; }
+  .card .meta { padding: 3px 6px; font-size: 12px; line-height: 1.35; }
+  .card .meta b { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .card .state { font-size: 11px; font-weight: 600; }
+  .card .tag { display: block; font-size: 11px; font-weight: 600; color: var(--prior); }
+  .card .btns { display: flex; gap: 4px; padding: 0 6px 6px; }
+  .card.kept { border-color: var(--accent); }
+  .card.kept .state { color: var(--accent); }
+  .card.skipped { opacity: .55; }
+  .card.excluded { opacity: .3; border-color: var(--bad); }
+  .card.excluded .state { color: var(--bad); }
+  .card.pending { outline: 3px solid var(--pending); opacity: 1; }
+  button, input, select { font: inherit; }
+  button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 4px 10px; border-radius: 8px; cursor: pointer; }
+  .card button { flex: 1; font-size: 11px; padding: 2px 4px; border-radius: 4px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=number] { width: 5em; padding: 2px 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 6px; }
+  ul.ranges { margin: 4px 0; padding-left: 18px; }
+  ul.ranges li { margin: 2px 0; }
+  #status { font-size: 13px; }
+  #status.bad { color: var(--bad); font-weight: 600; }
+  pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  #lb { position: fixed; inset: 0; background: rgba(0,0,0,.9); display: none; z-index: 9; flex-direction: column;
+        align-items: center; justify-content: center; padding: 10px; }
+  #lb.open { display: flex; }
+  #lb img { max-width: 96vw; max-height: 84vh; }
+  #lbcap { color: #fff; margin-top: 8px; font-size: 14px; text-align: center; }
+  #lb .lbbtns { margin-top: 6px; display: flex; gap: 8px; }
+  #lb .lbbtns button { background: #222; color: #fff; border-color: #555; }
+  .legend span { margin-right: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1 id="title"></h1>
+    <span id="total" class="mono"></span>
+    <button class="primary" id="dl-json" type="button">Download selection JSON</button>
+    <button id="dl-csv" type="button">Download inventory CSV</button>
+    <span id="status" role="status"></span>
+  </div>
+</header>
+<main>
+  <p class="muted" id="source"></p>
+  <div class="panel">
+    <b>How to use this page.</b> Every frame is kept unless you exclude it. In each clip, press <i>exclude from</i> on the
+    first frame of a stretch you do not want, then <i>to here</i> on its last frame; a clip can have several excluded
+    ranges, also in the middle. <i>Every</i> and <i>offset</i> thin a clip on its original frame order before
+    exclusions, so excluding frames never shifts which frames are sampled. Click a picture to enlarge it (arrow keys
+    move, Esc closes). You can download the selection at any time; nothing on disk changes here. The page does not
+    check that frames overlap: a changed selection needs its own camera solve and camera review.
+    <div class="row legend">
+      <span><b style="color:var(--accent)">kept</b></span>
+      <span class="muted">skipped by every/offset</span>
+      <span><b style="color:var(--bad)">excluded</b></span>
+      <span><b style="color:var(--prior)">prior solve</b>: optional context only</span>
+    </div>
+  </div>
+  <div id="prior"></div>
+  <div id="notes"></div>
+  <div id="clips"></div>
+
+  <h2>Result</h2>
+  <div class="panel">
+    <pre id="summary"></pre>
+    <div class="row">
+      <button class="primary" id="dl-json2" type="button">Download selection JSON</button>
+      <button id="dl-csv2" type="button">Download inventory CSV</button>
+      <label class="note">Restore a downloaded selection: <input id="load" type="file" accept="application/json,.json"></label>
+      <button id="reset" type="button">Reset to keep all</button>
+    </div>
+    <p class="note">Then build a new capture from the JSON. Replace <code>{downloaded selection JSON}</code> with its path.
+      The command ends with <code>--dry-run</code>, which validates and writes nothing; remove it to build.
+      Add <code>--materialize</code> to copy the images instead of linking them.</p>
+    <pre id="cmd"></pre>
+  </div>
+</main>
+<div id="lb" role="dialog" aria-modal="true" aria-label="enlarged frame">
+  <img id="lbimg" alt="">
+  <div id="lbcap"></div>
+  <div class="lbbtns"><button id="lbprev" type="button">Previous</button><button id="lbclose" type="button">Close (Esc)</button><button id="lbnext" type="button">Next</button></div>
+</div>
+<script>
+const DATA = __DATA__;
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const fmt = (n) => n == null ? "" : String(Math.round(n * 100) / 100);
+const ANN = DATA.annotations;
+const TAGS = (ANN && ANN.tags) || {};
+const KEY = "dt4ag-frame-selection:" + DATA.inventory_sha256 + ":" + DATA.preview_dir;
+
+function freshState() {
+  const s = {};
+  for (const c of DATA.clips) s[c.name] = { every: 1, offset: 0, exclude: [] };
+  return s;
+}
+let state = freshState();
+const pending = {};          // clip name -> start filename of a range being marked
+let storageOk = true;
+let savedAt = null;
+
+function validState(s) {
+  if (!s || typeof s !== "object") return false;
+  for (const c of DATA.clips) {
+    const v = s[c.name]; if (!v) return false;
+    const names = new Set(c.frames.map((f) => f.f));
+    if (!Number.isInteger(v.every) || v.every < 1 || !Number.isInteger(v.offset) || v.offset < 0 || v.offset >= v.every) return false;
+    if (!Array.isArray(v.exclude)) return false;
+    for (const p of v.exclude) if (!Array.isArray(p) || p.length !== 2 || !names.has(p[0]) || !names.has(p[1])) return false;
+  }
+  return true;
+}
+try { const raw = localStorage.getItem(KEY); if (raw) { const s = JSON.parse(raw); if (validState(s)) { state = s; savedAt = "restored"; } } }
+catch (e) { storageOk = false; }
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); storageOk = true; savedAt = new Date().toLocaleTimeString(); }
+  catch (e) { storageOk = false; }
+  showStatus();
+}
+function showStatus() {
+  const s = $("status");
+  if (!storageOk) { s.textContent = "Browser storage unavailable: your choices live only in this tab. Download the selection JSON to keep them."; s.className = "bad"; }
+  else if (savedAt === "restored") { s.textContent = "Restored from this browser's storage."; s.className = ""; }
+  else if (savedAt) { s.textContent = "Saved in this browser at " + savedAt + " (this browser only; the download is the handoff)."; s.className = ""; }
+  else { s.textContent = "Autosaves in this browser after each change."; s.className = ""; }
+}
+
+// The selection rules. They must match resolve_clip() and kept_ranges() in frame-selection.py.
+function resolveClip(clip) {
+  const v = state[clip.name], n = clip.frames.length, pos = {};
+  clip.frames.forEach((f, i) => { pos[f.f] = i; });
+  const excluded = new Array(n).fill(false);
+  for (const [a, b] of v.exclude) for (let i = pos[a]; i <= pos[b]; i++) excluded[i] = true;
+  const sampled = clip.frames.map((f, i) => i >= v.offset && (i - v.offset) % v.every === 0);
+  const kept = sampled.map((s, i) => s && !excluded[i]);
+  const ranges = [];
+  for (let i = 0; i < n; ) {
+    if (excluded[i]) { i++; continue; }
+    let j = i; while (j + 1 < n && !excluded[j + 1]) j++;
+    let k = 0; for (let x = i; x <= j; x++) if (kept[x]) k++;
+    ranges.push({ start: clip.frames[i], end: clip.frames[j], base: j - i + 1, kept: k });
+    i = j + 1;
+  }
+  return { sampled, excluded, kept, ranges };
+}
+
+const cards = {};            // filename -> {card, state element, button}
+const order = [];            // every frame in inventory order, for the lightbox
+const clipParts = {};
+
+function frameLabel(f) { return f.f + (f.s != null ? "  " + fmt(f.s) + " s" : ""); }
+
+function renderStatic() {
+  $("title").textContent = DATA.title;
+  document.title = DATA.title;
+  $("source").textContent = "Capture: " + DATA.capture + "  |  inventory sha256 " + DATA.inventory_sha256 +
+    "  |  " + DATA.clips.reduce((a, c) => a + c.frames.length, 0) + " frames in " + DATA.clips.length + " clip(s)" +
+    "  |  clips from " + describeAssignment(DATA.clip_assignment) + "  |  preview made " + DATA.created;
+  if (ANN) {
+    const p = el("div", "panel prior");
+    p.append(el("b", null, "Optional context from a prior camera solve. "),
+      document.createTextNode("Tags marked “prior solve” come from " + ANN.path + " (sha256 " + ANN.sha256.slice(0, 12) +
+        "…" + (ANN.label ? ", label " + ANN.label : "") + (ANN.registered != null ? ", " + ANN.registered + " of " + ANN.expected + " registered" : "") +
+        "). They describe only that solve of the image set it was run on. They do not decide anything: every frame starts kept."));
+    const extra = [];
+    if (ANN.warnings && ANN.warnings.length) extra.push("Its warning: " + ANN.warnings.join(" "));
+    if (ANN.fields_absent.length) extra.push("Fields absent from the file: " + ANN.fields_absent.join(", ") + ".");
+    if (ANN.fields_ignored.length) extra.push("Fields not used: " + ANN.fields_ignored.join(", ") + ".");
+    if (ANN.names_not_in_inventory.length) extra.push(ANN.names_not_in_inventory.length + " named frames are not in this capture: " + ANN.names_not_in_inventory.slice(0, 8).join(", ") + ".");
+    for (const t of extra) p.append(el("div", "note", t));
+    $("prior").append(p);
+  }
+  if (DATA.inventory_notes.length) {
+    const p = el("div", "panel"); for (const t of DATA.inventory_notes) p.append(el("div", "note", t)); $("notes").append(p);
+  }
+  for (const clip of DATA.clips) {
+    const sec = el("section"); sec.id = "clip-" + clip.name;
+    const first = clip.frames[0], last = clip.frames[clip.frames.length - 1];
+    sec.append(el("h2", null, "Clip " + clip.name + ": " + clip.frames.length + " frames, " + first.f + " to " + last.f +
+      (first.s != null && last.s != null ? " (" + fmt(first.s) + " s to " + fmt(last.s) + " s)" : "")));
+    const controls = el("div", "row");
+    const every = el("input"); every.type = "number"; every.min = "1"; every.step = "1"; every.setAttribute("aria-label", "every Nth frame of " + clip.name);
+    const offset = el("input"); offset.type = "number"; offset.min = "0"; offset.step = "1"; offset.setAttribute("aria-label", "offset in " + clip.name);
+    const le = el("label"); le.append("sample every ", every, " base frame(s)");
+    const lo = el("label"); lo.append("from offset ", offset, " (0 = first frame)");
+    const cancel = el("button", null, "Cancel range start"); cancel.type = "button"; cancel.hidden = true;
+    cancel.onclick = () => { delete pending[clip.name]; paint(); };
+    controls.append(le, lo, cancel);
+    every.onchange = () => {
+      const n = Math.max(1, Math.floor(Number(every.value) || 1));
+      state[clip.name].every = n; if (state[clip.name].offset >= n) state[clip.name].offset = 0; save(); paint();
+    };
+    offset.onchange = () => {
+      const v = state[clip.name], n = Math.floor(Number(offset.value) || 0);
+      v.offset = Math.min(Math.max(0, n), v.every - 1); save(); paint();
+    };
+    const ex = el("div", "note"); const exList = el("ul", "ranges");
+    const kp = el("div", "note"); const kpList = el("ul", "ranges");
+    sec.append(controls, el("h3", null, "Excluded ranges"), exList, el("h3", null, "Kept ranges"), kpList, ex, kp);
+    const grid = el("div", "grid");
+    clip.frames.forEach((f, i) => {
+      const card = el("div", "card");
+      const img = el("img"); img.src = f.t; img.loading = "lazy"; img.alt = "frame " + f.f;
+      img.onclick = () => openLb(f.f);
+      const meta = el("div", "meta");
+      meta.append(el("b", null, f.f), el("div", null, "#" + i + " in " + clip.name + (f.s != null ? ", " + fmt(f.s) + " s" : "")));
+      const st = el("div", "state"); meta.append(st);
+      for (const t of TAGS[f.f] || []) meta.append(el("span", "tag", "prior solve: " + t));
+      const btns = el("div", "btns"); const b = el("button"); b.type = "button";
+      b.onclick = () => mark(clip, f.f); btns.append(b);
+      card.append(img, meta, btns); grid.append(card);
+      cards[f.f] = { card, st, b, clip: clip.name, frame: f, i };
+      order.push(f.f);
+    });
+    sec.append(grid);
+    $("clips").append(sec);
+    clipParts[clip.name] = { every, offset, exList, kpList, cancel };
+  }
+  order.sort((a, b) => cards[a].frame.i - cards[b].frame.i);
+  $("cmd").textContent = DATA.build_command;
+}
+function describeAssignment(a) {
+  if (!a) return "unknown";
+  if (a.source === "clips_csv") return "clips CSV " + a.path;
+  if (a.source === "provenance_frames_csv") return "provenance/frames.csv (one clip)";
+  return "one clip, no times";
+}
+
+function mark(clip, name) {
+  const p = pending[clip.name];
+  if (p == null) { pending[clip.name] = name; paint(); return; }
+  const pos = {}; clip.frames.forEach((f, i) => { pos[f.f] = i; });
+  const a = pos[p] <= pos[name] ? p : name, b = pos[p] <= pos[name] ? name : p;
+  state[clip.name].exclude.push([a, b]);
+  delete pending[clip.name];
+  save(); paint();
+}
+function removeRange(clipName, k) { state[clipName].exclude.splice(k, 1); save(); paint(); }
+
+let resolved = {};
+function paint() {
+  let kept = 0, total = 0;
+  const lines = [];
+  for (const clip of DATA.clips) {
+    const r = resolveClip(clip), v = state[clip.name], parts = clipParts[clip.name];
+    resolved[clip.name] = r;
+    parts.every.value = v.every; parts.offset.value = v.offset; parts.offset.max = String(v.every - 1);
+    parts.cancel.hidden = pending[clip.name] == null;
+    parts.exList.replaceChildren();
+    if (!v.exclude.length) parts.exList.append(el("li", "note", "none"));
+    v.exclude.forEach(([a, b], k) => {
+      const li = el("li"); const btn = el("button", null, "remove"); btn.type = "button"; btn.onclick = () => removeRange(clip.name, k);
+      const pos = clip.frames.findIndex((f) => f.f === a), pos2 = clip.frames.findIndex((f) => f.f === b);
+      li.append(el("span", "mono", a + " to " + b + " (" + (pos2 - pos + 1) + " frames) "), btn); parts.exList.append(li);
+    });
+    parts.kpList.replaceChildren();
+    if (!r.ranges.length) parts.kpList.append(el("li", "note", "nothing kept in this clip"));
+    for (const g of r.ranges) parts.kpList.append(el("li", "mono", g.start.f + " to " + g.end.f + ": " + g.base + " base, " + g.kept + " kept"));
+    const k = r.kept.filter(Boolean).length; kept += k; total += clip.frames.length;
+    lines.push(clip.name + ": every " + v.every + " from offset " + v.offset + ", " + v.exclude.length + " excluded range(s), keeps " + k + " of " + clip.frames.length);
+    for (const g of r.ranges) lines.push("    " + g.start.f + " .. " + g.end.f + "  (" + g.kept + " kept)");
+    clip.frames.forEach((f, i) => {
+      const c = cards[f.f];
+      const isPending = pending[clip.name] === f.f;
+      c.card.className = "card " + (r.excluded[i] ? "excluded" : r.kept[i] ? "kept" : "skipped") + (isPending ? " pending" : "");
+      c.st.textContent = r.excluded[i] ? "excluded" : r.kept[i] ? "kept" : "skipped by every/offset";
+      c.b.textContent = pending[clip.name] == null ? "exclude from" : isPending ? "exclude only this" : "to here";
+    });
+  }
+  lines.push("total kept: " + kept + " of " + total + (kept < DATA.min_kept ? "   (the build needs at least " + DATA.min_kept + ")" : ""));
+  $("summary").textContent = lines.join("\n");
+  $("total").textContent = "kept " + kept + " / " + total;
+}
+
+function selectionJson() {
+  const kept = [];
+  const clips = DATA.clips.map((clip) => {
+    const r = resolved[clip.name], v = state[clip.name];
+    return { name: clip.name, frames: clip.frames.map((f) => f.f), seconds: clip.frames.map((f) => f.s),
+             every: v.every, offset: v.offset, exclude: v.exclude.map((p) => [p[0], p[1]]),
+             kept_count: r.kept.filter(Boolean).length,
+             kept_ranges: r.ranges.map((g) => ({ start: g.start.f, end: g.end.f, base_frames: g.base, kept: g.kept })) };
+  });
+  for (const name of order) { const c = cards[name]; if (resolved[c.clip].kept[c.i]) kept.push(name); }
+  return {
+    format: DATA.format, created: new Date().toISOString(), tool: "frame-selection.py preview page",
+    title: DATA.title,
+    source: { capture: DATA.capture, images_subpath: "images", inventory_sha256: DATA.inventory_sha256,
+              frame_count: order.length },
+    preview: { dir: DATA.preview_dir, inventory_csv_sha256: DATA.inventory_csv_sha256, created: DATA.created },
+    annotations: ANN ? { path: ANN.path, sha256: ANN.sha256, note: ANN.note } : null,
+    rules: "per clip, base frames in filename order; position p is sampled when p >= offset and (p - offset) % every == 0; " +
+           "kept = sampled and not inside any exclude range (inclusive filename pairs)",
+    clips, kept, kept_count: kept.length, total_count: order.length, limits: DATA.limits,
+  };
+}
+function stamp() { const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes()); }
+function download(name, text, type) {
+  const blob = new Blob([text], { type }); const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function csvCell(v) { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function downloadJson() { download(DATA.capture_name + "-frame-selection-" + stamp() + ".json", JSON.stringify(selectionJson(), null, 2) + "\n", "application/json"); }
+function downloadCsv() {
+  const rows = [["index", "filename", "clip", "clip_index", "seconds", "sampled", "excluded", "kept"]];
+  for (const name of order) {
+    const c = cards[name], r = resolved[c.clip];
+    rows.push([c.frame.i, name, c.clip, c.i, c.frame.s, r.sampled[c.i] ? 1 : 0, r.excluded[c.i] ? 1 : 0, r.kept[c.i] ? 1 : 0]);
+  }
+  download(DATA.capture_name + "-frame-selection-inventory-" + stamp() + ".csv", rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n", "text/csv");
+}
+$("dl-json").onclick = downloadJson; $("dl-json2").onclick = downloadJson;
+$("dl-csv").onclick = downloadCsv; $("dl-csv2").onclick = downloadCsv;
+$("reset").onclick = () => { if (confirm("Keep every frame again and remove all ranges?")) { state = freshState(); for (const k in pending) delete pending[k]; save(); paint(); } };
+$("load").onchange = async (ev) => {
+  const file = ev.target.files[0]; if (!file) return;
+  try {
+    const sel = JSON.parse(await file.text());
+    if (sel.format !== DATA.format) throw new Error("format is " + sel.format);
+    if (!sel.source || sel.source.inventory_sha256 !== DATA.inventory_sha256) throw new Error("it was made on a different inventory");
+    const s = freshState();
+    for (const c of sel.clips || []) if (s[c.name]) s[c.name] = { every: c.every, offset: c.offset, exclude: c.exclude };
+    if (!validState(s)) throw new Error("its rules do not fit this capture's clips");
+    state = s; save(); paint(); alert("Restored " + file.name + ".");
+  } catch (e) { alert("Not restored: " + e.message); }
+  ev.target.value = "";
+};
+
+let cur = null;
+function openLb(name) {
+  cur = name; const c = cards[name], r = resolved[c.clip];
+  $("lbimg").src = c.frame.l; $("lbimg").alt = "frame " + name;
+  const st = r.excluded[c.i] ? "excluded" : r.kept[c.i] ? "kept" : "skipped by every/offset";
+  const tags = (TAGS[name] || []).map((t) => "prior solve: " + t).join("; ");
+  $("lbcap").textContent = name + "  |  clip " + c.clip + " #" + c.i + (c.frame.s != null ? "  |  " + fmt(c.frame.s) + " s" : "") + "  |  " + st + (tags ? "  |  " + tags : "");
+  $("lb").classList.add("open");
+}
+function step(d) { const k = order.indexOf(cur) + d; if (k >= 0 && k < order.length) openLb(order[k]); }
+function closeLb() { $("lb").classList.remove("open"); if (cur && cards[cur]) cards[cur].card.scrollIntoView({ block: "nearest" }); }
+$("lbprev").onclick = (e) => { e.stopPropagation(); step(-1); };
+$("lbnext").onclick = (e) => { e.stopPropagation(); step(1); };
+$("lbclose").onclick = closeLb;
+$("lb").onclick = (e) => { if (e.target === $("lb")) closeLb(); };
+document.addEventListener("keydown", (e) => {
+  if (!$("lb").classList.contains("open")) return;
+  if (e.key === "Escape") closeLb();
+  else if (e.key === "ArrowRight") step(1);
+  else if (e.key === "ArrowLeft") step(-1);
+});
+
+renderStatic();
+paint();
+showStatus();
+</script>
+</body>
+</html>

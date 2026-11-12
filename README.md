@@ -91,7 +91,10 @@ pipeline. Keep the extraction interval and timestamp provenance with the
 capture; the whole path from a video to a splat, as plain commands, is
 [`pipeline/VIDEO-WORKFLOW.md`](pipeline/VIDEO-WORKFLOW.md), and
 [`pipeline/scripts/video-frames/`](pipeline/scripts/video-frames/README.md)
-does the review and extraction with provenance. See the
+does the review and extraction with provenance;
+[`pipeline/scripts/frame-selection/`](pipeline/scripts/frame-selection/README.md)
+makes a new capture from a reviewed selection of an existing capture's frames.
+See the
 [video-derived image sequence workflow](pipeline/QUICKSTART.md#video-derived-image-sequences)
 for the verified steps and timestamp limits. Raw images can also be
 reconstructed with `use_masks = false`, including their background.
