@@ -1407,10 +1407,11 @@ therefore crashes in gsplat's `duplicate()` at the first densification step
 
 **What a checkpoint costs.** About 740 bytes per gaussian: 300,000 gaussians is
 about 220 MB (80 MB of model, 140 MB of optimizer state). Writing one takes
-about 0.2 to 0.3 seconds on ext4, so the six checkpoints a 30,000-step run keeps
+about 0.2 to 0.3 seconds on ext4, so the six checkpoints a 30,000-step run writes
 at the default `steps_per_save` add a few seconds to roughly 10 minutes of
-training. The cost that matters is disk: six checkpoints of a 300,000-gaussian
-scene is about 1.3 GB per run, and it
+training. The cost that matters is disk: with `save_only_latest_checkpoint =
+false` a run keeps all six, which for a 300,000-gaussian scene is about 1.3 GB
+per run (the default, `true`, keeps one), and it
 scales with the gaussian count, so a scene of a million gaussians is about
 740 MB per checkpoint. Delete the checkpoints you no longer need after
 exporting; runs that leave `save_only_latest_checkpoint` at its default (`true`)

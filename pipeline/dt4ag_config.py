@@ -259,13 +259,14 @@ DEFAULT_CHECKPOINT_INTERVAL = 15000
 CHECKPOINT_INTERVAL_AUTO = "auto"
 
 #: Default ``[train] save_only_latest_checkpoint``. True keeps only the newest
-#: checkpoint (about 450 MB for a 30,000-step run) instead of every one; set it
+#: checkpoint (about 740 bytes per gaussian) instead of every one; set it
 #: to false for a step study, which ``checkpoint_interval = auto`` then exports.
 DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT = True
 
-#: Default checkpoint cadence. 5000 keeps six checkpoints in a 30,000-step run (the
-#: earlier 2500 kept twelve, about twice the disk) and still saves the step that
-#: DEFAULT_CHECKPOINT_INTERVAL exports. It must divide any explicit checkpoint_interval.
+#: Default checkpoint cadence. With save_only_latest_checkpoint = false, 5000 keeps
+#: six checkpoints in a 30,000-step run (the earlier 2500 kept twelve, about twice
+#: the disk) and still saves the step that DEFAULT_CHECKPOINT_INTERVAL exports; by
+#: default it writes six and keeps only the newest. It must divide any explicit checkpoint_interval.
 DEFAULT_STEPS_PER_SAVE = 5000
 
 #: ``[colmap] data_type`` values. ``auto`` is the legacy directory-name heuristic
@@ -1453,11 +1454,16 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"key 'steps_per_save' in section [train] of config file {source} "
             f"must be positive, got {steps_per_save}"
         )
-    # Newest only by default (one checkpoint, about 450 MB, instead of six); a
-    # step study sets it to false, and checkpoint_interval = auto follows.
+    # Newest only by default (one checkpoint instead of six); a step study sets
+    # it to false, and checkpoint_interval = auto follows. Whether the file
+    # wrote it decides how a refusal below explains itself.
     save_only_latest_checkpoint = _get_bool(
         parser, "train", "save_only_latest_checkpoint", source,
         DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT,
+    )
+    latest_only_written = bool(
+        parser.has_option("train", "save_only_latest_checkpoint")
+        and parser.get("train", "save_only_latest_checkpoint").strip()
     )
     # Which photographs train, and which are held out for ns-eval. nerfstudio's
     # dataparser decides this at load time and it is NOT a property of the
@@ -1573,12 +1579,22 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
                 f"never be made"
             )
         if save_only_latest_checkpoint:
-            raise ConfigError(
+            message = (
                 f"key 'checkpoint_interval' in section [export] of config file "
                 f"{source} is {checkpoint_interval}, but [train] "
                 f"save_only_latest_checkpoint = true deletes every checkpoint but "
                 f"the newest, so there is nothing earlier to export"
             )
+            if not latest_only_written:
+                message += (
+                    f". This config does not set save_only_latest_checkpoint, and "
+                    f"it now defaults to true (CHANGELOG, Unreleased: latest-only "
+                    f"checkpoints by default). Set [train] "
+                    f"save_only_latest_checkpoint = false to keep every checkpoint "
+                    f"(a step study), or set checkpoint_interval = auto or 0 to "
+                    f"export the final checkpoint only"
+                )
+            raise ConfigError(message)
     env_label = _get_str(parser, "export", "env_label", source, "env")
     platform_label = _get_str(parser, "export", "platform_label", source, sys.platform)
     export_3dgs = _get_bool(parser, "export", "export_3dgs", source, False)

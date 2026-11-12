@@ -543,6 +543,36 @@ class TestFailureModes(TempDirTestCase):
         self.assertIn(
             "is 15000, but [train] save_only_latest_checkpoint = true deletes every "
             "checkpoint but the newest, so there is nothing earlier to export", message)
+        self.assertIn("does not set save_only_latest_checkpoint", message)
+        self.assertIn("now defaults to true (CHANGELOG, Unreleased", message)
+        self.assertIn("save_only_latest_checkpoint = false to keep every checkpoint", message)
+        self.assertIn("checkpoint_interval = auto or 0", message)
+
+    def test_an_explicit_true_keeps_the_original_refusal_wording(self):
+        for value in ("true", "yes"):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(self.tmp, extra={
+                    "train": {"save_only_latest_checkpoint": value},
+                    "export": {"checkpoint_interval": "15000"}})
+                message = self.assertConfigError(
+                    fixture.path, "checkpoint_interval", "export", fixture.path)
+                self.assertTrue(message.endswith(
+                    "deletes every checkpoint but the newest, so there is nothing "
+                    "earlier to export"), message)
+                self.assertNotIn("now defaults to true", message)
+
+    def test_an_empty_latest_only_counts_as_not_set(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": ""},
+            "export": {"checkpoint_interval": "15000"}})
+        message = self.assertConfigError(fixture.path, "checkpoint_interval")
+        self.assertIn("now defaults to true", message)
+
+    def test_an_explicit_true_without_an_interval_loads_final_only(self):
+        """Refused before (the old default interval needed every checkpoint); final-only now."""
+        cfg = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "true"}}).load()
+        self.assertEqual((cfg.checkpoint_interval, cfg.checkpoint_interval_auto), (0, True))
 
     def test_a_valid_checkpoint_interval_loads(self):
         fixture = ConfigFixture(self.tmp, extra={

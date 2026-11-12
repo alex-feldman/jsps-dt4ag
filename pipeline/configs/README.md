@@ -314,6 +314,15 @@ Feeds `ns-export` and the optional point-cloud conversion.
 | `export_3dgs` | no | `false` | Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x. |
 | `gauss_to_pc_script` | conditional | empty | Path to `gauss_to_pc.py`. Required when `export_3dgs = true`. |
 
+**Editing a collection's base config re-runs every capture.** `run_collection.py`
+compares the raw INI sections of the base config with those recorded for each
+capture's earlier run (`run_pipeline.ini_sections`, `run_collection.why_incomplete`),
+not the values they load to. Adding a key at the value it already defaults to, for
+example `save_only_latest_checkpoint = false` to a config that relied on the old
+default, or `checkpoint_interval = auto`, makes every capture report "settings
+changed since that run" and run again, even when the effective values are
+unchanged. Make such edits before a collection run, not between resumes of one.
+
 Export filenames are built as (`export_filename` in `run_pipeline.py`)
 
 ```

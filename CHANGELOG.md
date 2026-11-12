@@ -38,7 +38,8 @@ Dates are the tag date, not the commit date, where they differ.
 - Clarified WSL memory and COLMAP thread evidence, including the limits of
   the capped-Windows runs and earlier emulation.
 - `[train] steps_per_save` now defaults to `5000` (it was `2500`), named `DEFAULT_STEPS_PER_SAVE` in
-  `pipeline/dt4ag_config.py`. A 30,000-step run keeps six checkpoints instead of twelve, about half the disk,
+  `pipeline/dt4ag_config.py`. With `save_only_latest_checkpoint = false`, a 30,000-step run keeps six checkpoints instead of
+  twelve, about half the disk (by default it now writes six and keeps one, see the next entry),
   and an `[export] checkpoint_interval` of `15000` (what `auto` resolves to with every checkpoint kept, see
   the next entry) still lands on a saved checkpoint. A config that
   does not set `steps_per_save` but sets `checkpoint_interval` to a multiple of 2500 that is not a multiple of
@@ -47,7 +48,8 @@ Dates are the tag date, not the commit date, where they differ.
   are unaffected. `example.ini`, `configs/README.md`, QUICKSTART and the run builder's embedded schema follow.
 - `[train] save_only_latest_checkpoint` now defaults to `true` (it was `false`), named
   `DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT` in `pipeline/dt4ag_config.py`: a normal run keeps only its newest
-  checkpoint, about 450 MB, instead of six. `[export] checkpoint_interval` accepts `auto`, which is its new
+  checkpoint instead of six (each about 740 bytes per gaussian: about 220 MB at 300,000 gaussians,
+  740 MB at a million). `[export] checkpoint_interval` accepts `auto`, which is its new
   default (it was `15000`): `auto` resolves to `0`, the final export only, when `save_only_latest_checkpoint`
   is `true`, and to `DEFAULT_CHECKPOINT_INTERVAL` (`15000`) when it is `false`. `steps_per_save` stays `5000`.
   A step study is now one key, `save_only_latest_checkpoint = false`, which keeps a checkpoint every 5000
@@ -56,11 +58,21 @@ Dates are the tag date, not the commit date, where they differ.
   nonzero one is refused with `save_only_latest_checkpoint = true`); `auto` with `false` refuses a
   `steps_per_save` that does not divide 15,000.
   **Behavior change:** a config that sets neither key now keeps one checkpoint and exports the final
-  checkpoint only. A config that sets a nonzero `checkpoint_interval` but not `save_only_latest_checkpoint`
-  now fails validation with the existing "save_only_latest_checkpoint = true deletes every checkpoint but
-  the newest" message. To get the old behavior, set `save_only_latest_checkpoint = false`, which with `auto`
-  restores the 15,000-step interval. Configs that set `save_only_latest_checkpoint` explicitly are
-  unaffected. The `[run-record]` of an archived config now records `save_only_latest_checkpoint`, the
+  checkpoint only. This includes `--from-stage export` (or `--stage export`) on a run trained under an older
+  config that sets neither key: it now exports only the final checkpoint, where it exported 15,000 plus the
+  final one before, and the new `checkpoints :` line at the start of the run says so. A config that sets a
+  nonzero `checkpoint_interval` but not `save_only_latest_checkpoint` now fails validation; the message
+  says that the default changed and how to fix it. To get the old behavior, set
+  `save_only_latest_checkpoint = false`, which with `auto` restores the 15,000-step interval. A config that
+  sets `save_only_latest_checkpoint = false` explicitly behaves as before. One that sets it to `true`
+  without a `checkpoint_interval` was refused before (the old default interval of 15000 needed every
+  checkpoint) and now loads with a final-only export.
+  **Collections:** `run_collection.py` decides whether a capture is already done by comparing the raw INI
+  sections of the base config with those recorded for the earlier run (`run_pipeline.ini_sections`,
+  `run_collection.why_incomplete`), not the loaded values. Editing a collection's base config, for example
+  adding `save_only_latest_checkpoint = false` or `checkpoint_interval = auto`, therefore makes every
+  capture report "settings changed since that run" and run again, even when the effective values are
+  unchanged. The `[run-record]` of an archived config now records `save_only_latest_checkpoint`, the
   `checkpoint_interval` the export stage used (the resolved number) and `checkpoint_interval_setting`
   (`auto` or `explicit`); `dt4ag_config.py` and the run's opening lines (dry run included) print the
   resolved value. The run builder lists `save_only_latest_checkpoint` among its common settings and warns
