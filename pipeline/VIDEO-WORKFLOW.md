@@ -15,6 +15,7 @@ video file
   2  choose      you pick the sampling interval (and range) there   the page prints the command
   3  extract     frames + provenance into a new capture            video-frames.py extract
      (subset)    optional: sparser captures to compare densities    video-frames.py subset
+     (select)    optional: exclude frame ranges, thin, new capture  frame-selection.py preview, build
   4  config      copy and edit one INI file                         by hand
   5  solve       COLMAP cameras, then image preparation             run_pipeline.py --stage colmap,process
   6  look        camera plot: is the camera path believable?       camera-review.py
@@ -99,6 +100,30 @@ would hold out, different photographs; do not rank the runs by them. Every run s
 copy and downscaled versions of its images (the image-preparation step); only the capture folders are
 copy-free.
 
+### Optional: select frames before the solve
+
+When some stretches of the capture should not go into the solve (the camera pointing at the floor, a
+person walking through, a clip's run-in), make a new capture without them rather than deleting frames:
+
+```bash
+python3 pipeline/scripts/frame-selection/frame-selection.py preview \
+    --capture "$DATA/datasets/{capture}" \
+    --out "$DATA/evals/$NAME/frame-selection-preview-{yyyymmdd-hhmm}" --ffmpeg-prefix "$FFPREFIX"
+```
+
+Open the `index.html` it prints. Every frame starts kept; exclude ranges per clip (several, also in the
+middle), optionally keep every Nth frame, and press **Download selection JSON**. Then validate and build:
+
+```bash
+python3 pipeline/scripts/frame-selection/frame-selection.py build \
+    --selection {downloaded selection JSON} --capture "$DATA/datasets/{capture}-sel-v1" --dry-run
+```
+
+Run it again without `--dry-run`. The new capture links to the source images (`--materialize` copies
+them) and records the selection in its `provenance/`. A capture holding several clips takes `--clips
+{csv}` with `filename,clip` columns. Masks are not carried over. Details, refusals and limits:
+[`scripts/frame-selection/README.md`](scripts/frame-selection/README.md).
+
 ## 4. Write the config
 
 ```bash
@@ -161,6 +186,14 @@ The review uses `summarize_camera_steps()` and the `CAMERA_STEP_WARNING_RATIO` c
 heuristic: inspect the named frame transition and surrounding images to decide whether the movement is
 physically plausible. If the path has an unexplained jump or the points are incoherent, change the
 interval, the range or `data_type` and make a new capture or a new run. Do not train.
+
+**Retry after a bad solve by selecting frames.** To drop the frames around a jump or an unregistered
+stretch, run `frame-selection.py preview` (step 3, "select frames before the solve") with
+`--annotations "$DATA/evals/$NAME/camera-review/camera-checks.json"`. The page then tags frames the solve
+did not register and the largest camera step, labeled as coming from that prior solve. The tags are
+context only: they describe that solve of that image set, and the selection is yours. Build a new
+capture from the selection, and solve and review it from step 4; the old solve says nothing about the
+new image set.
 
 ### Viewing the sparse cloud in COLMAP
 

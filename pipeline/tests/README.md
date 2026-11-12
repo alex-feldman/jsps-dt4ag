@@ -46,6 +46,21 @@ folder's contents, the single decode and its preview window, the command the pag
 its refusals and its cleanup when links are impossible). ffmpeg and ffprobe are replaced by fakes, so the tests
 need neither; the real tools were checked only by a real run on a synthetic clip.
 
+`test_frame_selection.py` covers `scripts/frame-selection/frame-selection.py`:
+the inventory (top-level images in name order, skipped entries, broken links,
+the name, size and mtime hash), clip assignment from a clips CSV, from
+`provenance/frames.csv` or as one clip, with the clips CSV refusals, the
+selection rules (sampling fixed on the original sequence before exclusions,
+several ranges including one in the middle, overlaps), the preview folder and
+the data embedded in its page, tolerant annotations, and `build`: the dry run
+writes nothing, relative links with the source untouched, `--materialize`
+copies, the provenance and a `frames.csv` that `camera-review.py`'s
+`frame_times` reads, and each refusal (changed source, tampered or reordered
+kept list, bad ranges, traversal filenames, bad sampling rules, incomplete or
+duplicated clips, too few frames, an existing destination, impossible links).
+FFmpeg is a fake. One test runs the page's `resolveClip()` under Node against
+the Python rules and is skipped without `node` on PATH.
+
 `test_wsl_guard.py` covers the WSL2 guard's decisions, probe parsing and
 process-group handling with a fake Windows and a stand-in child. Its cgroup
 tests read a fake `/proc` and `/sys/fs/cgroup` tree built in a temporary

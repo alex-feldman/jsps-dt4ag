@@ -16,6 +16,23 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- `pipeline/scripts/frame-selection/frame-selection.py`, standard library only. `preview` inventories an
+  existing capture's `images/` (any capture, before or after a COLMAP solve), assigns frames to clips
+  (`--clips` CSV, `provenance/frames.csv`, or one clip), makes FFmpeg thumbnails and writes an offline page
+  in a new folder: every frame starts kept, each clip can have several excluded ranges (also in the
+  middle) and an every-Nth sampling with an offset that is fixed on the original sequence before
+  exclusions, with a sticky `Download selection JSON` button, an inventory CSV download with a `kept`
+  column, and browser autosave. An optional `camera-checks.json` from `camera-review.py` adds tags labeled
+  as coming from that prior solve; they never decide the selection. `build` validates the
+  `dt4ag-frame-selection/1` JSON (unchanged inventory hash, real filenames, sound ranges and rules, a kept
+  list that follows from them, at least 3 frames) and writes a new capture of relative symlinks, or copies
+  with `--materialize`, with `provenance/selection.json`, `frame-selection.json` and a `frames.csv` that
+  `camera-review.py` reads. `--dry-run` writes nothing; an existing destination is refused; masks are not
+  copied. Documented in its README, `VIDEO-WORKFLOW.md` (before the solve, and as a retry after a bad
+  one) and `LAYOUT.md`; tested in `pipeline/tests/test_frame_selection.py`.
+
 ### Changed
 
 - Clarified WSL memory and COLMAP thread evidence, including the limits of

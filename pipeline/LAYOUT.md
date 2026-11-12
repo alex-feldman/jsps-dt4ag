@@ -38,7 +38,7 @@ data_root/
         masks/<camera>/*.png     optional, one per photograph, same relative path
         masks_<variant>/...      optional further mask sets, same shape as masks/
         source/                   optional preserved source video; user-owned
-        provenance/               optional extraction and source manifest; user-owned
+        provenance/               optional extraction, subset or selection record; user-owned
         capture.ini              optional provenance (see below)
 
   derived/                       pipeline-owned, disposable, rebuildable
@@ -62,6 +62,12 @@ training outputs are all findable from any one of them.
 The optional `source/` and `provenance/` directories are user-owned records;
 the pipeline ignores them. Only image files under the configured
 `images_subpath` enter reconstruction.
+
+A capture made by `video-frames.py subset` or `frame-selection.py build`
+holds relative symlinks in `images/` that point into its source capture's
+`images/`, and records the source in `provenance/`. Keep the two captures
+together (moving the whole `datasets/` tree is fine), or build with
+`--materialize` to copy the images instead.
 
 **Several mask sets on one capture.** A capture may hold `masks_<variant>/`
 siblings beside `masks/`, each the same parallel tree: different prompts,
