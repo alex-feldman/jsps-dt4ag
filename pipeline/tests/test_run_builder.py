@@ -210,7 +210,7 @@ class TestGeneratedConfigs(unittest.TestCase):
     def test_every_setting_reaches_the_config(self):
         self.tree.capture("scene-01/capture-a")
         values = {"train": {"max_num_iterations": "10000", "downscale_factor": "4", "eval_mode": "all",
-                            "quit_on_train_completion": "true"},
+                            "quit_on_train_completion": "true", "save_only_latest_checkpoint": "false"},
                   "export": {"checkpoint_interval": "5000", "env_label": "uv-env", "platform_label": "wsl"},
                   "run": {"id_prefix": "test", "colmap_version": "312"},
                   "host": {"memory_high": "8g", "process_cpus": "0,1"}}
@@ -225,6 +225,8 @@ class TestGeneratedConfigs(unittest.TestCase):
         p = plan(self.tree.state(capture="scene-01/capture-a"))
         cfg = load_config(self.tree.write(p["configs"][0]))
         self.assertEqual(cfg.steps_per_save, 5000)
+        self.assertTrue(cfg.save_only_latest_checkpoint)
+        self.assertEqual((cfg.checkpoint_interval, cfg.checkpoint_interval_auto), (0, True))
         self.assertEqual(cfg.platform_label, sys.platform)
         self.assertEqual(cfg.memory_high, "")
 
@@ -393,6 +395,22 @@ class TestGeneratedConfigs(unittest.TestCase):
                                               "run": {"colmap_version": "312"},
                                               "host": {"memory_high": "6G"}}))
         self.assertFalse(any("memory_high is empty" in w for w in capped["warnings"]))
+
+    def test_interval_with_latest_only_warning(self):
+        self.tree.capture("scene-01/capture-a")
+        warning = "needs [train] save_only_latest_checkpoint = false"
+
+        def warned(train, export):
+            p = plan(self.tree.state(capture="scene-01/capture-a",
+                                     values={"train": train, "export": export}))
+            return any(warning in w for w in p["warnings"])
+
+        self.assertFalse(warned({}, {}), "the defaults, true and auto, do not warn")
+        self.assertFalse(warned({}, {"checkpoint_interval": "0"}))
+        self.assertTrue(warned({}, {"checkpoint_interval": "10000"}))
+        self.assertTrue(warned({"save_only_latest_checkpoint": "true"}, {"checkpoint_interval": "5000"}))
+        self.assertFalse(warned({"save_only_latest_checkpoint": "false"}, {"checkpoint_interval": "10000"}))
+        self.assertFalse(warned({"save_only_latest_checkpoint": "false"}, {}))
 
     def test_every_core_warning(self):
         self.tree.capture("scene-01/capture-a")

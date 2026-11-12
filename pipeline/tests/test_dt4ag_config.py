@@ -180,7 +180,7 @@ class TestHappyPath(TempDirTestCase):
         self.assertEqual(cfg.train_method, "splatfacto")
         self.assertEqual(cfg.max_num_iterations, 30000)
         self.assertEqual(cfg.steps_per_save, 5000)
-        self.assertFalse(cfg.save_only_latest_checkpoint)
+        self.assertTrue(cfg.save_only_latest_checkpoint)
         self.assertTrue(cfg.use_scale_regularization)
         self.assertEqual(cfg.background_color, "random")
         self.assertFalse(cfg.quit_on_train_completion)
@@ -226,6 +226,20 @@ class TestHappyPath(TempDirTestCase):
         self.assertIn(str(cfg.source), text)
         self.assertIn("scene-01/images", text)
         self.assertIn("(auto: today)", text)
+
+    def test_describe_shows_the_resolved_checkpoint_interval(self):
+        text = ConfigFixture(self.tmp).load().describe()
+        self.assertIn("(newest only)", text)
+        self.assertIn(
+            "checkpoint_interval: auto -> 0 (final only: save_only_latest_checkpoint = true)",
+            text)
+        study = ConfigFixture(
+            self.tmp, extra={"train": {"save_only_latest_checkpoint": "false"}}).load()
+        self.assertIn("checkpoint_interval: auto -> 15000", study.describe())
+        explicit = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "false"},
+            "export": {"checkpoint_interval": "10000"}}).load()
+        self.assertIn("checkpoint_interval: 10000\n", explicit.describe() + "\n")
 
 
 # --------------------------------------------------------------------------
@@ -381,13 +395,67 @@ class TestFailureModes(TempDirTestCase):
         self.assertEqual(cfg.train_split_fraction, 0.9)
         self.assertEqual(cfg.eval_interval, 8)
 
-    def test_checkpoint_interval_defaults_to_15000(self):
-        self.assertEqual(ConfigFixture(self.tmp).load().checkpoint_interval, 15000)
+    def test_defaults_keep_the_newest_checkpoint_and_export_the_final_one(self):
+        cfg = ConfigFixture(self.tmp).load()
+        self.assertTrue(cfg.save_only_latest_checkpoint)
+        self.assertEqual(cfg.checkpoint_interval, 0)
+        self.assertTrue(cfg.checkpoint_interval_auto)
+
+    def test_auto_written_out_is_the_default(self):
+        for value in ("auto", "AUTO", " Auto "):
+            with self.subTest(value=value):
+                cfg = ConfigFixture(
+                    self.tmp, extra={"export": {"checkpoint_interval": value}}).load()
+                self.assertEqual(cfg.checkpoint_interval, 0)
+                self.assertTrue(cfg.checkpoint_interval_auto)
+
+    def test_auto_keeping_every_checkpoint_exports_every_15000(self):
+        cfg = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "false"}}).load()
+        self.assertEqual(cfg.checkpoint_interval, 15000)
+        self.assertTrue(cfg.checkpoint_interval_auto)
+
+    def test_an_explicit_interval_wins_over_auto(self):
+        cfg = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "false"},
+            "export": {"checkpoint_interval": "10000"}}).load()
+        self.assertEqual(cfg.checkpoint_interval, 10000)
+        self.assertFalse(cfg.checkpoint_interval_auto)
 
     def test_zero_checkpoint_interval_means_final_only(self):
-        fixture = ConfigFixture(
-            self.tmp, extra={"export": {"checkpoint_interval": "0"}})
-        self.assertEqual(fixture.load().checkpoint_interval, 0)
+        for latest_only in ("true", "false"):
+            with self.subTest(save_only_latest_checkpoint=latest_only):
+                cfg = ConfigFixture(self.tmp, extra={
+                    "train": {"save_only_latest_checkpoint": latest_only},
+                    "export": {"checkpoint_interval": "0"}}).load()
+                self.assertEqual(cfg.checkpoint_interval, 0)
+                self.assertFalse(cfg.checkpoint_interval_auto)
+
+    def test_auto_with_steps_per_save_2500_keeping_every_checkpoint_is_15000(self):
+        cfg = ConfigFixture(self.tmp, extra={
+            "train": {"steps_per_save": "2500", "save_only_latest_checkpoint": "false"}}).load()
+        self.assertEqual(cfg.checkpoint_interval, 15000)
+
+    def test_auto_refuses_a_steps_per_save_that_does_not_divide_15000(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"steps_per_save": "4000", "save_only_latest_checkpoint": "false"}})
+        self.assertConfigError(
+            fixture.path, "checkpoint_interval", "export", fixture.path,
+            "is auto", "steps_per_save = 4000", "15000")
+
+    def test_auto_ignores_steps_per_save_when_only_the_newest_is_kept(self):
+        cfg = ConfigFixture(self.tmp, extra={"train": {"steps_per_save": "4000"}}).load()
+        self.assertEqual(cfg.checkpoint_interval, 0)
+
+    def test_an_unknown_checkpoint_interval_word_is_refused(self):
+        for value in ("final", "15k", "1.5e4"):
+            with self.subTest(value=value):
+                fixture = ConfigFixture(
+                    self.tmp, extra={"export": {"checkpoint_interval": value}})
+                message = self.assertConfigError(
+                    fixture.path, "checkpoint_interval", "export", fixture.path)
+                self.assertIn("auto", message)
+                self.assertIn(repr(value), message)
 
     def test_vis_defaults_to_viewer_and_validates(self):
         self.assertEqual(ConfigFixture(self.tmp).load().vis, "viewer")
@@ -467,15 +535,19 @@ class TestFailureModes(TempDirTestCase):
             fixture.path, "checkpoint_interval", "export", fixture.path)
         self.assertIn("save_only_latest_checkpoint", message)
 
-    def test_default_checkpoint_interval_needs_every_checkpoint_kept(self):
-        fixture = ConfigFixture(
-            self.tmp, extra={"train": {"save_only_latest_checkpoint": "true"}})
+    def test_an_explicit_interval_is_refused_under_the_default_latest_only(self):
+        """A config that sets only checkpoint_interval now needs save_only_latest_checkpoint = false."""
+        fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "15000"}})
         message = self.assertConfigError(
             fixture.path, "checkpoint_interval", "export", fixture.path)
-        self.assertIn("save_only_latest_checkpoint", message)
+        self.assertIn(
+            "is 15000, but [train] save_only_latest_checkpoint = true deletes every "
+            "checkpoint but the newest, so there is nothing earlier to export", message)
 
     def test_a_valid_checkpoint_interval_loads(self):
-        fixture = ConfigFixture(self.tmp, extra={"export": {"checkpoint_interval": "5000"}})
+        fixture = ConfigFixture(self.tmp, extra={
+            "train": {"save_only_latest_checkpoint": "false"},
+            "export": {"checkpoint_interval": "5000"}})
         self.assertEqual(fixture.load().checkpoint_interval, 5000)
 
     def test_negative_checkpoint_interval_is_refused(self):
@@ -1312,8 +1384,40 @@ class TestArchiveRunConfig(TempDirTestCase):
         record = parser["run-record"]
         self.assertEqual(record["eval_mode"], "evalfrac90")
         self.assertEqual(record["steps_per_save"], "5000")
-        self.assertEqual(record["checkpoint_interval"], "15000")
+        self.assertEqual(record["save_only_latest_checkpoint"], "true")
+        self.assertEqual(record["checkpoint_interval"], "0")
+        self.assertEqual(record["checkpoint_interval_setting"], "auto")
         self.assertEqual(record["stages"], "train,export")
+
+    def _record(self, train=None, export=None):
+        fixture = ConfigFixture(self.tmp, extra={
+            "run": {"date": "260807", "run_count": "01", "colmap_version": "312"},
+            "train": train or {}, "export": export or {}})
+        written = fixture.load().archive_run_config(self.RUN_ID)
+        parser = configparser.ConfigParser()
+        parser.read_string(written.read_text(encoding="utf-8"))
+        return parser["run-record"]
+
+    def test_records_what_auto_resolved_to_when_every_checkpoint_is_kept(self):
+        record = self._record(train={"save_only_latest_checkpoint": "false"})
+        self.assertEqual(record["save_only_latest_checkpoint"], "false")
+        self.assertEqual(record["checkpoint_interval"], "15000")
+        self.assertEqual(record["checkpoint_interval_setting"], "auto")
+
+    def test_records_an_explicit_interval_as_explicit(self):
+        record = self._record(train={"save_only_latest_checkpoint": "false"},
+                              export={"checkpoint_interval": "10000"})
+        self.assertEqual(record["checkpoint_interval"], "10000")
+        self.assertEqual(record["checkpoint_interval_setting"], "explicit")
+
+    def test_an_archive_of_auto_reloads_to_the_same_interval(self):
+        fixture = ConfigFixture(self.tmp, extra={
+            "run": {"date": "260807", "run_count": "01", "colmap_version": "312"},
+            "train": {"save_only_latest_checkpoint": "false"},
+            "export": {"checkpoint_interval": "auto"}})
+        written = fixture.load().archive_run_config(self.RUN_ID)
+        again = load_config(written)
+        self.assertEqual((again.checkpoint_interval, again.checkpoint_interval_auto), (15000, True))
 
     def test_creates_the_directory_lazily(self):
         cfg = self._cfg()
@@ -1470,7 +1574,9 @@ class TestCommittedExampleConfig(unittest.TestCase):
         self.assertEqual(cfg.run_id_prefix, "run")
         self.assertEqual(cfg.train_method, "splatfacto")
         self.assertEqual(cfg.max_num_iterations, 30000)
-        self.assertEqual(cfg.checkpoint_interval, 15000)
+        self.assertTrue(cfg.save_only_latest_checkpoint)
+        self.assertEqual(cfg.checkpoint_interval, 0)
+        self.assertTrue(cfg.checkpoint_interval_auto)
         self.assertEqual(cfg.colmap_data_type, "auto")
         self.assertFalse(cfg.images_rel.is_absolute())
 
