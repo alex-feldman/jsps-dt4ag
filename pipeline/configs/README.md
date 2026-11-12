@@ -58,8 +58,10 @@ from `max_num_iterations = 10000` to `30000`, and the settings behind the
 **The pipeline now handles this for every invocation it executes.** Each one writes
 `<data_root>/configs/runs/<run-id>_<yymmdd-HHMMSS>.ini`: this config file verbatim,
 plus a `[run-record]` section holding what only resolves at run time, including the
-pipeline's git commit, the stages that ran, the eval mode, checkpoint settings,
-and the installed Nerfstudio version whenever a Nerfstudio stage is selected.
+pipeline's git commit, the stages that ran, the eval mode, checkpoint settings
+(`save_only_latest_checkpoint`, and `checkpoint_interval` as the number the export
+stage used, with `checkpoint_interval_setting = auto` when it was resolved from
+`auto` and `explicit` when the file gave a number), and the installed Nerfstudio version whenever a Nerfstudio stage is selected.
 That same version appears in `run-log.csv`'s `nerfstudio_version` column and the
 invocation log. It is read from package metadata in the Python environment
 running the pipeline, not inferred from `uv.lock`; if metadata is unavailable,
@@ -268,8 +270,8 @@ Feeds `ns-train`.
 |---|---|---|---|
 | `method` | no | `splatfacto` | The nerfstudio method name. |
 | `max_num_iterations` | no | `30000` | `--max-num-iterations`. Must be positive. |
-| `steps_per_save` | no | `5000` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run and still holds the 15,000-step checkpoint that the default `checkpoint_interval` exports. nerfstudio's own default is 2000. |
-| `save_only_latest_checkpoint` | no | `false` | `--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest. |
+| `steps_per_save` | no | `5000` | `--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run (with `save_only_latest_checkpoint = false`) and still holds the 15,000-step checkpoint that `checkpoint_interval = auto` then exports. nerfstudio's own default is 2000. |
+| `save_only_latest_checkpoint` | no | `true` | `--save-only-latest-checkpoint`. `true` keeps only the newest checkpoint (one instead of six in a 30,000-step run) and, with `[export] checkpoint_interval = auto`, exports the final step only. `false` keeps every checkpoint, which is what lets you export an earlier step after the run: set it for a step study, and `auto` then exports every 15,000 steps. The default was `false` before the next release. |
 | `eval_mode` | no | `fraction` | Which photographs train: `fraction` holds a share out for `ns-eval`, `interval` holds out every n-th, `all` trains on every photograph (and `ns-eval` then scores fit on photographs it trained on, not generalization). Passed as `nerfstudio-data --eval-mode`, always, so the training set is stated and not inherited. `filename` mode is not offered. |
 | `train_split_fraction` | no | `0.9` | Share of photographs that train, when `eval_mode = fraction`. Must be above 0 and below 1: 1.0 holds nothing out and makes `ns-eval` crash, so use `eval_mode = all` for that. The run also refuses to start if the fraction would hold out 0 of the registered photographs. |
 | `eval_interval` | no | `8` | Every n-th photograph is held out, when `eval_mode = interval`. At least 2. |
@@ -306,11 +308,20 @@ Feeds `ns-export` and the optional point-cloud conversion.
 | Key | Required | Default | Controls |
 |---|---|---|---|
 | `format` | no | `gaussian-splat` | The `ns-export` subcommand. |
-| `checkpoint_interval` | no | `DEFAULT_CHECKPOINT_INTERVAL` (`15,000`; `pipeline/dt4ag_config.py`) | Export every checkpoint whose step is a multiple of this, plus the final one. For the standard 30,000-step config this exports step 15,000 and the final step. `0` explicitly exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Set checkpoint_interval to 0 explicitly for final-only export in that mode. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only. |
+| `checkpoint_interval` | no | `auto` | Export every checkpoint whose step is a multiple of this, plus the final one. `auto` is `0` (the final checkpoint only) when `[train] save_only_latest_checkpoint = true` and `DEFAULT_CHECKPOINT_INTERVAL` (`15,000`; `pipeline/dt4ag_config.py`) when it is `false`, which for the standard 30,000-step config exports step 15,000 and the final step; the dry run and the archived `[run-record]` show what it resolved to. `auto` with `false` needs a `steps_per_save` that divides 15,000. A number overrides it: `0` explicitly exports the final checkpoint only, and a nonzero number (`10000` exports 10,000, 20,000 and 30,000) must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. The default was `15000` before the next release. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only. |
 | `env_label` | no | `env` | Free-text label baked into the export filename to record which environment produced it. Was the hardcoded `conda_env_name`. |
 | `platform_label` | no | the running platform | Second label in the export filename. |
 | `export_3dgs` | no | `false` | Whether to run the 3DGS-to-point-cloud conversion. Inflates file size by roughly 1000x. |
 | `gauss_to_pc_script` | conditional | empty | Path to `gauss_to_pc.py`. Required when `export_3dgs = true`. |
+
+**Editing a collection's base config re-runs every capture.** `run_collection.py`
+compares the raw INI sections of the base config with those recorded for each
+capture's earlier run (`run_pipeline.ini_sections`, `run_collection.why_incomplete`),
+not the values they load to. Adding a key at the value it already defaults to, for
+example `save_only_latest_checkpoint = false` to a config that relied on the old
+default, or `checkpoint_interval = auto`, makes every capture report "settings
+changed since that run" and run again, even when the effective values are
+unchanged. Make such edits before a collection run, not between resumes of one.
 
 Export filenames are built as (`export_filename` in `run_pipeline.py`)
 

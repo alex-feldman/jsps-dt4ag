@@ -350,7 +350,7 @@ class TestCommands(TempTreeTestCase):
                 "--max-num-iterations", "500",
                 "--logging.local-writer.max-log-size", "0",
                 "--steps-per-save", "5000",
-                "--save-only-latest-checkpoint", "False",
+                "--save-only-latest-checkpoint", "True",
                 "nerfstudio-data",
                 "--eval-mode", "fraction",
                 "--train-split-fraction", "0.9",
@@ -389,12 +389,17 @@ class TestCommands(TempTreeTestCase):
                 self.assertEqual(command.count("--vis"), 1)
                 self.assertIn("--viewer.quit-on-train-completion", command)
 
-    def test_train_command_keeps_a_checkpoint_every_5000_steps_by_default(self):
-        """nerfstudio's own default deletes all but the newest; that is the trap."""
+    def test_train_command_keeps_only_the_newest_checkpoint_by_default(self):
+        """One checkpoint by default; a step study sets save_only_latest_checkpoint = false."""
         command = train_command(make_config(self.root), self.root / "ws")
         self.assertEqual(command[command.index("--steps-per-save") + 1], "5000")
         self.assertEqual(
-            command[command.index("--save-only-latest-checkpoint") + 1], "False")
+            command[command.index("--save-only-latest-checkpoint") + 1], "True")
+        study = train_command(
+            make_config(self.root, train_extra="save_only_latest_checkpoint = false"),
+            self.root / "ws")
+        self.assertEqual(
+            study[study.index("--save-only-latest-checkpoint") + 1], "False")
 
     def test_export_filename_records_the_run_provenance(self):
         """The leading component is the CAPTURE, not the collection above it."""
@@ -590,6 +595,28 @@ class TestHostLimits(TempTreeTestCase):
         printed = self._dry_run_output(self._cfg())
         self.assertEqual([line.split()[0] for line in printed],
                          ["colmap", "ns-process-data", "ns-train", "ns-export"])
+
+    def _dry_run_checkpoint_line(self, cfg):
+        (cfg.images_path / "frame_0001.jpg").write_bytes(b"x")
+        args = parse_args(["--config", str(cfg.source), "--dry-run"])
+        out = io.StringIO()
+        figures = colmap_threads.HostMemory(linux_available_mib=65536, usable_cpus=8)
+        with mock.patch.object(run_pipeline.subprocess, "run"), \
+                mock.patch.object(colmap_threads, "read_host_memory", return_value=figures), \
+                redirect_stdout(out):
+            self.assertEqual(run_pipeline.run_pipeline(cfg, args), 0)
+        lines = [line for line in out.getvalue().splitlines() if "checkpoints       :" in line]
+        self.assertEqual(len(lines), 1, out.getvalue())
+        return lines[0]
+
+    def test_dry_run_shows_the_resolved_checkpoint_interval(self):
+        line = self._dry_run_checkpoint_line(self._cfg())
+        self.assertIn("every 5000 steps, newest only", line)
+        self.assertIn("checkpoint_interval auto -> 0 (final only", line)
+        study = make_config(self.root, train_extra="save_only_latest_checkpoint = false")
+        line = self._dry_run_checkpoint_line(study)
+        self.assertIn("all kept", line)
+        self.assertIn("checkpoint_interval auto -> 15000", line)
 
     def test_preflight_does_nothing_without_limits(self):
         with mock.patch.object(run_pipeline.subprocess, "run") as probe:

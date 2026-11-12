@@ -246,13 +246,27 @@ EVAL_MODES = ("fraction", "interval", "all")
 #: needs an account.
 VIS_MODES = ("viewer", "viewer+tensorboard", "tensorboard")
 
-#: Default intermediate export cadence for the standard 30,000-step profile.
-#: A value of zero remains available for final-only export.
+#: Intermediate export cadence that ``[export] checkpoint_interval = auto`` uses
+#: when every checkpoint is kept (``save_only_latest_checkpoint = false``): a
+#: 30,000-step run exports at its midpoint and its final step. A value of zero
+#: remains available for final-only export.
 DEFAULT_CHECKPOINT_INTERVAL = 15000
 
-#: Default checkpoint cadence. 5000 keeps six checkpoints in a 30,000-step run (the
-#: earlier 2500 kept twelve, about twice the disk) and still saves the step that
-#: DEFAULT_CHECKPOINT_INTERVAL exports. It must divide any explicit checkpoint_interval.
+#: The ``[export] checkpoint_interval`` value that is its default. It resolves at
+#: load time to 0 (final export only) when ``save_only_latest_checkpoint`` is true
+#: and to DEFAULT_CHECKPOINT_INTERVAL when it is false, so a step study is the one
+#: key ``save_only_latest_checkpoint = false``.
+CHECKPOINT_INTERVAL_AUTO = "auto"
+
+#: Default ``[train] save_only_latest_checkpoint``. True keeps only the newest
+#: checkpoint (about 740 bytes per gaussian) instead of every one; set it
+#: to false for a step study, which ``checkpoint_interval = auto`` then exports.
+DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT = True
+
+#: Default checkpoint cadence. With save_only_latest_checkpoint = false, 5000 keeps
+#: six checkpoints in a 30,000-step run (the earlier 2500 kept twelve, about twice
+#: the disk) and still saves the step that DEFAULT_CHECKPOINT_INTERVAL exports; by
+#: default it writes six and keeps only the newest. It must divide any explicit checkpoint_interval.
 DEFAULT_STEPS_PER_SAVE = 5000
 
 #: ``[colmap] data_type`` values. ``auto`` is the legacy directory-name heuristic
@@ -471,6 +485,10 @@ class Dt4agConfig:
     #: ``[host] process_cpus``: a ``taskset -c`` CPU list for ns-process-data
     #: only. Empty: every CPU.
     process_cpus: str = ""
+
+    #: True when ``[export] checkpoint_interval`` was ``auto`` (written or
+    #: omitted) and ``checkpoint_interval`` holds what it resolved to.
+    checkpoint_interval_auto: bool = False
 
     _resolved_run_id: Optional[str] = field(default=None, repr=False)
 
@@ -728,7 +746,11 @@ class Dt4agConfig:
             "train_method": self.train_method,
             "max_num_iterations": str(self.max_num_iterations),
             "steps_per_save": str(self.steps_per_save),
+            "save_only_latest_checkpoint": str(self.save_only_latest_checkpoint).lower(),
+            # The integer the export stage used, whatever the file said; the
+            # setting says whether it came from `auto` or was written as given.
             "checkpoint_interval": str(self.checkpoint_interval),
+            "checkpoint_interval_setting": self.checkpoint_interval_setting(),
             "eval_mode": self.eval_token(),
             "vis": self.vis,
             "downscale_factor": str(self.downscale_factor or "auto"),
@@ -877,6 +899,19 @@ class Dt4agConfig:
 
     # -- reporting ---------------------------------------------------------
 
+    def checkpoint_interval_setting(self) -> str:
+        """``auto`` when ``checkpoint_interval`` was resolved from ``auto``, else ``explicit``."""
+        return CHECKPOINT_INTERVAL_AUTO if self.checkpoint_interval_auto else "explicit"
+
+    def checkpoint_interval_text(self) -> str:
+        """The interval for a human, e.g. ``15000``, ``(final only)`` or ``auto -> 0 (final only, ...)``."""
+        if not self.checkpoint_interval_auto:
+            return str(self.checkpoint_interval) if self.checkpoint_interval else "(final only)"
+        if self.checkpoint_interval:
+            return (f"auto -> {self.checkpoint_interval} "
+                    f"(save_only_latest_checkpoint = false)")
+        return "auto -> 0 (final only: save_only_latest_checkpoint = true)"
+
     def describe(self) -> str:
         lines = [
             f"config file        : {self.source}",
@@ -915,7 +950,7 @@ class Dt4agConfig:
             f"({'newest only' if self.save_only_latest_checkpoint else 'all kept'})",
             f"eval_mode          : {self.eval_token()}",
             f"vis                : {self.vis}",
-            f"checkpoint_interval: {self.checkpoint_interval or '(final only)'}",
+            f"checkpoint_interval: {self.checkpoint_interval_text()}",
             f"export_format      : {self.export_format}",
             f"export_3dgs        : {self.export_3dgs}",
             f"memory_high        : {self.memory_high or '(none: no cap)'}",
@@ -1419,8 +1454,16 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
             f"key 'steps_per_save' in section [train] of config file {source} "
             f"must be positive, got {steps_per_save}"
         )
+    # Newest only by default (one checkpoint instead of six); a step study sets
+    # it to false, and checkpoint_interval = auto follows. Whether the file
+    # wrote it decides how a refusal below explains itself.
     save_only_latest_checkpoint = _get_bool(
-        parser, "train", "save_only_latest_checkpoint", source, False
+        parser, "train", "save_only_latest_checkpoint", source,
+        DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT,
+    )
+    latest_only_written = bool(
+        parser.has_option("train", "save_only_latest_checkpoint")
+        and parser.get("train", "save_only_latest_checkpoint").strip()
     )
     # Which photographs train, and which are held out for ns-eval. nerfstudio's
     # dataparser decides this at load time and it is NOT a property of the
@@ -1490,11 +1533,37 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     # [export]
     export_format = _get_str(parser, "export", "format", source, "gaussian-splat")
     # Export every checkpoint whose step is a multiple of this, plus the final
-    # one. Omitted configs use DEFAULT_CHECKPOINT_INTERVAL; 0 is final-only.
-    # The checkpoints have to exist, so it must divide into what training saves.
-    checkpoint_interval = _get_int(
-        parser, "export", "checkpoint_interval", source, DEFAULT_CHECKPOINT_INTERVAL
+    # one; 0 is final-only. `auto` (the default) follows the checkpoints that
+    # are kept: 0 when save_only_latest_checkpoint is true, else
+    # DEFAULT_CHECKPOINT_INTERVAL. The checkpoints have to exist, so a nonzero
+    # interval must divide into what training saves.
+    raw_interval = _get_str(
+        parser, "export", "checkpoint_interval", source, CHECKPOINT_INTERVAL_AUTO
     )
+    checkpoint_interval_auto = raw_interval.lower() == CHECKPOINT_INTERVAL_AUTO
+    if checkpoint_interval_auto:
+        checkpoint_interval = (
+            0 if save_only_latest_checkpoint else DEFAULT_CHECKPOINT_INTERVAL
+        )
+        if checkpoint_interval % steps_per_save:
+            raise ConfigError(
+                f"key 'checkpoint_interval' in section [export] of config file "
+                f"{source} is auto, which with [train] save_only_latest_checkpoint "
+                f"= false exports every {checkpoint_interval} steps, but that is "
+                f"not a multiple of [train] steps_per_save = {steps_per_save}; set "
+                f"steps_per_save to a divisor of {checkpoint_interval} (such as "
+                f"{DEFAULT_STEPS_PER_SAVE}) or set checkpoint_interval to a "
+                f"multiple of {steps_per_save}"
+            )
+    else:
+        try:
+            checkpoint_interval = int(raw_interval)
+        except ValueError as exc:
+            raise ConfigError(
+                f"key 'checkpoint_interval' in section [export] of config file "
+                f"{source} must be auto or a whole number of steps (0 for the "
+                f"final checkpoint only), got {raw_interval!r}"
+            ) from exc
     if checkpoint_interval < 0:
         raise ConfigError(
             f"key 'checkpoint_interval' in section [export] of config file {source} "
@@ -1510,12 +1579,22 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
                 f"never be made"
             )
         if save_only_latest_checkpoint:
-            raise ConfigError(
+            message = (
                 f"key 'checkpoint_interval' in section [export] of config file "
                 f"{source} is {checkpoint_interval}, but [train] "
                 f"save_only_latest_checkpoint = true deletes every checkpoint but "
                 f"the newest, so there is nothing earlier to export"
             )
+            if not latest_only_written:
+                message += (
+                    f". This config does not set save_only_latest_checkpoint, and "
+                    f"it now defaults to true (CHANGELOG, Unreleased: latest-only "
+                    f"checkpoints by default). Set [train] "
+                    f"save_only_latest_checkpoint = false to keep every checkpoint "
+                    f"(a step study), or set checkpoint_interval = auto or 0 to "
+                    f"export the final checkpoint only"
+                )
+            raise ConfigError(message)
     env_label = _get_str(parser, "export", "env_label", source, "env")
     platform_label = _get_str(parser, "export", "platform_label", source, sys.platform)
     export_3dgs = _get_bool(parser, "export", "export_3dgs", source, False)
@@ -1597,6 +1676,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         max_log_size=max_log_size,
         export_format=export_format,
         checkpoint_interval=checkpoint_interval,
+        checkpoint_interval_auto=checkpoint_interval_auto,
         env_label=env_label,
         platform_label=platform_label,
         export_3dgs=export_3dgs,
@@ -1669,7 +1749,8 @@ CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
     _k("train", "method", default="splatfacto"),
     _k("train", "max_num_iterations", "int", "30000"),
     _k("train", "steps_per_save", "int", str(DEFAULT_STEPS_PER_SAVE)),
-    _k("train", "save_only_latest_checkpoint", "bool", "false"),
+    _k("train", "save_only_latest_checkpoint", "bool",
+       "true" if DEFAULT_SAVE_ONLY_LATEST_CHECKPOINT else "false"),
     _k("train", "eval_mode", "choice", "fraction", choices=EVAL_MODES),
     _k("train", "train_split_fraction", "float", "0.9"),
     _k("train", "eval_interval", "int", "8"),
@@ -1680,7 +1761,9 @@ CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
     _k("train", "quit_on_train_completion", "bool", "false"),
     _k("train", "max_log_size", "int", "0"),
     _k("export", "format", default="gaussian-splat"),
-    _k("export", "checkpoint_interval", "int", str(DEFAULT_CHECKPOINT_INTERVAL)),
+    # `auto` or a whole number, so "text" like [colmap] num_threads; the loader
+    # validates it.
+    _k("export", "checkpoint_interval", default=CHECKPOINT_INTERVAL_AUTO),
     _k("export", "env_label", default="env"),
     _k("export", "platform_label", default=None, default_note="the running platform (sys.platform)"),
     _k("export", "export_3dgs", "bool", "false"),

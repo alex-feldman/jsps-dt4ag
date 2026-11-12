@@ -538,16 +538,16 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "`--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run and still holds the 15,000-step checkpoint that the default `checkpoint_interval` exports. nerfstudio's own default is 2000."
+     "help": "`--steps-per-save`. A checkpoint every N steps, plus one at the final step. Must be positive. The default was 2500 before the next release; 5000 keeps six checkpoints in a 30,000-step run (with `save_only_latest_checkpoint = false`) and still holds the 15,000-step checkpoint that `checkpoint_interval = auto` then exports. nerfstudio's own default is 2000."
     },
     {
      "key": "save_only_latest_checkpoint",
      "kind": "bool",
-     "default": "false",
+     "default": "true",
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "`--save-only-latest-checkpoint`. `false` keeps every checkpoint, which is what lets you export an earlier step after the run. `true` is nerfstudio's default and deletes all but the newest."
+     "help": "`--save-only-latest-checkpoint`. `true` keeps only the newest checkpoint (one instead of six in a 30,000-step run) and, with `[export] checkpoint_interval = auto`, exports the final step only. `false` keeps every checkpoint, which is what lets you export an earlier step after the run: set it for a step study, and `auto` then exports every 15,000 steps. The default was `false` before the next release."
     },
     {
      "key": "eval_mode",
@@ -655,12 +655,12 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
     },
     {
      "key": "checkpoint_interval",
-     "kind": "int",
-     "default": "15000",
+     "kind": "text",
+     "default": "auto",
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Export every checkpoint whose step is a multiple of this, plus the final one. For the standard 30,000-step config this exports step 15,000 and the final step. `0` explicitly exports the final checkpoint only. Must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. Set checkpoint_interval to 0 explicitly for final-only export in that mode. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only."
+     "help": "Export every checkpoint whose step is a multiple of this, plus the final one. `auto` is `0` (the final checkpoint only) when `[train] save_only_latest_checkpoint = true` and `DEFAULT_CHECKPOINT_INTERVAL` (`15,000`; `pipeline/dt4ag_config.py`) when it is `false`, which for the standard 30,000-step config exports step 15,000 and the final step; the dry run and the archived `[run-record]` show what it resolved to. `auto` with `false` needs a `steps_per_save` that divides 15,000. A number overrides it: `0` explicitly exports the final checkpoint only, and a nonzero number (`10000` exports 10,000, 20,000 and 30,000) must be a multiple of `[train] steps_per_save` (checkpoints exist only at those steps) and cannot be used with `save_only_latest_checkpoint = true`. The default was `15000` before the next release. Each export is about 20 seconds and 70 MB for a 300,000-gaussian scene. The point-cloud conversion (`export_3dgs`) runs for the final checkpoint only."
     },
     {
      "key": "env_label",
@@ -983,6 +983,13 @@ globalThis.RunBuilder = (function () {
     if (colmapThreads === "all" && !/(^|\s)--num_threads(=|\s|$)/.test(colmapExtra)) {
       warnings.push("COLMAP will use every CPU thread. Its feature extraction needs about 1 GiB per thread, so on a machine with 16 GB of RAM this can stop WSL within seconds. Set num_threads = auto, or a number such as 4.");
     }
+    // A nonzero checkpoint_interval needs every checkpoint kept; the loader
+    // refuses that config with the default save_only_latest_checkpoint = true.
+    var latestOnly = String(value(schema, state, "train", "save_only_latest_checkpoint") || "").trim().toLowerCase();
+    var interval = String(value(schema, state, "export", "checkpoint_interval") || "").trim();
+    if (["1", "true", "yes", "on"].indexOf(latestOnly) >= 0 && /^[0-9]+$/.test(interval) && Number(interval) > 0) {
+      warnings.push("[export] checkpoint_interval = " + interval + " needs [train] save_only_latest_checkpoint = false: with true only the newest checkpoint is kept, so run_pipeline.py refuses the config. Set save_only_latest_checkpoint = false for a step study, or checkpoint_interval = auto.");
+    }
     var guard = !!state.wslGuard;
     if (guard && state.mode === "collection") {
       warnings.push("wsl-guard runs run_pipeline.py only, so this collection run is not guarded: keep [host] memory_high set and leave Windows memory headroom.");
@@ -1074,7 +1081,7 @@ globalThis.RunBuilder = (function () {
                   "dataset.use_masks": 1, "dataset.mask_variant": 1, "dataset.mask_extensions": 1 };
   var COMMON = ["run.id_prefix", "train.max_num_iterations", "train.downscale_factor", "train.eval_mode",
                 "train.train_split_fraction", "train.eval_interval", "train.quit_on_train_completion",
-                "export.checkpoint_interval", "export.env_label", "export.platform_label",
+                "train.save_only_latest_checkpoint", "export.checkpoint_interval", "export.env_label", "export.platform_label",
                 "export.export_3dgs", "export.gauss_to_pc_script", "host.memory_high", "host.process_cpus"];
   var server = false;
   var lastCapture = null;

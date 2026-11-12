@@ -1271,10 +1271,14 @@ training computes none. Use `ns-eval` (section 6).
 largest count and export the checkpoints on the way. Do not train once per
 count, and do not try to resume.**
 
-The pipeline keeps a checkpoint every `[train] steps_per_save` steps (default
-5000, six checkpoints in a 30,000-step run; it was 2500 before the next release) and keeps all of them (`save_only_latest_checkpoint = false`), plus one at
-the final step. nerfstudio's own defaults are every 2000 and newest only, which
-deletes the earlier ones and leaves nothing to export an earlier step from.
+**Set `[train] save_only_latest_checkpoint = false` for a step study.** By
+default (`true` since the next release; it was `false` before) a run keeps only
+its newest checkpoint and exports the final step only, which
+leaves nothing to export an earlier step from. With `false` the pipeline keeps a
+checkpoint every `[train] steps_per_save` steps (default 5000, six checkpoints in
+a 30,000-step run; it was 2500 before the next release) and keeps all of them,
+plus one at the final step. nerfstudio's own defaults are every 2000 and newest
+only.
 
 A checkpoint at step N of a longer run is the same training as a run configured
 for N steps, because splatfacto's schedules do not depend on
@@ -1285,14 +1289,19 @@ differ slightly. The cause was not isolated; non-deterministic GPU kernels are t
 likely one. To size that noise, repeat one configuration and compare, rather than
 assuming zero.)
 
-**Have the pipeline export them: set `[export] checkpoint_interval = 5000`** (or set
-`[train] steps_per_save = 2500` first, for every 2500 steps). The
-export stage then writes one PLY for every checkpoint whose step is a multiple of
-that number, plus the final one, each named `{x}steps_from{y}run` and carrying the
-eval-mode token. The default is `15000` (`DEFAULT_CHECKPOINT_INTERVAL` in
-`pipeline/dt4ag_config.py`), which exports step 15,000 and the final step of a
-30,000-step run. `0` exports the final checkpoint only. It must be a
-multiple of `steps_per_save`. Exporting takes about 20 seconds per checkpoint.
+**The pipeline exports them.** `[export] checkpoint_interval` defaults to `auto`,
+which follows the key above: with `save_only_latest_checkpoint = false` it is
+`15000` (`DEFAULT_CHECKPOINT_INTERVAL` in `pipeline/dt4ag_config.py`) and exports
+step 15,000 and the final step of a 30,000-step run; with `true` it is `0`, the
+final checkpoint only. For more steps, set a number: `checkpoint_interval = 10000`
+exports 10,000, 20,000 and 30,000, and `5000` exports every checkpoint (set
+`[train] steps_per_save = 2500` first for every 2500 steps). The export stage
+writes one PLY for every checkpoint whose step is a multiple of the interval,
+plus the final one, each named `{x}steps_from{y}run` and carrying the eval-mode
+token. A number must be a multiple of `steps_per_save`, and a nonzero one needs
+`save_only_latest_checkpoint = false`; `0` exports the final checkpoint only.
+The dry run and the archived config's `[run-record]` show the interval `auto`
+resolved to. Exporting takes about 20 seconds per checkpoint.
 
 To export a single earlier step by hand instead, point a copy of the run's
 `config.yml` at it. `ns-export` has no step option of its own, but it honours
@@ -1398,13 +1407,15 @@ therefore crashes in gsplat's `duplicate()` at the first densification step
 
 **What a checkpoint costs.** About 740 bytes per gaussian: 300,000 gaussians is
 about 220 MB (80 MB of model, 140 MB of optimizer state). Writing one takes
-about 0.2 to 0.3 seconds on ext4, so 12 checkpoints in a 30,000-step run add a
-few seconds to roughly 10 minutes of training. The cost that matters is disk:
-12 checkpoints of a 300,000-gaussian scene is about 2.6 GB per run, and it
+about 0.2 to 0.3 seconds on ext4, so the six checkpoints a 30,000-step run writes
+at the default `steps_per_save` add a few seconds to roughly 10 minutes of
+training. The cost that matters is disk: with `save_only_latest_checkpoint =
+false` a run keeps all six, which for a 300,000-gaussian scene is about 1.3 GB
+per run (the default, `true`, keeps one), and it
 scales with the gaussian count, so a scene of a million gaussians is about
 740 MB per checkpoint. Delete the checkpoints you no longer need after
-exporting, or set `save_only_latest_checkpoint = true` when you will not
-compare step counts. Lower `steps_per_save` only for short exploratory runs
+exporting; runs that leave `save_only_latest_checkpoint` at its default (`true`)
+keep only the newest. Lower `steps_per_save` only for short exploratory runs
 where the early steps are the question.
 
 ## 6. Check it actually worked

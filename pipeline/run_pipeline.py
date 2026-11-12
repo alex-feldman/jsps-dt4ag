@@ -1673,6 +1673,13 @@ def run_pipeline(cfg: Dt4agConfig, args: argparse.Namespace) -> int:
             job.resolved(colmap_threads=threads.recorded,
                          colmap_threads_source=threads.source)
 
+    # What training keeps and what export will export, with the interval
+    # `auto` resolved, so a dry run shows it before anything runs.
+    if {"train", "export"} & set(stages):
+        log(f"checkpoints       : every {cfg.steps_per_save} steps, "
+            f"{'newest only' if cfg.save_only_latest_checkpoint else 'all kept'}; "
+            f"checkpoint_interval {cfg.checkpoint_interval_text()}")
+
     if not dry_run and {"process", "train", "export"} & set(stages):
         nerfstudio_version = detect_nerfstudio_version()
         log(f"nerfstudio version: {nerfstudio_version}")
