@@ -90,6 +90,9 @@ for v0.3.0 below. The preview capabilities are grouped here:
 | Reconstruction catalog | opt-in atomic job records for a run (see "overlap" under v0.3.0) | 11 |
 | Viewers | click-viewer legibility, leaf-cluster IDs drawn beside the point cloud | 12, 13 |
 | Video to capture | `video-frames` (review page, extract, subset), `camera-review`, `VIDEO-WORKFLOW.md` (serves the v1.0.0 video criteria) | 14 |
+| Collection runs and run records (v0.3.0 work, not yet accepted) | `run_collection.py`; catalog job progress schema 2: incremental records, milestone ladder, failure records, per-stage timings | 15 |
+| Running on a workstation | `[host]` limits and `wsl-guard`, COLMAP `num_threads = auto`, `copy_config.py`, the run builder | 15 |
+| Frame selection and storage defaults | `frame-selection` (offline exclusion preview, selection file, linked capture build); latest-only checkpoints with `checkpoint_interval = auto` | 16 |
 
 **Status:** experimental. Schemas carry their own version (`plant-asset`, `frame-calibration`,
 `image-clicks`, `scale-estimate`, `Plant Reconstruction Catalog v1`, `plant-asset-decisions`,

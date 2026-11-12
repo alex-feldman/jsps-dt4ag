@@ -16,6 +16,8 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+## [0.3.0-alpha.16] - 2026-11-12
+
 ### Added
 
 - `pipeline/scripts/frame-selection/frame-selection.py`, standard library only. `preview` inventories an
