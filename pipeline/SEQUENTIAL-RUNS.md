@@ -246,7 +246,7 @@ comparing datasets in the series.
 Fix: a `series` or `batch_id` column, and a documented way to start a fresh log
 when the columns change (rename the old file; the runner creates a new one with
 current columns). `run_collection.py` does not add one: its captures' jobs are
-linked by capture ID only, and catalog batch provenance is release-plan step 6.
+linked by capture ID only, and catalog batch provenance is now a v0.5.0 criterion (ROADMAP, revised 2026-11-12).
 
 ## 4. The training resolution is recorded in the artefact, not in the run log
 
