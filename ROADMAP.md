@@ -99,134 +99,159 @@ for v0.3.0 below. The preview capabilities are grouped here:
 `splat-viewer-copy`); there is no stability promise between alphas.
 
 **What the number means:** an alpha counts previews, nothing more. It does not measure distance to
-v0.3.0, whose criteria are the batching and run-record items below.
+v0.3.0, whose criteria are below.
 
-**Alpha exit (decided 2026-10-20).** Stay on `0.3.0-alpha.N` until the batching and
-run-record acceptance criteria below work end to end. Then publish `0.3.0-beta.1`
-for independent testing. Publish `0.3.0` after the documented acceptance test
-passes and release validation is complete. A representation choice or a second
-species asset alone does not satisfy this gate. Plant-analysis schemas remain
-experimental unless their own documentation explicitly promises stability.
+**Alpha exit (decided 2026-10-20, scope revised 2026-11-12).** Stay on `0.3.0-alpha.N` until the
+v0.3.0 criteria below work end to end. Then publish `0.3.0-beta.1` for independent testing. Publish
+`0.3.0` after the documented acceptance test passes and release validation is complete. A
+representation choice or a second species asset alone does not satisfy this gate. Plant-analysis
+schemas remain experimental unless their own documentation explicitly promises stability.
 
 See [the ordered path to v0.3.0](docs/v0.3.0-release-plan.md).
 
 ---
 
-## v0.3.0 — run a whole collection, and know what every run did
+## Milestone plan (revised 2026-11-12)
 
-Two halves of one story: driving many captures without a hand-written
-loop, and being able to answer afterwards what each run did and how far it got.
-`pipeline/run_collection.py` now discovers and runs every capture beneath a
-collection from one base config and skips captures whose catalog record
-proves completion, and each run's catalog job record says how far it got
-(`pipeline/SEQUENTIAL-RUNS.md`, `pipeline/CATALOG-RECORDS.md`). No real GPU
-collection run has confirmed this yet.
+The earlier plan tied v0.3.0 to unattended collection runs and v0.4.0 to native Windows. Use showed
+two different needs. The expensive failures were camera solves that looked healthy by their counts and
+were wrong, and a run whose acceptance nobody could reconstruct afterward. The hardware limit was the
+GPU, not the operating system: WSL2 works, while the RTX 50 series cannot run the pipeline at all.
+So the milestones now follow what makes a reconstruction trustworthy, then what makes it better,
+then what lets someone else use it.
 
-**Batching**
+| Version | Theme | Gate in one line |
+|---|---|---|
+| v0.3.0 | Runs you can trust and account for | Every run says how far it got, whether its camera solve was reviewed, and what the operator decided |
+| v0.4.0 | Bigger GPUs, higher resolution | Runs on RTX 50-series (Blackwell) GPUs, verified at a higher training resolution |
+| v0.5.0 | Sources, captures and selections | Captures are selections of preserved source datasets, with stable identity across roots |
+| v0.6.0 | Someone else can use it | A person other than the author installs it (WSL2 or Linux) and runs a capture from the docs alone |
+| v1.0.0 | The public research release | A cited dataset and its reconstruction are published together |
 
-- [ ] Point the pipeline at a collection and every capture beneath it
-      reconstructs, one at a time, discovered by the `images/` rule
-      (`pipeline/LAYOUT.md`)
-- [ ] One base config for a collection, instead of one near-identical config per
-      capture
-- [ ] Re-running a partly failed batch skips what already completed instead of
-      silently duplicating it under new run ids
-- [ ] Optionally stop after every capture's camera solve, with a camera review
-      written for each, then train and export only the captures the operator
-      approves; without the option a collection runs straight through
-- [ ] Collection execution is sequential within each batch, and the documentation
-      explains shared-GPU contention risks for independent concurrent invocations.
-      No mandatory global GPU lock (decided 2026-10-20); optional per-GPU
-      coordination is future work, not a v0.3.0 release gate.
+Each is a MINOR release under the rule above, with its own alpha and beta line when the work warrants it.
+The order of v0.4.0 and v0.5.0 may swap: v0.4.0 depends on whether gsplat can be built for Blackwell,
+which is not yet known.
+
+---
+
+## v0.3.0: runs you can trust and account for
+
+Point the pipeline at a capture or a collection, and afterwards know for every run how far it got,
+whether its camera solve was reviewed before training, and whether the operator accepted it.
+`[~]` means implemented and tested in fixtures, awaiting the real acceptance run.
+
+**Collections**
+
+- [~] Point the pipeline at a collection and every capture beneath it reconstructs, one at a time,
+      discovered by the `images/` rule (`pipeline/LAYOUT.md`). `run_collection.py`, alpha.15; a
+      partial real GPU run covered three captures
+- [~] One base config for a collection, instead of one near-identical config per capture
+- [~] Re-running a partly failed batch skips what already completed instead of silently duplicating
+      it under new run ids
+- [~] Collection execution is sequential within each batch, and the documentation explains
+      shared-GPU contention risks for independent concurrent invocations. No mandatory global GPU
+      lock (decided 2026-10-20)
+
+**Camera review before training**
+
+- [ ] Every run that trains has a written camera review of its solve (`camera-review`). Training
+      refuses without one unless explicitly overridden, and the override is recorded
+- [ ] A collection can stop after every capture's camera solve, with a review written for each, then
+      train and export only the captures the operator approves; without the option a collection runs
+      straight through
 
 **Run records**
 
-**Record architecture (decided 2026-10-20):** extend the Plant Reconstruction
-Catalog introduced in alpha.11. Its `catalog/jobs/` records are authoritative
-for invocation outcomes; do not introduce a parallel `runs/` job store.
-Frozen configs, command logs and linked artifacts are supporting evidence.
-The remaining criteria below apply to that catalog model.
+Record architecture (decided 2026-10-20): the Plant Reconstruction Catalog's `catalog/jobs/` records
+are authoritative for invocation outcomes; frozen configs, command logs and linked artifacts are
+supporting evidence.
 
-- [ ] A per-invocation JSON job record under `catalog/jobs/`, written INCREMENTALLY so a crashed or
-      killed run still shows how far it got
-- [ ] An explicit milestone ladder (`config_ok` → `prereqs_ok` →
-      `masks_composited` → `colmap_done` → `transforms_ok` → `pyramid_ok` →
-      `trained` → `checkpoint_found` → `exported` → `verified`), with the
-      furthest milestone reached surfaced as one field
-- [ ] Failed runs get records too. A failure record is worth more than a success
-      one
-- [~] The record embeds the RESOLVED config, not a path to a config file that may
-      since have been edited, plus tool versions, per-stage timings and the
-      artefacts produced. **Half done, 2026-08-21, ahead of the rest of this
-      section**, because the loss was live rather than theoretical: editing a
-      gitignored config destroys the record of every earlier run using it, and
-      that happened the day it was found. Each run now freezes its config
-      verbatim at `<data_root>/configs/runs/<run-id>.ini` with a `[run-record]`
-      section carrying the run id, resolved paths and the pipeline git commit.
-      What is still owed here is the rest: tool versions, per-stage timings and
-      the artefacts produced, none of which are known before the stages run
-- [ ] `catalog/index.csv`, a queryable summary that is REBUILDABLE by scanning the
-      job records, so a drifted index is never authoritative
-- [ ] Catalog batch provenance linking its invocation job IDs, since a batch
-      spans captures and has no home under any one of them; define its schema
-      and consumer compatibility before implementation
+- [~] A per-invocation JSON job record, written incrementally so a crashed or killed run still shows
+      how far it got (progress schema 2, alpha.15)
+- [~] An explicit milestone ladder with the furthest milestone reached surfaced as one field
+- [~] Failed runs get records too, with the failing stage and the last milestone
+- [~] The record carries the resolved settings, tool versions, per-stage timings and the artifacts
+      produced; each run also freezes its config verbatim at `{data_root}/configs/runs/{run-id}.ini`
+- [ ] Catalog records are written by default for collection runs, not only when opted in
+- [ ] **Operator verdict.** A run can carry the operator's decision (`accepted`, `rejected` or
+      `failed`, with who, when, why and an evidence pointer), set only by a person, never inferred.
+      A camera-path approval and a final verdict are different fields
+- [ ] `catalog/index.csv`, a queryable summary REBUILDABLE from the job records, including the verdict
+- [ ] Capture identity is documented: catalog capture IDs derive from the capture's path, and that may
+      change in v0.5.0
 
-**Existing foundation:** alpha.11 provides opt-in atomic running/final job
-records, exact input INI settings, selected images, frozen configs, command logs
-and linked output artifacts. This is the foundation to extend, not evidence that
-all criteria above pass. See the [release plan's gap assessment](docs/v0.3.0-release-plan.md#catalog-gap-assessment).
+**Acceptance:** run a real collection with one deliberate failure and a rerun. Afterwards, for every
+capture, say whether it succeeded, how long it took, what it produced, at which milestone it failed if
+it did, whether its solve was reviewed, and what the operator decided.
 
+**Moved out of v0.3.0:** batch provenance (one record linking a collection's jobs) goes to v0.5.0,
+where capture identity is settled first.
 
-**Acceptance:** point it at a collection, walk away, and afterwards be able to
-say for every capture whether it succeeded, how long it took, what it produced,
-and if it failed, at which milestone.
-
-**Superseded:** `run-log.csv` becomes a frozen beta log. It records intent only
-(the row is written before the stages run), carries no outcome, and is not
-back-filled, because the values it lacks were never captured.
+**Superseded:** `run-log.csv` becomes a frozen beta log. It records intent only and is not
+back-filled.
 
 ---
 
-## v0.4.0 — beta: runs on Windows as well as Linux
+## v0.4.0: bigger GPUs, higher resolution
 
-Not started. Scope is deliberately platform support plus the rough edges the
-alpha deferred, and macOS is **out**: gsplat ships a CUDA backend and nothing
-else, and there is no macOS COLMAP binary, so it cannot be made to work by
-configuration.
+The prebuilt gsplat wheel has no code for RTX 50-series (Blackwell) GPUs, so a 16 GB RTX 5060 Ti
+cannot run training or export, and work stays on smaller cards at quarter resolution.
 
-- [ ] Installs and runs on Windows from the repository alone
-- [ ] The install path is documented and verified by someone other than the
-      author
+- [ ] Find out whether gsplat can be built for Blackwell (sm_120) with a supported CUDA and torch, and
+      record the result either way. If it cannot, this milestone waits and v0.5.0 goes first
+- [ ] The install supports Blackwell alongside the existing Volta-to-Hopper range, and the startup GPU
+      check reflects what was actually built
+- [ ] A reference capture trains at downscale 2 on a 16 GB card, with measured time, memory and disk
+- [ ] QUICKSTART states GPU memory needs by downscale and capture size from measurements
+
+**Acceptance:** the same capture reconstructs on a Blackwell card at a higher resolution than before,
+and the result is reviewed against the quarter-resolution run.
+
+---
+
+## v0.5.0: sources, captures and selections
+
+Direction approved 2026-11-12: original videos in `videos/`, source photographs or extracted frames
+in `datasets/`, and reconstruction inputs in `captures/` as selections of preserved sources. The
+`frame-selection` tool (alpha.16) builds such a selection today inside the existing layout.
+
+- [ ] Opt-in `videos/`, `datasets/` and `captures/` roots, with existing layouts still working
+- [ ] Capture identity is stable across roots, so two captures with the same relative name cannot
+      share output keys or catalog IDs
+- [ ] A selection is reproducible from its recorded source, rules and resolved frame list, and can be
+      materialized for standalone sharing
+- [ ] Masks follow a selection with provenance
+- [ ] Batch provenance (moved from v0.3.0): one record linking a collection's jobs, built on the
+      settled capture identity
+
+**Acceptance:** two sampling choices of one video become two captures without copying frames, each
+traceable to the same source, and both run and record correctly.
+
+---
+
+## v0.6.0: someone else can use it
+
+- [ ] Installs and runs on Linux and on Windows through WSL2 from the repository alone
+- [ ] The install path and one capture run are verified by someone other than the author, following
+      the documentation without help
 - [x] LICENSE present
 - [ ] CITATION.cff present
 
-**Acceptance:** a collaborator on either OS can install it, run it on their own
-capture, and cite it.
+**Acceptance:** a collaborator can install it, run it on their own capture, and cite it.
 
 ---
 
-## v1.0.0 — the full public release
+## v1.0.0: the public research release
 
-Not started.
-
-- [ ] Everything in 0.4.0, stable across at least two independent installs
-- [ ] The published documentation describes a pipeline someone has actually run
-      from it, start to finish, without the author present
+- [ ] Everything in v0.6.0, stable across at least two independent installs
+- [ ] The published documentation describes a pipeline someone has actually run from it, start to
+      finish, without the author present
 - [ ] A dataset and its reconstruction are published together, each citable
-- [x] **Video-derived frame sequences run through the image pipeline.** The
-      documented workflow samples and reviews frames outside the pipeline,
-      stores them in the canonical `images/` layout, then runs the ordinary
-      image stages. This route was exercised on a real capture in October 2026.
-      Explicit `[colmap] data_type = video` was tested on that extracted image
-      sequence; it selects COLMAP's mode and does not decode the source movie.
-      See `pipeline/QUICKSTART.md`.
-- [ ] **Direct video-file ingestion is supported end to end.** A video file is
-      passed to the pipeline, which coordinates extraction, camera solving,
-      optional masks and reconstruction. `[nerfstudio] scene_type = video` is
-      settable but has not been verified with this pipeline's existing-COLMAP
-      reuse workflow. Keep this criterion open until that route is tested or
-      the setting is removed. The legacy `data_type = auto` heuristic cannot
-      infer video under the canonical `images/` layout (`pipeline/LAYOUT.md`).
+- [x] **Video-derived frame sequences run through the image pipeline.** Frames are sampled and
+      reviewed outside the pipeline, stored in the canonical `images/` layout, and run through the
+      ordinary image stages. Exercised on real captures in October and November 2026
+- [ ] The video workflow (review, extract, select, solve, review the solve) has been followed end to
+      end by someone other than the author
 
 **Acceptance:** the repository stands on its own as a research artefact.
 
@@ -234,35 +259,36 @@ Not started.
 
 ## Deferred decisions
 
-Considered, deliberately not done, recorded so they are not re-litigated from
-scratch.
+Considered, deliberately not done, recorded so they are not re-litigated from scratch.
 
-- **Architecture Decision Records** (numbered, immutable `docs/adr/NNNN-*.md`,
-  Nygard format). Considered 2026-08-18 and **held off**: the reasoning they
-  would capture is already in the commit history and in the topic documents, and
-  ADRs carry a standing discipline (never edit a decision, write a superseding
-  record instead) whose cost looked higher than the convenience bought. Worth
-  revisiting if either becomes true: a second person starts making architectural
-  decisions here, or a decision gets reversed twice and nobody can reconstruct
-  why. Note that only genuine *decisions* would qualify: `LAYOUT.md` is a
-  specification that must stay editable, and `SEQUENTIAL-RUNS.md` records gaps
-  rather than a decision.
+- **Architecture Decision Records** (numbered, immutable `docs/adr/NNNN-*.md`, Nygard format).
+  Considered 2026-08-18 and **held off**: the reasoning they would capture is already in the commit
+  history and in the topic documents, and ADRs carry a standing discipline (never edit a decision,
+  write a superseding record instead) whose cost looked higher than the convenience bought. Worth
+  revisiting if either becomes true: a second person starts making architectural decisions here, or a
+  decision gets reversed twice and nobody can reconstruct why.
+- **Separate versioning for the plant-analysis tools.** They ship inside this repository as
+  experimental modules and do not move the pipeline's version gates. If they need their own stability
+  promise, give them their own package and version rather than holding the pipeline's number.
 
 ## Future, not scheduled
 
+- [ ] Native Windows, without WSL2 (was v0.4.0 until 2026-11-12). WSL2 is the supported route on
+      Windows hosts; native support means maintaining COLMAP and gsplat builds for Windows
 - [ ] Launch and monitor runs from the run builder
-- [ ] Submit jobs to a pipeline host over the LAN. Input data placement is the
-      open problem: the photographs must already be on the host, or travel there
-      with the job.
+- [ ] Submit jobs to a pipeline host over the LAN. Input data placement is the open problem: the
+      photographs must already be on the host, or travel there with the job
 
 ## Explicit non-goals
 
-- **macOS support.** Blocked upstream, not by this code. Revisit only if gsplat
-  publishes a non-CUDA backend.
-- **Mask generation.** Producing masks is a separate concern with its own
-  repository. This pipeline applies masks; it does not create them.
+- **macOS support.** Blocked upstream, not by this code. Revisit only if gsplat publishes a non-CUDA
+  backend.
+- **Mask generation.** Producing masks is a separate concern with its own repository. This pipeline
+  applies masks; it does not create them.
+- **Direct video-file ingestion** (removed from v1.0.0 on 2026-11-12). Passing a movie straight to the
+  pipeline skips the human checks the video workflow is built on: choosing the range and interval,
+  selecting frames, and reviewing the solve. `[nerfstudio] scene_type = video` was never verified with
+  this pipeline's COLMAP reuse; remove it or document it as unsupported.
 
-**No longer a non-goal: a GUI** (Alex, 2026-11-01). Previously listed here as "the
-notebook covers exploration and the CLI covers everything else". Changed to: a
-local run builder that writes configs and commands
+**No longer a non-goal: a GUI** (Alex, 2026-11-01). A local run builder writes configs and commands
 (`pipeline/scripts/run-builder/`); the CLI stays the interface that runs things.

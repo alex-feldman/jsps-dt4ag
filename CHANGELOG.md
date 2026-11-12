@@ -16,6 +16,16 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Changed
+
+- Rescoped the roadmap (2026-11-12). v0.3.0 is now "runs you can trust and account for": it adds a
+  required camera review before training (with a recorded override), an operator verdict on each run,
+  default catalog records for collection runs and a documented capture-identity limit, and moves batch
+  provenance to v0.5.0. Criteria implemented in alpha.15 are marked partly done pending the real
+  acceptance run. New milestones: v0.4.0 Blackwell GPUs and higher resolution, v0.5.0 sources, captures
+  and selections, v0.6.0 an outside install (Linux or WSL2). Native Windows moves to future work, and
+  direct video-file ingestion becomes a non-goal. `docs/v0.3.0-release-plan.md` follows.
+
 ## [0.3.0-alpha.16] - 2026-11-12
 
 ### Added
