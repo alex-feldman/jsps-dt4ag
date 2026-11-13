@@ -25,6 +25,9 @@ def setUpModule():
     patcher = patch.object(colmap_threads, "read_host_memory", return_value=figures)
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
+    version = patch.object(runner, "detect_colmap_version_parts", return_value=(3, 12, 0))
+    version.start()
+    unittest.addModuleCleanup(version.stop)
 
 
 class CatalogFixture(unittest.TestCase):
@@ -89,9 +92,21 @@ class CatalogTests(CatalogFixture):
         self.assertEqual(record['capture_id'], 'capture-a')
         self.assertIsNone(record['selected_images'])
         self.assertEqual(record['progress']['milestones'], [])
+        self.assertIsNone(record['progress']['dependencies']['colmap'])
         self.assertEqual(record['progress']['failure'],
                          dict(cause='config', stage=None, after_milestone=None))
         self.assertFalse((self.root / 'catalog/captures').exists())
+
+    def test_catalog_probes_configured_colmap_after_loading_config(self):
+        cfg = make_config(self.root)
+        text = cfg.source.read_text(encoding="utf-8").replace(
+            "[colmap]", "[colmap]\nexecutable = /opt/candidate/bin/colmap")
+        cfg.source.write_text(text, encoding="utf-8")
+        with patch.object(plant_catalog, "colmap_version", return_value="COLMAP 4.2.1") as probe, \
+                patch.object(runner, "run_pipeline", return_value=0):
+            self.assertEqual(self.invoke(cfg.source, "--stage", "colmap"), 0)
+        probe.assert_called_once_with("/opt/candidate/bin/colmap")
+        self.assertEqual(self.read()["progress"]["dependencies"]["colmap"], "COLMAP 4.2.1")
 
     def test_dry_run_creates_no_catalog(self):
         with patch.object(runner, 'run_pipeline', return_value=0):

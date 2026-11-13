@@ -454,13 +454,22 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "help": "Passed verbatim after the generated flags. Only `automatic_reconstructor`'s own options, with COLMAP 3.12.0 names, are accepted: see `QUICKSTART.md`, \"Which COLMAP options `extra_args` accepts\"."
     },
     {
+     "key": "executable",
+     "kind": "text",
+     "default": "colmap",
+     "choices": [],
+     "required": false,
+     "default_note": "",
+     "help": "COLMAP executable name on PATH or an explicit executable path. The selected executable is used for reconstruction and passed to nerfstudio. Its actual path and detected version are recorded independently of any run ID version pin."
+    },
+    {
      "key": "num_threads",
      "kind": "text",
      "default": "auto",
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "COLMAP's thread count. `auto` chooses it just before the `colmap` stage from the memory available then: the smallest of Linux's `MemAvailable`, the room the stage's cgroup leaves (`[host] memory_high`, or a limit on the runner's own cgroup such as `wsl-guard.py --emulate-vm`) and, on WSL2, Windows' available RAM and commit headroom less 2 GiB each; about 1.1 GiB per thread for photographs extracted at 2400x1600, more for larger ones; never more than the usable CPUs. Below one thread the run refuses to start. A positive whole number is used as given; `all` is COLMAP's own default, one thread per CPU, whatever the memory. A `--num_threads` in `extra_args` always wins. Only the pipeline's `colmap` stage: with `[nerfstudio] skip_colmap = false`, `ns-process-data` runs COLMAP with its own settings. See `QUICKSTART.md`, \"COLMAP threads and memory\"."
+     "help": "COLMAP's thread count. `auto` refuses an unknown or unmeasured version; the present model is measured for 3.12.0 only. `auto` chooses it just before the `colmap` stage from the memory available then: the smallest of Linux's `MemAvailable`, the room the stage's cgroup leaves (`[host] memory_high`, or a limit on the runner's own cgroup such as `wsl-guard.py --emulate-vm`) and, on WSL2, Windows' available RAM and commit headroom less 2 GiB each; about 1.1 GiB per thread for photographs extracted at 2400x1600, more for larger ones; never more than the usable CPUs. Below one thread the run refuses to start. A positive whole number is used as given; `all` is COLMAP's own default, one thread per CPU, whatever the memory. A `--num_threads` in `extra_args` always wins. Only the pipeline's `colmap` stage: with `[nerfstudio] skip_colmap = false`, `ns-process-data` runs COLMAP with its own settings. See `QUICKSTART.md`, \"COLMAP threads and memory\"."
     }
    ]
   },
@@ -487,7 +496,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow."
+     "help": "Required by the separate `scene_type = video` route. That route has not been verified end to end with this pipeline's existing COLMAP model; it is not the video-derived-frame workflow. Its nerfstudio COLMAP invocation is restricted to detected 3.12.0."
     },
     {
      "key": "skip_colmap",
@@ -496,7 +505,7 @@ footer { max-width: 980px; margin: 0 auto 32px; padding: 0 16px; color: var(--mu
      "choices": [],
      "required": false,
      "default_note": "",
-     "help": "Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM."
+     "help": "Adds `--skip-colmap`, reusing the COLMAP reconstruction instead of re-running SfM. The alternate nerfstudio COLMAP invocation is currently permitted only with detected COLMAP 3.12.0; 4.x and unknown versions are refused because their options differ."
     },
     {
      "key": "colmap_model_path",

@@ -16,6 +16,18 @@ Dates are the tag date, not the commit date, where they differ.
 
 ## [Unreleased]
 
+### Added
+
+- Camera review adds per-image retained sparse 3D observation counts and descriptive 4-by-4 image-cell occupancy, with camera-specific dimensions and explicit boundary semantics. Per-image grids stay in the JSON file while the terminal prints a compact summary.
+
+- Camera review surfaces folder-specific warnings and marks flagged peaks in the plot. It reports per-folder step summaries and retains valid expected pairs when unexpected names interleave. It separates folder paths and omits steps across missing expected frames; reports its ordering and step policy.
+
+- Experimental per-config COLMAP executable selection, actual executable provenance, refusal of auto threads for unmeasured versions, and refusal of nerfstudio reconstruction on unverified COLMAP versions.
+
+- Add a shared-match epipolar comparison companion for saved SIMPLE_RADIAL camera models.
+
+- Add a camera-motion comparison companion for two saved COLMAP solves, with folder-local relative rotations, normalized baselines and explicit missing-frame refusals.
+
 ### Changed
 
 - Rescoped the roadmap (2026-11-12). v0.3.0 is now "runs you can trust and account for": it adds a
@@ -25,6 +37,10 @@ Dates are the tag date, not the commit date, where they differ.
   acceptance run. New milestones: v0.4.0 Blackwell GPUs and higher resolution, v0.5.0 sources, captures
   and selections, v0.6.0 an outside install (Linux or WSL2). Native Windows moves to future work, and
   direct video-file ingestion becomes a non-goal. `docs/v0.3.0-release-plan.md` follows.
+
+### Fixed
+
+- Fix camera review for nested camera folders and JPEG originals composited to PNG, refusing ambiguous frame stems.
 
 ## [0.3.0-alpha.16] - 2026-11-12
 

@@ -28,7 +28,15 @@ If the capture has `provenance/frames.csv` (written by `video-frames.py
 extract`), the expected frame list comes from it and the plot is colored by clip
 time, using `source_seconds_approx` or else `output_grid_seconds`. Otherwise the
 expected frames are the images under `images/`, in sorted-name order, and the
-plot is colored by that order. The JSON says which in `time_axis`.
+plot is colored by that order. The JSON says which in `time_axis`. For image captures, relative paths are kept so camera folders remain distinct. The review matches capture files and COLMAP names by relative stem, allowing JPEG originals to correspond to PNG mask composites; duplicate stems are refused rather than guessed.
+
+Ordering is lexical by relative image name within each folder, an assumption that
+may not match capture chronology. Only pairs consecutive in the expected list
+and registered in the same folder contribute to steps or connecting lines.
+Missing frames and folder boundaries break the path. Unexpected registered
+frames are shown as points and excluded from steps. Unexpected names between two expected registered names do not break their link.
+For a single video folder with every frame registered, this preserves the
+original sequence.
 
 ## What it writes
 
@@ -41,22 +49,26 @@ plot is colored by that order. The JSON says which in `time_axis`.
   split the solve into disconnected pieces.
 - `reviewed_model`, `points`, `mean_reprojection_error_px`, `mean_track_length`.
 - `cameras`: model, size and parameters of each camera.
+- `per_image_track_support`: retained 3D observation counts and image-cell occupancy for every registered image, including unexpected images, keyed by full COLMAP image name. Each image uses its own camera dimensions. `image_track_support()` owns the count and boundary rules; `track_support_grid` records the grid shape and semantics in the JSON. The grid is 4 by 4, with counts stored as top-to-bottom rows and left-to-right columns. Only nonnegative point IDs present in the reviewed sparse model count. Nonfinite or outside-image coordinates contribute to the retained count but occupy no cell. Zero retained observations give zero occupancy; invalid or missing dimensions give zero cell counts and a null coverage fraction. These are observation entries, not unique point IDs.
 - `time_axis` and `registered_span`.
+- `ordering_assumption`, `step_policy` and `adjacent_step_count` describe the ordering and included pairs. `folder_step_summaries` gives each expected folder its own count, median, maximum, maximum/median ratio and warning using the same eligible edges. Existing step fields retain their names but now summarize only eligible pairs; they are null when no pair is eligible.
 - `median_step_between_adjacent_registered_cameras`,
   `largest_step_between_adjacent_registered_cameras`, its frame pair and
   time interval, and the largest/median ratio.
 - `camera_path_warnings`: advisory flags produced by `summarize_camera_steps()`
-  using `CAMERA_STEP_WARNING_RATIO` in `camera-review.py`.
+  using `CAMERA_STEP_WARNING_RATIO` in `camera-review.py`. This includes pooled and folder-specific alerts. `flagged_camera_steps` names each flagged peak and its scopes.
 - `limits`: the reminder below.
 
 `camera-review.png`: three views (X-Y, X-Z, Y-Z) of the sparse points with the
-camera path over them, colored by time or order, plus the step between adjacent
-cameras along that axis. A flagged step is marked with a red X and a dashed
-reference line at the threshold defined by `CAMERA_STEP_WARNING_RATIO` in
-`camera-review.py`.
+camera path over them, colored by time or order, plus the eligible steps along that axis. Each flagged pooled or folder peak is marked with a red X. A dashed reference line appears for a pooled alert only, at its pooled threshold; folder thresholds differ and are described in the JSON.
 
-The same numbers are printed to the terminal, without the long `missing`,
-`unexpected` and `cameras` fields apart from a one-line `missing:` list.
+Image-cell occupancy describes where retained sparse observations fall on an image plane. It does not measure subject coverage or establish pose accuracy, and supplies no quality threshold or accept/reject decision.
+
+The terminal prints a compact summary through `terminal_summary()`, omitting
+the long `missing`, `unexpected`, `cameras` and `per_image_track_support` fields.
+The complete per-image support grids remain in `camera-checks.json`;
+`track_support_grid` semantics remain in the terminal summary. A separate one-line
+`missing:` list is printed as before.
 
 ## How to read it
 
@@ -80,3 +92,64 @@ The workflow context is `pipeline/VIDEO-WORKFLOW.md`, step 6.
 Tests: `pipeline/tests/test_camera_review.py` covers the helpers that need no
 COLMAP data (frame times, missing and unexpected frames, model folders, the
 arguments). The plot itself is checked only by a real run.
+
+## Compare relative camera motion between two solves
+
+`compare-camera-motion.py` compares two saved COLMAP workspaces without training,
+reconstruction, image changes or ground truth. It needs only Python 3's standard
+library and writes to a fresh output directory:
+
+```bash
+python pipeline/scripts/camera-review/compare-camera-motion.py \
+  --capture {data_root}/datasets/{capture} \
+  --workspace-a {data_root}/colmap/{capture}/{run-a} \
+  --workspace-b {data_root}/colmap/{capture}/{run-b} \
+  --out {data_root}/evals/{capture}/camera-motion-comparison
+```
+
+Both workspaces default to `sparse/0`; use `--model-a` and `--model-b` to select
+other sparse model folders. Expected images come from the capture `images/` tree.
+The tool joins full relative stems, allowing different image extensions, and
+refuses ambiguous stems. It orders expected images lexically within each folder,
+which assumes lexical order reflects acquisition. Folder boundaries and missing
+registrations break edges; unexpected registered images are excluded and listed.
+
+`edges.csv` ranks each folder's eligible edges by the angle between the models'
+relative rotations and reports each baseline and its ratio to that model's folder
+median. `refusals.csv` records missing-registration edges and zero baselines or
+zero folder medians; normalization is blank where refused. `metadata.json` lists
+inputs, missing and unexpected stems, and interpretation limits. Camera baselines
+have arbitrary independent model scales. A disagreement is not evidence of which
+solve is correct, and this tool does not choose acceptance thresholds. Tests are
+in `pipeline/tests/test_compare_camera_motion.py`.
+
+## Compare shared epipolar correspondences
+
+`compare-epipolar.py` evaluates the same verified 2D matches against two saved
+camera models. It uses only Python's standard library and reads the COLMAP
+match database in read-only mode. Supply database image names exactly, including
+relative folders and extensions. Repeat `--pair` for each pair, and use a fresh
+output directory:
+
+```bash
+python pipeline/scripts/camera-review/compare-epipolar.py \
+  --database {run}/database.db --workspace-a {run-a} --workspace-b {run-b} \
+  --pair folder/image1.png folder/image2.png --cross --out {fresh-output}
+```
+
+`--model-a` and `--model-b` select a sparse model (default `0`). `--cross`
+adds both combinations of one model's poses and the other's intrinsics. The
+current tool supports SIMPLE_RADIAL camera models and verified COLMAP
+UNCALIBRATED fundamental-matrix matches only; other geometry and camera types
+are refused. It checks database/model image dimensions and camera sharing,
+requires exact image names, and refuses degenerate baselines. Matching names and
+dimensions do not prove identical image pixels or preprocessing; verify that
+the database and both models refer to the same image domain. Matched keypoint
+indices follow COLMAP's pair-ID ordering. Observations that fail numerical
+projection checks are excluded jointly from every requested combination.
+
+`epipolar.csv` reports verified and jointly used counts and median/P90 pixel-domain
+first-order Sampson residuals. `metadata.json` records inputs and limits. These
+are approximations, especially for large errors; verified matches may include
+outliers and are not independent ground truth. The tool does not set acceptance
+thresholds. Tests: `pipeline/tests/test_compare_epipolar.py`.

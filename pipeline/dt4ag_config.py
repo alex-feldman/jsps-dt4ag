@@ -325,20 +325,20 @@ def held_out_count(mode: str, photographs: int, fraction: float = 0.9, interval:
 # COLMAP version detection
 # --------------------------------------------------------------------------
 
-_VERSION_RE = re.compile(r"COLMAP\s+(\d+)\.(\d+)(?:\.(\d+))?", re.IGNORECASE)
+_VERSION_RE = re.compile(r"COLMAP\s+(\d+)\.(\d+)(?:\.(\d+))?(?![0-9A-Za-z.+_-])", re.IGNORECASE)
 
 
-def detect_colmap_version() -> Optional[str]:
-    """Return the installed COLMAP version as a compact string, e.g. ``312``.
+def detect_colmap_version_parts(executable: str = "colmap") -> Optional[Tuple[int, int, Optional[int]]]:
+    """Return the detected major, minor, and optional patch as separate integers.
 
     Tries ``colmap --version`` first, then the bare ``colmap`` banner, which is
     where COLMAP 3.x prints its version when given no subcommand. Returns
     ``None`` if COLMAP is not on PATH or nothing parseable comes back; callers
     are expected to fall back to the configured value rather than guess.
     """
-    if shutil.which("colmap") is None:
+    if shutil.which(executable) is None:
         return None
-    for argv in (["colmap", "--version"], ["colmap"]):
+    for argv in ([executable, "--version"], [executable]):
         try:
             proc = subprocess.run(
                 argv,
@@ -349,11 +349,21 @@ def detect_colmap_version() -> Optional[str]:
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        match = _VERSION_RE.search((proc.stdout or "") + "\n" + (proc.stderr or ""))
+        stdout = proc.stdout if isinstance(proc.stdout, str) else ""
+        stderr = proc.stderr if isinstance(proc.stderr, str) else ""
+        match = _VERSION_RE.search(stdout + "\n" + stderr)
         if match:
-            major, minor, patch = match.group(1), match.group(2), match.group(3)
-            return f"{major}{minor}{patch or ''}"
+            major, minor, patch = match.groups()
+            return (int(major), int(minor), int(patch) if patch is not None else None)
     return None
+
+
+def detect_colmap_version(executable: str = "colmap") -> Optional[str]:
+    """Legacy compact run-ID token; never use it to compare versions."""
+    parts = detect_colmap_version_parts(executable)
+    if parts is None:
+        return None
+    return "".join(str(part) for part in parts if part is not None)
 
 
 def detect_nerfstudio_version() -> str:
@@ -442,6 +452,7 @@ class Dt4agConfig:
     colmap_single_camera_per_folder: int
     colmap_dense: int
     colmap_extra_args: str
+    colmap_executable: str
     #: ``[colmap] num_threads``: ``auto`` (choose from available memory, just
     #: before the colmap stage; ``colmap_threads.py``), ``all`` (COLMAP's
     #: default, one per CPU) or a positive whole number. ``--num_threads`` in
@@ -622,7 +633,7 @@ class Dt4agConfig:
         """
         if self.colmap_version:
             return self.colmap_version
-        detected = detect_colmap_version()
+        detected = detect_colmap_version(self.colmap_executable)
         if detected:
             return detected
         if not self.colmap_version:
@@ -811,6 +822,8 @@ class Dt4agConfig:
             "dataset",
             "images_path",
             "colmap_version",
+            "colmap_executable_actual",
+            "colmap_version_actual",
             "nerfstudio_version",
             "train_method",
             "max_num_iterations",
@@ -1407,6 +1420,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
     )
     colmap_dense = _get_int(parser, "colmap", "dense", source, 0)
     colmap_extra_args = _get_str(parser, "colmap", "extra_args", source, "", allow_empty=True)
+    colmap_executable = _get_str(parser, "colmap", "executable", source, "colmap")
     raw_threads = _get_str(parser, "colmap", "num_threads", source, "auto")
     colmap_num_threads = parse_num_threads(raw_threads)
     if colmap_num_threads is None:
@@ -1656,6 +1670,7 @@ def load_config(path, validate_paths: bool = True) -> Dt4agConfig:
         colmap_single_camera_per_folder=colmap_single_camera_per_folder,
         colmap_dense=colmap_dense,
         colmap_extra_args=colmap_extra_args,
+        colmap_executable=colmap_executable,
         colmap_num_threads=colmap_num_threads,
         scene_type=scene_type,
         video_path=video_path,
@@ -1741,6 +1756,7 @@ CONFIG_SCHEMA: Tuple[ConfigKey, ...] = (
     _k("colmap", "single_camera_per_folder", "int", "1"),
     _k("colmap", "dense", "int", "0"),
     _k("colmap", "extra_args"),
+    _k("colmap", "executable", default="colmap"),
     _k("colmap", "num_threads", default="auto"),
     _k("nerfstudio", "scene_type", "choice", "images", choices=SCENE_TYPES),
     _k("nerfstudio", "video_path"),
